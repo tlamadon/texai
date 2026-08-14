@@ -327,8 +327,10 @@ check('locate refuses paths outside the root', escaped === 404, String(escaped))
 const card = await cdp.json(`(() => {
   const { marks, viewer } = window.__texai;
   const entry = viewer.pageEntry(1);
+  // A multi-line change: two rendered lines, as a wrapped paragraph produces.
   const box = { page: 1, x: 72, y: 300, width: 468, height: 10 };
-  const near = { page: 1, x: 72, y: 312, width: 468, height: 10 };
+  const box2 = { page: 1, x: 72, y: 313, width: 468, height: 10 };
+  const near = { page: 1, x: 72, y: 340, width: 468, height: 10 };
 
   marks.turnId = 't0001';
   marks.enabled = true;
@@ -345,7 +347,7 @@ const card = await cdp.json(`(() => {
         { text: 'the parameter ', changed: false },
         { text: 'most often contested, ', changed: true },
         { text: 'which makes this good.', changed: false }],
-      accepted: false, boxes: [box] },
+      accepted: false, boxes: [box, box2] },
     { id: 'bbb', file: 'sections/model.tex', newStart: 11, kind: 'insert',
       before: '', after: 'A newly added sentence.', accepted: false, boxes: [near] },
   ];
@@ -371,12 +373,19 @@ const card = await cdp.json(`(() => {
     overlap: rects.length === 2 ? Math.round(rects[0].bottom - rects[1].top) : null,
     insertNote: cards[1]?.querySelector('.mark-none')?.textContent ?? '',
     bandCount: entry.el.querySelectorAll('.mark').length,
+    cardTop: Math.round(first.getBoundingClientRect().top),
+    lastBandBottom: Math.round(Math.max(...[...entry.el.querySelectorAll('.mark')]
+      .slice(0, 2).map(n => n.getBoundingClientRect().bottom))),
+    cardBelowLastBand: first.getBoundingClientRect().top >=
+      Math.max(...[...entry.el.querySelectorAll('.mark')].slice(0, 2).map(n => n.getBoundingClientRect().bottom)) - 1,
   };
 })()`);
 console.log('card:', card);
 
 check('a card is drawn per change', card.count === 2, String(card.count));
-check('the band is still drawn over the new text', card.bandCount === 2, String(card.bandCount));
+check('every rendered line of a change gets a band', card.bandCount === 3, `${card.bandCount} bands for 3 boxes`);
+check('the card hangs below the last band, not the first', card.cardBelowLastBand === true,
+  `card top ${card.cardTop}, last band bottom ${card.lastBandBottom}`);
 check('unchanged context is kept', /which makes this good/.test(card.delText), card.delText.slice(0, 40));
 check('only the changed words are struck', card.delLine.includes('line-through') && /argue with/.test(card.delStruck), card.delStruck);
 check('surrounding words are not struck', !/which makes this good/.test(card.delStruck), card.delPlain.slice(0, 45));

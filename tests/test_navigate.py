@@ -102,3 +102,105 @@ def test_locate_normalises_the_returned_path(config: AppConfig, monkeypatch: pyt
     )
     absolute = str(config.root / "sections" / "model.tex")
     assert locate(config, absolute, 2)["file"] == "sections/model.tex"
+
+
+# ------------------------------------------------------------- locate_range
+
+from texai.navigate import MAX_RANGE_LINES, locate_range  # noqa: E402
+
+
+def box(page=1, y=100.0):
+    return SyncTexBox(page=page, x=72.0, y=y, width=468.0, height=10.0)
+
+
+def test_locate_range_covers_every_line_of_the_span(
+    config: AppConfig, monkeypatch: pytest.MonkeyPatch
+):
+    """A multi-line change must not be highlighted from its first line only."""
+    per_line = {1: [box(y=10)], 2: [box(y=20)], 3: [box(y=30)]}
+    asked: list[int] = []
+
+    def runner(pdf_path, source, line, **kwargs):
+        asked.append(line)
+        return per_line.get(line, [])
+
+    monkeypatch.setattr("texai.navigate.run_synctex_view", runner)
+    found = locate_range(config, "sections/model.tex", 1, 3)
+
+    assert asked == [1, 2, 3]
+    assert [b["y"] for b in found["boxes"]] == [10.0, 20.0, 30.0]
+    assert found["found"] is True
+
+
+def test_locate_range_dedupes_shared_render_lines(
+    config: AppConfig, monkeypatch: pytest.MonkeyPatch
+):
+    """Consecutive source lines usually share a rendered line; report it once."""
+    monkeypatch.setattr("texai.navigate.run_synctex_view", lambda *a, **k: [box(y=50)])
+    found = locate_range(config, "sections/model.tex", 1, 5)
+    assert len(found["boxes"]) == 1
+
+
+def test_locate_range_sorts_by_page_then_position(
+    config: AppConfig, monkeypatch: pytest.MonkeyPatch
+):
+    out = {1: [box(page=2, y=10)], 2: [box(page=1, y=90)], 3: [box(page=1, y=20)]}
+    monkeypatch.setattr("texai.navigate.run_synctex_view", lambda p, s, line, **k: out[line])
+    boxes = locate_range(config, "sections/model.tex", 1, 3)["boxes"]
+    assert [(b["page"], b["y"]) for b in boxes] == [(1, 20.0), (1, 90.0), (2, 10.0)]
+
+
+def test_locate_range_survives_an_unmappable_line(
+    config: AppConfig, monkeypatch: pytest.MonkeyPatch
+):
+    def runner(pdf_path, source, line, **kwargs):
+        if line == 2:
+            raise SyncTexError("no record for that line")
+        return [box(y=line * 10)]
+
+    monkeypatch.setattr("texai.navigate.run_synctex_view", runner)
+    found = locate_range(config, "sections/model.tex", 1, 3)
+    assert [b["y"] for b in found["boxes"]] == [10.0, 30.0]
+
+
+def test_locate_range_is_capped(config: AppConfig, monkeypatch: pytest.MonkeyPatch):
+    asked: list[int] = []
+
+    def runner(pdf_path, source, line, **kwargs):
+        asked.append(line)
+        return []
+
+    monkeypatch.setattr("texai.navigate.run_synctex_view", runner)
+    found = locate_range(config, "sections/model.tex", 1, 5000)
+    assert len(asked) == MAX_RANGE_LINES
+    assert found["truncated"] is True
+
+
+def test_locate_range_handles_a_single_line(config: AppConfig, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("texai.navigate.run_synctex_view", lambda *a, **k: [box()])
+    found = locate_range(config, "sections/model.tex", 7, 7)
+    assert found["line"] == 7 and found["lastLine"] == 7
+    assert len(found["boxes"]) == 1
+
+
+def test_locate_range_refuses_paths_outside_the_root(config: AppConfig):
+    with pytest.raises(LocateError, match="outside the project root"):
+        locate_range(config, "../../etc/passwd", 1, 3)
+
+
+# -------------------------------------------------- against real synctex output
+
+EXAMPLE = Path(__file__).resolve().parents[1] / "example"
+
+
+@pytest.mark.skipif(
+    not (EXAMPLE / "main.pdf").is_file() or not (EXAMPLE / "main.synctex.gz").is_file(),
+    reason="the example has not been compiled (latexmk -pdf -synctex=1 main.tex)",
+)
+def test_multi_line_span_covers_more_than_its_first_line():
+    """The real regression: lines 8-10 of a wrapped paragraph render on two lines."""
+    real = AppConfig.create(EXAMPLE, EXAMPLE / "main.pdf")
+    first_only = locate(real, "sections/model.tex", 8)["boxes"]
+    whole_span = locate_range(real, "sections/model.tex", 8, 10)["boxes"]
+    assert len(whole_span) > len(first_only)
+    assert {b["y"] for b in first_only} < {b["y"] for b in whole_span}

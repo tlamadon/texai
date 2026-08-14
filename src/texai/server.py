@@ -19,7 +19,7 @@ from .agent import AgentSession, AgentUnavailable, sdk_status
 from .config import AppConfig
 from .events import EventBus, sse_stream
 from .models import ChatRequest, SelectRequest, SelectResponse
-from .navigate import LocateError, locate
+from .navigate import LocateError, locate, locate_range
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .selection import atomic_write_json, build_selection
 from .synctex import (
@@ -331,20 +331,16 @@ def create_app(
         def locate() -> list[dict[str, Any]]:
             marks: list[dict[str, Any]] = []
             for hunk in turn.hunks:
-                source = config.root / str(hunk["file"])
                 boxes: list[dict[str, Any]] = []
                 try:
-                    boxes = [
-                        box.as_dict()
-                        for box in run_synctex_view(
-                            config.pdf_path,
-                            source,
-                            int(hunk["newStart"]),
-                            root=config.root,
-                            executable=config.synctex_executable,
-                        )
-                    ]
-                except SyncTexError:
+                    # The whole changed span, not just its first line.
+                    boxes = locate_range(
+                        config,
+                        str(hunk["file"]),
+                        int(hunk["newStart"]),
+                        int(hunk.get("newEnd") or hunk["newStart"]),
+                    )["boxes"]
+                except (LocateError, SyncTexError):
                     boxes = []  # unlocatable changes still list in the panel
                 marks.append(
                     {

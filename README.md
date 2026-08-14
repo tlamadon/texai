@@ -132,7 +132,9 @@ working if you would rather.
 Where it is approximate, honestly:
 
 - Highlights are **line-level**. SyncTeX reports the line box, which is the full
-  column width, so a one-word change highlights its whole line.
+  column width, so a one-word change highlights its whole line. Every source
+  line of a change is mapped, not just the first — a rewritten paragraph is
+  banded across all the rendered lines it produced.
 - **Deletions** have no place in the new PDF and anchor to the neighbouring line.
 - Changes inside math, floats or `tikz` tend to map to the environment's opening
   line — the same weakness the click direction has.
