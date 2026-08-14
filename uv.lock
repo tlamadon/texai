@@ -1023,7 +1023,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "claude-agent-sdk", marker = "extra == 'agent'", specifier = ">=0.2" },
+    { name = "claude-agent-sdk", marker = "extra == 'agent'", specifier = ">=0.2.138" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "uvicorn", specifier = ">=0.30" },
