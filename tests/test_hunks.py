@@ -112,3 +112,60 @@ def test_reconstruct_handles_a_new_file():
 def test_reconstruct_handles_a_deleted_file():
     hunks = file_hunks("gone.tex", "old\n", "")
     assert reconstruct("old\n", "", ids(hunks), "gone.tex") == "old\n"
+
+
+# ---------------------------------------------------------------- word diff
+
+from texai.hunks import word_diff  # noqa: E402
+
+
+def joined(parts):
+    return "".join(p["text"] for p in parts)
+
+
+def changed_text(parts):
+    return "".join(p["text"] for p in parts if p["changed"])
+
+
+def test_word_diff_is_lossless():
+    before, after = "one two three four", "one TWO three four five"
+    b, a = word_diff(before, after)
+    assert joined(b) == before
+    assert joined(a) == after
+
+
+def test_word_diff_marks_only_what_differs():
+    b, a = word_diff(
+        "the parameter a reader is most likely to argue with, which makes this good.",
+        "the parameter most often contested, which makes this good.",
+    )
+    assert "which makes this good." not in changed_text(b)
+    assert "which makes this good." not in changed_text(a)
+    assert "argue with," in changed_text(b)
+    assert "often contested," in changed_text(a)
+
+
+def test_word_diff_of_identical_text_marks_nothing():
+    b, a = word_diff("same words here", "same words here")
+    assert changed_text(b) == ""
+    assert changed_text(a) == ""
+
+
+def test_word_diff_runs_are_merged():
+    """Adjacent words of the same kind collapse into one run, not one per word."""
+    b, _ = word_diff("alpha beta gamma delta", "alpha delta")
+    assert len([p for p in b if p["changed"]]) == 1
+
+
+def test_word_diff_handles_an_empty_side():
+    b, a = word_diff("", "brand new text")
+    assert b == []
+    assert changed_text(a) == "brand new text"
+
+
+def test_hunk_dict_carries_the_word_runs():
+    hunk = file_hunks("a.tex", "one two three\n", "one TWO three\n")[0].as_dict()
+    assert joined(hunk["beforeParts"]) == "one two three\n"
+    assert joined(hunk["afterParts"]) == "one TWO three\n"
+    assert changed_text(hunk["beforeParts"]).strip() == "two"
+    assert changed_text(hunk["afterParts"]).strip() == "TWO"

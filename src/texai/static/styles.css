@@ -549,3 +549,99 @@ button.toggle.active {
   text-underline-offset: 2px;
 }
 .ref:hover { color: var(--accent); }
+
+
+/* ---------------- inline before/after card ---------------- */
+
+/* The removed text was never typeset into this PDF, so it is drawn here as an
+   annotation rather than as part of the page. Browser font, not the document's. */
+.mark-card {
+  position: absolute;
+  pointer-events: auto;
+  z-index: 5;
+  min-width: 260px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.mark-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mark-card .mark-where {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.mark-card button {
+  padding: 1px 8px;
+  font-size: 11.5px;
+  border-radius: 4px;
+}
+.mark-card .mark-accept { border-color: var(--ok); color: #9ff0ab; }
+.mark-card .mark-accept:hover { background: rgba(63, 185, 80, 0.18); }
+.mark-card .mark-reject { border-color: var(--err); color: #ffb4ae; }
+.mark-card .mark-reject:hover { background: rgba(248, 81, 73, 0.18); }
+.mark-card .mark-hide {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 1px 4px;
+}
+.mark-card .mark-hide:hover { color: var(--fg); background: transparent; }
+
+.mark-del,
+.mark-add {
+  padding: 3px 6px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Only the words that differ are marked; the surrounding text is kept for
+   context but dimmed, so the eye goes straight to the change. */
+.mark-del {
+  background: rgba(248, 81, 73, 0.10);
+  border-left: 2px solid var(--err);
+  color: var(--muted);
+}
+.mark-del .w-changed {
+  color: #ffb9b3;
+  background: rgba(248, 81, 73, 0.22);
+  text-decoration: line-through;
+  text-decoration-color: rgba(248, 81, 73, 0.95);
+  text-decoration-thickness: 1.5px;
+  border-radius: 2px;
+}
+
+.mark-add {
+  background: rgba(63, 185, 80, 0.10);
+  border-left: 2px solid var(--ok);
+  color: var(--muted);
+}
+.mark-add .w-changed {
+  color: #b7f0c0;
+  background: rgba(63, 185, 80, 0.24);
+  font-weight: 600;
+  border-radius: 2px;
+}
+
+.mark-del .w-same,
+.mark-add .w-same { opacity: 0.75; }
+
+.mark-none {
+  color: var(--muted);
+  font-style: italic;
+  padding: 1px 6px;
+}

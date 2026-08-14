@@ -84,6 +84,28 @@ sections/model.tex:9
                                                      [ Accept ]  [ Reject ]
 ```
 
+Each change also gets a card under it showing what the sentence used to say:
+
+```
+sections/model.tex:9                          [Accept] [Reject] [x]
+  …is the parameter a̶ ̶r̶e̶a̶d̶e̶r̶ ̶i̶s̶ most l̶i̶k̶e̶l̶y̶ ̶t̶o̶ ̶a̶r̶g̶u̶e̶ ̶w̶i̶t̶h̶,̶ which makes…
+  …is the parameter most **often contested,** which makes…
+```
+
+Only the words that actually differ are struck through (red) or emphasised
+(green); the surrounding text is kept, dimmed, for context. Striking a whole
+wrapped line when three words changed just makes you hunt for the difference.
+
+Accepting collapses a change to a plain band; clicking a band folds its card
+away and back. Nothing blocks — ignore them and keep working if you would
+rather.
+
+Two things to know about the card. The removed text **is not in the PDF** —
+LaTeX never typeset it, because it was removed — so it is drawn as an
+annotation in the browser's font, and math appears as source (`$\alpha$`).
+And the card overlays the page, so it covers the lines beneath it until you
+collapse it.
+
 **Reject** rolls back that one change and leaves the rest of the turn alone, so
 you can keep three edits out of four from a batch. It is a reconstruction, not a
 patch: the file is rebuilt from the turn's snapshot with the rejected region

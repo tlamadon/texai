@@ -10,6 +10,38 @@ import { showToast } from './toast.js';
 
 const STORAGE_KEY = 'texai:show-changes';
 const MAX_POPOVER_TEXT = 1200;
+const MAX_CARD_TEXT = 320;
+
+/**
+ * Render a side of the change, emphasising only the words that actually
+ * differ. Striking a whole wrapped line when three words changed makes the
+ * reader hunt for the difference.
+ */
+function partsNode(className, parts, fallback) {
+  const node = el('div', className);
+  if (!parts || !parts.length) {
+    node.textContent = trimText(fallback);
+    return node;
+  }
+  let used = 0;
+  for (const part of parts) {
+    if (used >= MAX_CARD_TEXT) {
+      node.append(el('span', 'w-same', '…'));
+      break;
+    }
+    const text = part.text.replace(/\s+/g, ' ').slice(0, MAX_CARD_TEXT - used);
+    if (!text) continue;
+    used += text.length;
+    node.append(el('span', part.changed ? 'w-changed' : 'w-same', text));
+  }
+  return node;
+}
+
+/** Source text for display: one paragraph, capped, without the trailing newline. */
+function trimText(text) {
+  const flat = (text || '').replace(/\s+/g, ' ').trim();
+  return flat.length > MAX_CARD_TEXT ? `${flat.slice(0, MAX_CARD_TEXT - 1)}…` : flat;
+}
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -25,6 +57,7 @@ export class MarksLayer {
     this.enabled = localStorage.getItem(STORAGE_KEY) === '1';
     this.turnId = null;
     this.marks = [];
+    this.collapsed = new Set();
     this.openPopover = null;
 
     if (this.button) {
@@ -94,30 +127,103 @@ export class MarksLayer {
     if (!this.enabled || !this.marks.length) return;
 
     for (const mark of this.marks) {
+      const collapsed = mark.accepted || this.collapsed.has(mark.id);
+      let last = null;
+
       for (const box of mark.boxes || []) {
         const entry = this.viewer.pageEntry(box.page);
         if (!entry || !entry.viewport) continue;
 
-        let layer = entry.el.querySelector('.mark-layer');
-        if (!layer) {
-          layer = el('div', 'mark-layer');
-          entry.el.append(layer);
-        }
-
+        const layer = this._layerFor(entry);
         const rect = this.viewer.pdfRectToPageRect(entry, box);
-        const node = el('div', `mark ${mark.kind}${mark.accepted ? ' accepted' : ''}`);
+        const node = el('div', `mark ${mark.kind}${collapsed ? ' accepted' : ''}`);
         node.style.left = `${rect.left}px`;
         node.style.top = `${rect.top}px`;
         node.style.width = `${Math.max(rect.width, 8)}px`;
         node.style.height = `${Math.max(rect.height, 6)}px`;
-        node.title = `${mark.file}:${mark.newStart} — click to review`;
+        node.title = `${mark.file}:${mark.newStart} — click to ${collapsed ? 'expand' : 'collapse'}`;
         node.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          this._openPopover(entry, node, mark);
+          this._toggle(mark);
         });
         layer.append(node);
+        last = { entry, layer, rect };
       }
+
+      // The old text is not on the page — LaTeX never typeset it — so the card
+      // below the change is where "before" actually gets shown.
+      if (last && !collapsed) this._drawCard(last, mark);
+    }
+
+    for (const entry of this.viewer.pages) this._unstack(entry);
+  }
+
+  _layerFor(entry) {
+    let layer = entry.el.querySelector('.mark-layer');
+    if (!layer) {
+      layer = el('div', 'mark-layer');
+      entry.el.append(layer);
+    }
+    return layer;
+  }
+
+  _toggle(mark) {
+    if (this.collapsed.has(mark.id)) this.collapsed.delete(mark.id);
+    else this.collapsed.add(mark.id);
+    this.draw();
+  }
+
+  _drawCard({ entry, layer, rect }, mark) {
+    const card = el('div', 'mark-card');
+    card.dataset.markId = mark.id;
+
+    const head = el('div', 'mark-card-head');
+    head.append(el('span', 'mark-where', `${mark.file}:${mark.newStart}`));
+    head.append(el('span', 'spacer'));
+
+    const accept = el('button', 'mark-accept', 'Accept');
+    accept.title = 'Keep this change';
+    accept.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this._act(mark, 'accept', accept);
+    });
+    const reject = el('button', 'mark-reject', 'Reject');
+    reject.title = 'Put the original text back';
+    reject.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this._act(mark, 'reject', reject);
+    });
+    const hide = el('button', 'mark-hide', '×');
+    hide.title = 'Collapse';
+    hide.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this._toggle(mark);
+    });
+    head.append(accept, reject, hide);
+    card.append(head);
+
+    if (mark.before) card.append(partsNode('mark-del', mark.beforeParts, mark.before));
+    else card.append(el('div', 'mark-none', 'nothing here before — this text is new'));
+    if (mark.after) card.append(partsNode('mark-add', mark.afterParts, mark.after));
+    else card.append(el('div', 'mark-none', 'removed — nothing replaced it'));
+
+    card.style.left = `${Math.max(0, rect.left)}px`;
+    card.style.top = `${rect.top + rect.height + 4}px`;
+    card.style.maxWidth = `${Math.max(240, entry.el.clientWidth - rect.left - 8)}px`;
+    card.addEventListener('click', (event) => event.stopPropagation());
+    layer.append(card);
+  }
+
+  /** Push overlapping cards down so two nearby changes stay readable. */
+  _unstack(entry) {
+    const cards = [...entry.el.querySelectorAll('.mark-card')].sort(
+      (a, b) => a.offsetTop - b.offsetTop
+    );
+    let floor = -Infinity;
+    for (const card of cards) {
+      if (card.offsetTop < floor) card.style.top = `${floor}px`;
+      floor = card.offsetTop + card.offsetHeight + 6;
     }
   }
 

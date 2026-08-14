@@ -14,11 +14,12 @@ what order things are rejected in.
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
-__all__ = ["Hunk", "file_hunks", "reconstruct"]
+__all__ = ["Hunk", "file_hunks", "reconstruct", "word_diff"]
 
 
 @dataclass(frozen=True)
@@ -36,12 +37,15 @@ class Hunk:
     old_end: int
 
     def as_dict(self) -> dict[str, Any]:
+        before_parts, after_parts = word_diff(self.before, self.after)
         return {
             "id": self.id,
             "file": self.file,
             "kind": self.kind,
             "before": self.before,
             "after": self.after,
+            "beforeParts": before_parts,
+            "afterParts": after_parts,
             "newStart": self.new_start,
             "newEnd": self.new_end,
             "oldStart": self.old_start,
@@ -64,6 +68,38 @@ def _hunk_id(file: str, kind: str, before: str, after: str, new_start: int) -> s
 
 def _split(text: str) -> list[str]:
     return text.splitlines(keepends=True)
+
+
+# Words with their trailing whitespace, so joining the pieces is lossless.
+_WORDS = re.compile(r"\S+\s*")
+
+
+def word_diff(before: str, after: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split two strings into runs, marking which words actually differ.
+
+    Rewriting three words in a wrapped paragraph otherwise strikes out two whole
+    lines of near-identical text and leaves the reader to spot the difference.
+    Returned as ``[{"text": ..., "changed": bool}, ...]`` for each side.
+    """
+    old = _WORDS.findall(before)
+    new = _WORDS.findall(after)
+
+    before_parts: list[dict[str, Any]] = []
+    after_parts: list[dict[str, Any]] = []
+
+    def push(parts: list[dict[str, Any]], text: str, changed: bool) -> None:
+        if not text:
+            return
+        if parts and parts[-1]["changed"] == changed:
+            parts[-1]["text"] += text
+        else:
+            parts.append({"text": text, "changed": changed})
+
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, new).get_opcodes():
+        push(before_parts, "".join(old[i1:i2]), tag != "equal")
+        push(after_parts, "".join(new[j1:j2]), tag != "equal")
+
+    return before_parts, after_parts
 
 
 def file_hunks(file: str, before_text: str, after_text: str) -> list[Hunk]:

@@ -320,6 +320,90 @@ const escaped = await cdp.eval(
 );
 check('locate refuses paths outside the root', escaped === 404, String(escaped));
 
+/* ---------------- the inline before/after card ---------------- */
+
+// Drive the real drawing code with synthetic marks: no agent turn needed, and
+// it exercises exactly the path a real change takes.
+const card = await cdp.json(`(() => {
+  const { marks, viewer } = window.__texai;
+  const entry = viewer.pageEntry(1);
+  const box = { page: 1, x: 72, y: 300, width: 468, height: 10 };
+  const near = { page: 1, x: 72, y: 312, width: 468, height: 10 };
+
+  marks.turnId = 't0001';
+  marks.enabled = true;
+  marks.collapsed.clear();
+  marks.marks = [
+    { id: 'aaa', file: 'sections/model.tex', newStart: 9, kind: 'replace',
+      before: 'the parameter a reader is most likely to argue with, which makes this good.',
+      after: 'the parameter most often contested, which makes this good.',
+      beforeParts: [
+        { text: 'the parameter ', changed: false },
+        { text: 'a reader is most likely to argue with, ', changed: true },
+        { text: 'which makes this good.', changed: false }],
+      afterParts: [
+        { text: 'the parameter ', changed: false },
+        { text: 'most often contested, ', changed: true },
+        { text: 'which makes this good.', changed: false }],
+      accepted: false, boxes: [box] },
+    { id: 'bbb', file: 'sections/model.tex', newStart: 11, kind: 'insert',
+      before: '', after: 'A newly added sentence.', accepted: false, boxes: [near] },
+  ];
+  marks.draw();
+
+  const cards = [...entry.el.querySelectorAll('.mark-card')];
+  const first = cards[0];
+  const del = first.querySelector('.mark-del');
+  const add = first.querySelector('.mark-add');
+  const rects = cards.map(c => c.getBoundingClientRect());
+  return {
+    count: cards.length,
+    delText: del?.textContent ?? '',
+    addText: add?.textContent ?? '',
+    delLine: del ? getComputedStyle(del.querySelector('.w-changed')).textDecorationLine : '',
+    addLine: add ? getComputedStyle(add.querySelector('.w-changed')).textDecorationLine : '',
+    delStruck: del ? [...del.querySelectorAll('.w-changed')].map(n => n.textContent).join('') : '',
+    delPlain: del ? [...del.querySelectorAll('.w-same')].map(n => n.textContent).join('') : '',
+    addMarked: add ? [...add.querySelectorAll('.w-changed')].map(n => n.textContent).join('') : '',
+    delColor: del ? getComputedStyle(del).backgroundColor : '',
+    addColor: add ? getComputedStyle(add).backgroundColor : '',
+    buttons: [...first.querySelectorAll('button')].map(b => b.textContent),
+    overlap: rects.length === 2 ? Math.round(rects[0].bottom - rects[1].top) : null,
+    insertNote: cards[1]?.querySelector('.mark-none')?.textContent ?? '',
+    bandCount: entry.el.querySelectorAll('.mark').length,
+  };
+})()`);
+console.log('card:', card);
+
+check('a card is drawn per change', card.count === 2, String(card.count));
+check('the band is still drawn over the new text', card.bandCount === 2, String(card.bandCount));
+check('unchanged context is kept', /which makes this good/.test(card.delText), card.delText.slice(0, 40));
+check('only the changed words are struck', card.delLine.includes('line-through') && /argue with/.test(card.delStruck), card.delStruck);
+check('surrounding words are not struck', !/which makes this good/.test(card.delStruck), card.delPlain.slice(0, 45));
+check('only the new words are emphasised', /often contested/.test(card.addMarked) && !/which makes this good/.test(card.addMarked), card.addMarked);
+check('added words are not struck through', !card.addLine.includes('line-through'), card.addLine);
+check('the two are different colours', card.delColor !== card.addColor, `${card.delColor} vs ${card.addColor}`);
+check('accept and reject are on the card', card.buttons.slice(0, 2).join(',') === 'Accept,Reject', card.buttons.join(','));
+check('overlapping cards are pushed apart', card.overlap !== null && card.overlap <= 0, `${card.overlap}px overlap`);
+check('a pure insertion says so', /new/.test(card.insertNote), card.insertNote);
+
+// Clicking the band collapses the card; accepted changes start collapsed.
+const collapse = await cdp.json(`(() => {
+  const { marks, viewer } = window.__texai;
+  const entry = viewer.pageEntry(1);
+  entry.el.querySelector('.mark').click();
+  const afterClick = entry.el.querySelectorAll('.mark-card').length;
+  marks.marks[0].accepted = true;
+  marks.collapsed.clear();
+  marks.draw();
+  return { afterClick, whenAccepted: entry.el.querySelectorAll('.mark-card').length };
+})()`);
+console.log('collapse:', collapse);
+check('clicking a band collapses its card', collapse.afterClick === 1, String(collapse.afterClick));
+check('an accepted change collapses to a band', collapse.whenAccepted === 1, String(collapse.whenAccepted));
+
+await cdp.eval(`(() => { const m = window.__texai.marks; m.marks = []; m.enabled = false; m.draw(); return true; })()`);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);
