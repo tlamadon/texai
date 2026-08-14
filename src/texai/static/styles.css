@@ -520,3 +520,32 @@ button.toggle.active {
 .mark-after { background: #1e3324; border-left: 2px solid var(--ok); }
 .mark-note { color: var(--muted); font-size: 12px; }
 .mark-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+
+/* ---------------- jump-to highlight ---------------- */
+
+.flash {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  border-radius: 2px;
+  background: rgba(210, 153, 34, 0.45);
+  box-shadow: 0 0 0 2px rgba(210, 153, 34, 0.7);
+  animation: flash-fade 2.4s ease-out forwards;
+}
+
+@keyframes flash-fade {
+  0%   { opacity: 0; }
+  8%   { opacity: 1; }
+  55%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* A clickable source reference: click it and the PDF goes there. */
+.ref {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+.ref:hover { color: var(--accent); }

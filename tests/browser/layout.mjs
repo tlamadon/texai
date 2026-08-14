@@ -256,6 +256,70 @@ check('marker width tracks the zoom level', Math.abs(afterZoom.width - afterZoom
   `${afterZoom.width} vs ${afterZoom.expected}`);
 check('marker stays inside the page box', afterZoom.inside);
 
+/* ---------------- moving the view ---------------- */
+
+// A line deep in the document, on a later page: scrolling to it has to both
+// move the container and land on the right page.
+const jumpTarget = await cdp.eval(
+  `fetch('/api/locate?file=sections/results.tex&line=3').then(r => r.json()).then(JSON.stringify)`
+).then(JSON.parse);
+console.log('locate results.tex:3 ->', { found: jumpTarget.found, page: jumpTarget.page });
+check('a source line locates to a page', jumpTarget.found === true && jumpTarget.page > 1, `page ${jumpTarget.page}`);
+
+const jump = await cdp.json(`(() => {
+  const { viewer } = window.__texai;
+  const c = document.getElementById('viewer-container');
+  c.scrollTop = 0;
+  const before = c.scrollTop;
+  const loc = ${JSON.stringify(jumpTarget)};
+  const moved = viewer.scrollToBox(loc.page, loc.boxes[0]);
+  viewer.flashBox(loc.page, loc.boxes[0]);
+  const entry = viewer.pageEntry(loc.page);
+  const flash = entry.el.querySelector('.flash');
+  const box = flash ? flash.getBoundingClientRect() : null;
+  const bounds = c.getBoundingClientRect();
+  return {
+    moved,
+    before,
+    after: Math.round(c.scrollTop),
+    currentPage: viewer.currentPage,
+    flashDrawn: !!flash,
+    flashOnScreen: box ? box.top >= bounds.top - 2 && box.bottom <= bounds.bottom + 2 : false,
+  };
+})()`);
+console.log('jump:', jump);
+check('scrollToBox reports success', jump.moved === true);
+check('the view actually scrolled', jump.after > jump.before, `${jump.before} -> ${jump.after}`);
+check('the target page becomes current', jump.currentPage === jumpTarget.page, `page ${jump.currentPage}`);
+check('a flash highlight is drawn', jump.flashDrawn);
+check('the flash lands inside the viewport', jump.flashOnScreen);
+
+// The flash is transient; it must clean itself up.
+await sleep(2600);
+check(
+  'the flash removes itself',
+  (await cdp.eval(`document.querySelectorAll('.flash').length`)) === 0
+);
+
+// SyncTeX answers leniently for a line past the end of a file — it matches the
+// nearest record rather than reporting nothing — so assert the response is
+// coherent rather than empty.
+const outOfRange = await cdp.eval(
+  `fetch('/api/locate?file=sections/model.tex&line=99999').then(r => r.json()).then(JSON.stringify)`
+).then(JSON.parse);
+console.log('out-of-range line ->', { found: outOfRange.found, page: outOfRange.page });
+check(
+  'an out-of-range line still answers coherently',
+  outOfRange.found === false || (outOfRange.page >= 1 && outOfRange.boxes.length > 0),
+  `found=${outOfRange.found} page=${outOfRange.page}`
+);
+
+// A path outside the project must be refused, not located.
+const escaped = await cdp.eval(
+  `fetch('/api/locate?file=' + encodeURIComponent('../../etc/passwd') + '&line=1').then(r => r.status)`
+);
+check('locate refuses paths outside the root', escaped === 404, String(escaped));
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

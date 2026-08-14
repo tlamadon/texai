@@ -18,13 +18,23 @@ from typing import Any
 from . import transcript
 from .config import AppConfig
 from .events import EventBus
+from .navigate import LocateError, locate
 from .prompt import SYSTEM_PROMPT_APPEND
 
 __all__ = ["AgentUnavailable", "TurnOutcome", "AgentSession", "sdk_status"]
 
 # Everything the agent needs to edit LaTeX. Bash is deliberately absent: the
 # harness owns compilation, so a shell would only add risk and thrash.
-ALLOWED_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "NotebookEdit"]
+ALLOWED_TOOLS = [
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "NotebookEdit",
+    # In-process tool that scrolls the user's PDF view (see build_navigation_server).
+    "mcp__texai__show_in_pdf",
+]
 DISALLOWED_TOOLS = ["Bash", "WebFetch", "WebSearch", "Task", "KillShell", "BashOutput"]
 
 INSTALL_HINT = (
@@ -93,6 +103,78 @@ def summarize_tool_use(name: str, tool_input: dict[str, Any], root: Path) -> str
     return ""
 
 
+SHOW_IN_PDF_DESCRIPTION = """
+Scroll the user's PDF view to a source location, so they are looking at the
+thing you are talking about.
+
+Call this whenever the user asks to be shown, taken to, or pointed at something
+in the document — a table, a figure, a definition, an equation, a section — and
+whenever your answer refers to a specific place they would want to see. Find the
+file and line first (Grep is usually enough), then call this with them.
+
+It moves the view only; it changes nothing. Prefer calling it over describing
+where something is in words.
+""".strip()
+
+
+def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
+    """An in-process MCP server giving the agent one action: move the view.
+
+    Runs in this process, so the handler can publish straight onto the event
+    bus the browser is already listening to.
+    """
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    @tool(
+        "show_in_pdf",
+        SHOW_IN_PDF_DESCRIPTION,
+        {
+            "file": str,
+            "line": int,
+            "why": str,
+        },
+    )
+    async def show_in_pdf(args: dict[str, Any]) -> dict[str, Any]:
+        file = str(args.get("file", "")).strip()
+        line = int(args.get("line", 1) or 1)
+        why = str(args.get("why", "") or "").strip()
+
+        try:
+            found = await asyncio.to_thread(locate, config, file, line)
+        except LocateError as exc:
+            return {"content": [{"type": "text", "text": f"Could not show that: {exc}"}]}
+
+        if not found["found"]:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"SyncTeX has no record of {found['file']}:{found['line']}, so the "
+                            "view did not move. That line may produce no output (a comment, a "
+                            "definition, or something inside an untracked environment) — try a "
+                            "line that renders visible text."
+                        ),
+                    }
+                ]
+            }
+
+        bus.publish("navigate", **found, why=why)
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Showing {found['file']}:{found['line']} — the view moved to page "
+                        f"{found['page']}."
+                    ),
+                }
+            ]
+        }
+
+    return create_sdk_mcp_server(name="texai", version="1.0.0", tools=[show_in_pdf])
+
+
 class AgentSession:
     """A single persistent agent conversation scoped to one project."""
 
@@ -136,6 +218,7 @@ class AgentSession:
 
         options = ClaudeAgentOptions(
             cwd=str(self.config.root),
+            mcp_servers={"texai": build_navigation_server(self.config, self.bus)},
             permission_mode="acceptEdits",
             allowed_tools=list(ALLOWED_TOOLS),
             disallowed_tools=list(DISALLOWED_TOOLS),

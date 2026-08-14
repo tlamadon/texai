@@ -21,6 +21,17 @@ const el = (tag, className, text) => {
 const truncate = (text, limit) =>
   text && text.length > limit ? `${text.slice(0, limit - 1)}…` : text || '';
 
+/** A `file:line` label that scrolls the PDF to that spot when clicked. */
+function refNode(file, line, onGoTo, label) {
+  const node = el('span', 'file ref', label ?? `${file}:${line}`);
+  node.title = `Show ${file}:${line} in the PDF`;
+  node.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onGoTo?.(file, line);
+  });
+  return node;
+}
+
 export class ChatPanel {
   constructor() {
     this.els = {
@@ -47,6 +58,8 @@ export class ChatPanel {
     this.view = 'chat';
     this.lastTranscriptTurn = null;
     this.onTurnFinished = null;
+    this.onGoTo = null;      // click a file:line reference
+    this.onNavigate = null;  // the agent moved the view itself
 
     this._wire();
   }
@@ -144,7 +157,10 @@ export class ChatPanel {
       const node = el('div', 'chip');
 
       const head = el('div', 'chip-head');
-      head.append(el('span', 'chip-ref', `${chip.file}:${chip.line}`));
+      const ref = el('span', 'chip-ref ref', `${chip.file}:${chip.line}`);
+      ref.title = 'Show this passage in the PDF';
+      ref.addEventListener('click', () => this.onGoTo?.(chip.file, chip.line));
+      head.append(ref);
       head.append(
         el('span', 'chip-text', chip.selectedText ? `“${truncate(chip.selectedText, MAX_CHIP_TEXT)}”` : '')
       );
@@ -306,6 +322,9 @@ export class ChatPanel {
         this.agent = { ...this.agent, available: true, reason: null };
         this._renderStatus();
         break;
+      case 'navigate':
+        this.onNavigate?.(event);
+        break;
       case 'agent_session':
         this.agent = {
           ...this.agent,
@@ -401,7 +420,7 @@ export class ChatPanel {
       const refs = el('div', 'changes');
       for (const selection of turn.selections) {
         const line = el('div', 'change');
-        line.append(el('span', 'file', `${selection.file}:${selection.line}`));
+        line.append(refNode(selection.file, selection.line, this.onGoTo));
         if (selection.instruction) line.append(el('span', '', selection.instruction));
         refs.append(line);
       }
@@ -472,7 +491,12 @@ export class ChatPanel {
       const list = el('div', 'changes');
       for (const change of turn.changes) {
         const row = el('div', 'change');
-        row.append(el('span', 'file', change.file));
+        const firstHunk = (turn.hunks || []).find((h) => h.file === change.file);
+        row.append(
+          firstHunk
+            ? refNode(change.file, firstHunk.newStart, this.onGoTo, change.file)
+            : el('span', 'file', change.file)
+        );
         row.append(el('span', 'plus', `+${change.added}`));
         row.append(el('span', 'minus', `−${change.removed}`));
         list.append(row);

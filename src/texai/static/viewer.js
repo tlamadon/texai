@@ -201,15 +201,31 @@ export class PdfViewer {
 
   _updateCurrentPage() {
     const bounds = this.container.getBoundingClientRect();
-    let current = this.currentPage;
+    const middle = bounds.top + bounds.height / 2;
+
+    // The page you are actually looking at is the one under the middle of the
+    // viewport, not whichever page has a sliver at the top — otherwise jumping
+    // to something on page 4 leaves the indicator reading 3.
+    let current = null;
     for (const entry of this.pages) {
       const rect = entry.el.getBoundingClientRect();
-      if (rect.bottom > bounds.top + 1) {
+      if (rect.top <= middle && rect.bottom >= middle) {
         current = entry.num;
         break;
       }
     }
-    if (current !== this.currentPage) {
+    if (current === null) {
+      // The centre can fall in the gap between two pages.
+      for (const entry of this.pages) {
+        const rect = entry.el.getBoundingClientRect();
+        if (rect.bottom > bounds.top + 1) {
+          current = entry.num;
+          break;
+        }
+      }
+    }
+
+    if (current !== null && current !== this.currentPage) {
       this.currentPage = current;
       this.onPageChange(current, this.pageCount);
     }
@@ -307,6 +323,45 @@ export class PdfViewer {
       width: Math.abs(x2 - x1),
       height: Math.abs(y2 - y1),
     };
+  }
+
+  /**
+   * Scroll a PDF-point box into the middle of the view.
+   *
+   * Page elements are always laid out (they carry their size before they
+   * render), so this works even for a page whose canvas has not been drawn yet
+   * — rendering follows the scroll.
+   */
+  scrollToBox(pageNumber, box) {
+    const entry = this.pageEntry(pageNumber);
+    if (!entry || !entry.viewport) return false;
+
+    const rect = box ? this.pdfRectToPageRect(entry, box) : { top: 0, height: 0 };
+    const pageRect = entry.el.getBoundingClientRect();
+    const bounds = this.container.getBoundingClientRect();
+    const delta =
+      pageRect.top - bounds.top + rect.top + rect.height / 2 - bounds.height / 2;
+
+    this.container.scrollTop += delta;
+    this._updateCurrentPage();
+    this._renderVisible();
+    return true;
+  }
+
+  /** Briefly highlight a box, so the eye lands where the view just jumped. */
+  flashBox(pageNumber, box) {
+    const entry = this.pageEntry(pageNumber);
+    if (!entry || !entry.viewport) return;
+
+    const rect = this.pdfRectToPageRect(entry, box);
+    const node = document.createElement('div');
+    node.className = 'flash';
+    node.style.left = `${rect.left}px`;
+    node.style.top = `${rect.top}px`;
+    node.style.width = `${Math.max(rect.width, 8)}px`;
+    node.style.height = `${Math.max(rect.height, 6)}px`;
+    entry.el.append(node);
+    setTimeout(() => node.remove(), 2400);
   }
 
   /**

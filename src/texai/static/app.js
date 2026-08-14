@@ -42,6 +42,36 @@ const viewer = new PdfViewer({
 
 const chat = new ChatPanel();
 marks = new MarksLayer({ viewer, button: els.toggleMarks });
+/* ---------------- moving the view ---------------- */
+
+function showLocation(loc) {
+  if (!loc || !loc.found) {
+    showToast(
+      `${loc?.file ?? 'That line'}:${loc?.line ?? ''} produces no output in the PDF.`,
+      { type: 'error' }
+    );
+    return;
+  }
+  viewer.scrollToBox(loc.page, loc.boxes[0]);
+  for (const box of loc.boxes) viewer.flashBox(box.page, box);
+}
+
+async function goTo(file, line) {
+  try {
+    showLocation(
+      await getJSON(`/api/locate?file=${encodeURIComponent(file)}&line=${encodeURIComponent(line)}`)
+    );
+  } catch (err) {
+    showToast(err.message || String(err), { type: 'error' });
+  }
+}
+
+chat.onGoTo = goTo;
+chat.onNavigate = (event) => {
+  showLocation(event);
+  if (event.why) showToast(event.why);
+};
+
 chat.onTurnFinished = (turn) => {
   if (turn.status === 'applied' || turn.hunks?.length) marks.showTurn(turn.id);
 };

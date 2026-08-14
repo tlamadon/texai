@@ -101,3 +101,41 @@ def test_second_snapshot_with_same_id_replaces_the_first(project: Path, tmp_path
     snapshot = take_snapshot(project, snaps, "t0001")
     assert "refs.bib" not in snapshot.files
     assert not (snapshot.directory / "refs.bib").exists()
+
+
+def test_snapshots_live_outside_the_project(tmp_path: Path):
+    """Snapshot copies inside the root show up in the agent's own Glob/Grep."""
+    from texai.config import AppConfig
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "main.tex").write_text("\\begin{document}\\end{document}\n")
+    (root / "main.pdf").write_bytes(b"%PDF-1.4\n")
+
+    config = AppConfig.create(root, root / "main.pdf")
+    assert not str(config.snapshots_dir).startswith(str(config.root))
+    # The selection file stays in the project: external agents read it there.
+    assert str(config.selection_file).startswith(str(config.root))
+
+
+def test_snapshot_directory_is_stable_per_project(tmp_path: Path):
+    from texai.config import AppConfig
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "main.pdf").write_bytes(b"%PDF-1.4\n")
+    first = AppConfig.create(root, root / "main.pdf").snapshots_dir
+    second = AppConfig.create(root, root / "main.pdf").snapshots_dir
+    assert first == second
+
+
+def test_different_projects_get_different_snapshot_directories(tmp_path: Path):
+    from texai.config import AppConfig
+
+    dirs = []
+    for name in ("a", "b"):
+        root = tmp_path / name
+        root.mkdir()
+        (root / "main.pdf").write_bytes(b"%PDF-1.4\n")
+        dirs.append(AppConfig.create(root, root / "main.pdf").snapshots_dir)
+    assert dirs[0] != dirs[1]

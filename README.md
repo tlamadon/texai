@@ -103,6 +103,28 @@ Where it is approximate, honestly:
 - Only the most recent turn's changes are shown; older turns' line numbers have
   moved on.
 
+### Moving the view
+
+Any `file:line` in the chat is clickable — a selection you attached, a changed
+file, a chip — and the PDF scrolls there with a brief highlight.
+
+The agent can move the view too. It has one in-process tool,
+`show_in_pdf(file, line, why)`, so you can ask for things it has to go and find:
+
+> take me to the summary statistics table
+
+It greps the source, locates the caption, calls the tool, and the page scrolls
+under you:
+
+```
+⏵ Grep  summary statistics in .
+  ⎿ sections/data.tex:33: \caption{Summary statistics for the estimation sample…}
+⏵ mcp__texai__show_in_pdf  file: sections/data.tex, line: 26
+  ⎿ Showing sections/data.tex:26 — the view moved to page 3.
+```
+
+The tool only scrolls; it cannot change anything.
+
 ### Two views, one stream
 
 The panel has a **Chat** tab and a **Transcript** tab over the same underlying
@@ -220,9 +242,13 @@ absent.
   sends back — is resolved through symlinks and must stay inside `--root`.
 - The agent gets `Read`, `Write`, `Edit`, `Glob` and `Grep`. No `Bash`, no web
   access, no subagents. It cannot run the build; the harness does that.
+- The agent gets one tool of our own, `show_in_pdf`, which scrolls your view
+  and nothing else.
 - Every turn is snapshotted before the agent starts, so any turn can be undone
   and a turn that breaks the build undoes itself. Snapshots are plain file
-  copies under `.texai/snapshots/` — no git history is written.
+  copies in a temp directory keyed by project — deliberately *outside* the
+  project, or they would turn up in the agent's own Glob and Grep results. No
+  git history is written.
 
 ## Third-party code
 
@@ -261,6 +287,7 @@ src/texai/
   build.py       compiling, and reading errors out of the log
   snapshots.py   per-turn source copies, diffing and revert
   hunks.py       structured diff hunks: stable ids, per-hunk rollback
+  navigate.py    locating a source line in the rendered PDF
   turns.py       snapshot -> agent -> build -> diff, or revert
   server.py      FastAPI routes
   static/        vanilla two-panel UI + vendored PDF.js

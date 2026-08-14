@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,7 +64,16 @@ class AppConfig:
 
     @property
     def snapshots_dir(self) -> Path:
-        return self.state_dir / SNAPSHOTS_DIRNAME
+        """Where per-turn source copies live — deliberately outside the project.
+
+        Kept in the project root, the copies show up in the agent's own Glob and
+        Grep results: every ``**/*.tex`` returns one hit per snapshot, and the
+        agent can end up reading (or editing) a backup instead of the real file.
+        Session-scoped state, so a temp directory is the right home; losing it
+        on reboot costs nothing, because revert only spans a running session.
+        """
+        key = hashlib.sha1(str(self.root).encode("utf-8")).hexdigest()[:12]
+        return Path(tempfile.gettempdir()) / "texai" / key / SNAPSHOTS_DIRNAME
 
     @property
     def search_dirs(self) -> list[Path]:

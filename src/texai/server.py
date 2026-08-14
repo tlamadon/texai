@@ -19,6 +19,7 @@ from .agent import AgentSession, AgentUnavailable, sdk_status
 from .config import AppConfig
 from .events import EventBus, sse_stream
 from .models import ChatRequest, SelectRequest, SelectResponse
+from .navigate import LocateError, locate
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .selection import atomic_write_json, build_selection
 from .synctex import (
@@ -302,6 +303,18 @@ def create_app(
         if turn is None:
             raise _error(404, "turn_not_found", f"No turn {turn_id}.")
         return turn.as_dict(include_diff=True)
+
+    @app.get("/api/locate")
+    async def locate_line(file: str, line: int = 1) -> dict[str, Any]:
+        """Where a source line sits in the PDF.
+
+        Backs the clickable `file:line` references in the chat panel: the
+        browser asks where a line landed, then scrolls there itself.
+        """
+        try:
+            return await asyncio.to_thread(locate, config, file, line)
+        except LocateError as exc:
+            raise _error(404, "not_locatable", str(exc)) from exc
 
     @app.get("/api/turns/{turn_id}/marks")
     async def turn_marks(turn_id: str) -> dict[str, Any]:
