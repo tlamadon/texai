@@ -396,6 +396,34 @@ class TurnController:
         self.refresh_review_states()
         self.bus.publish("changes_updated", reason="rejected", hunkId=hunk_id, file=relative)
 
+    def absorb_manual_edit(self, relative: str) -> None:
+        """Fold a hand edit into the baseline so it is not up for review.
+
+        The review is about what the agent did. Your own typing appearing as a
+        pending change to accept would be noise.
+        """
+        if self._baseline is None:
+            return
+        source = self.config.root / relative
+        destination = self._baseline.directory / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_file():
+            shutil.copy2(source, destination)
+        elif destination.is_file():
+            destination.unlink()
+        self.refresh_review_states()
+
+    async def rebuild(self) -> BuildResult | None:
+        """Compile the document outside a turn, for saves from the editor."""
+        try:
+            return await run_build(
+                self.config.build_argv(),
+                self.config.build_dir,
+                log_path=self.config.pdf_path.with_suffix(".log"),
+            )
+        except BuildError:
+            return None
+
     async def accept_all(self) -> int:
         """Close the review: everything still pending becomes the new baseline."""
         pending = [c for c in self.session_changes() if c["status"] == "pending"]

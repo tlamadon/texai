@@ -3,6 +3,8 @@
 
 import { getJSON, postJSON } from './api.js';
 import { ChatPanel } from './chat.js';
+import { GitPanel } from './git.js';
+import { SourceEditor } from './editor.js';
 import { MarksLayer } from './marks.js';
 import { showToast } from './toast.js';
 import { PdfViewer } from './viewer.js';
@@ -26,6 +28,7 @@ const els = {
   acceptAll: document.getElementById('accept-all'),
   conn: document.getElementById('conn'),
   modKey: document.getElementById('mod-key'),
+  composer: document.getElementById('composer'),
 };
 
 let marks = null;
@@ -43,6 +46,24 @@ const viewer = new PdfViewer({
 
 const chat = new ChatPanel();
 marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.acceptAll });
+
+// Saving rebuilds the PDF; the watcher below notices the new version and
+// reloads the page, so there is nothing to do here but let it happen.
+const editor = new SourceEditor();
+const git = new GitPanel();
+editor.onSaved = () => git.refresh();
+
+// The composer writes to the agent, so it only belongs to the chat views.
+chat.onViewChange = (view) => {
+  els.composer.hidden = view === 'source';
+  editor.setActive(view === 'source');
+};
+
+/** Open the source behind a spot in the document. */
+async function editAt(file, line) {
+  chat.setView('source');
+  await editor.open(file, line);
+}
 /* ---------------- moving the view ---------------- */
 
 function showLocation(loc) {
@@ -68,6 +89,7 @@ async function goTo(file, line) {
 }
 
 chat.onGoTo = goTo;
+marks.onEdit = (file, line) => editAt(file, line);
 chat.onNavigate = (event) => {
   showLocation(event);
   if (event.why) showToast(event.why);
@@ -75,7 +97,13 @@ chat.onNavigate = (event) => {
 
 // Changes accumulate across turns until accepted, so any of these just means
 // "the pending set moved".
-chat.onChangesUpdated = () => marks.refresh();
+chat.onChangesUpdated = () => {
+  marks.refresh();
+  git.refresh();
+  // The agent may have rewritten the file sitting in the editor; take its
+  // version unless there is unsaved typing to protect.
+  editor.reload();
+};
 
 let lastSelection = null;
 let pdfVersion = null;
@@ -154,7 +182,30 @@ async function select(entry, clientX, clientY, selectedText) {
   }
 }
 
+/** Alt-click: jump to the source behind the click, without recording it. */
+async function openSourceAt(entry, clientX, clientY) {
+  try {
+    const point = viewer.clientPointToPdf(entry, clientX, clientY);
+    const where = await postJSON('/api/resolve', {
+      page: entry.num,
+      x: Number(point.x.toFixed(3)),
+      y: Number(point.y.toFixed(3)),
+      selectedText: null,
+    });
+    await editAt(where.file, where.line);
+  } catch (err) {
+    showToast(err.message || String(err), { type: 'error' });
+  }
+}
+
 function onViewerClick(event) {
+  if (event.altKey && event.button === 0) {
+    event.preventDefault();
+    const entry = viewer.pageAtClientPoint(event.clientX, event.clientY);
+    if (entry) openSourceAt(entry, event.clientX, event.clientY);
+    return;
+  }
+
   const modifier = IS_MAC ? event.metaKey : event.ctrlKey || event.metaKey;
   if (!modifier || event.button !== 0) return;
   event.preventDefault();
@@ -288,10 +339,13 @@ async function boot() {
   await poll();
   setInterval(poll, POLL_MS);
   chat.start().catch(() => showToast('Chat panel failed to start', { type: 'error' }));
+  git.start().catch(() => {
+    /* a project outside git simply has no pill */
+  });
 }
 
 // Exposed for the browser layout suite (and handy from the devtools console).
 // Read-only handles; nothing here is part of the page's own control flow.
-window.__texai = { viewer, chat, marks };
+window.__texai = { viewer, chat, marks, editor, git };
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));

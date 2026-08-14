@@ -63,6 +63,7 @@ button.ghost { background: transparent; }
    from under the pointer between clicks. */
 .canvas-pane,
 .chat-pane {
+  position: relative;   /* the git panel hangs off the toolbar */
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -659,3 +660,214 @@ button.toggle.active {
   font-style: italic;
   padding: 1px 6px;
 }
+
+/* ---------------- source editor ---------------- */
+
+/* Same flex contract as .messages: a column that owns the leftover height and
+   may shrink, so the editor scrolls internally instead of pushing the pane. */
+.editor-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--panel-2);
+}
+
+.editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--panel-border);
+  flex: 0 0 auto;
+}
+
+.editor-file {
+  background: #363c45;
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font: inherit;
+  max-width: 240px;
+}
+
+.editor-bar .dot { color: var(--warn); font-size: 18px; line-height: 1; }
+
+.editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-status {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border-top: 1px solid var(--panel-border);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 96px;
+  overflow-y: auto;
+}
+.editor-status.ok { color: var(--ok); }
+.editor-status.err { color: var(--err); }
+.editor-status.busy { color: var(--warn); }
+
+/* CodeMirror, dressed to match the rest of the panel. */
+.editor-host .CodeMirror {
+  height: 100%;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+.editor-host .CodeMirror-gutters {
+  background: var(--panel-2);
+  border-right: 1px solid var(--panel-border);
+}
+.editor-host .CodeMirror-linenumber { color: #6e7681; }
+.editor-host .CodeMirror-cursor { border-left: 1px solid var(--fg); }
+.editor-host .CodeMirror-selected { background: #33415c; }
+.editor-host .CodeMirror-focused .CodeMirror-selected { background: #3b4c6e; }
+.editor-host .CodeMirror-matchingbracket { color: var(--accent); font-weight: 600; }
+.editor-host .cm-tag, .editor-host .cm-keyword { color: #79c0ff; }
+.editor-host .cm-builtin { color: #d2a8ff; }
+.editor-host .cm-atom, .editor-host .cm-number { color: #ffa657; }
+.editor-host .cm-comment { color: #6e7681; font-style: italic; }
+.editor-host .cm-string { color: #a5d6ff; }
+.editor-host .cm-variable-2 { color: #7ee787; }
+
+/* Where you landed after a jump, and where LaTeX failed. */
+.editor-host .cm-flash { background: rgba(76, 141, 255, 0.22); }
+.editor-host .cm-error-line { background: rgba(248, 81, 73, 0.16); }
+
+/* The card's location label opens the editor, but should read as a link. */
+.mark-card-head .mark-where {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mark-card-head .mark-where:hover { color: var(--accent); text-decoration: underline; }
+
+/* ---------------- git ---------------- */
+
+.git-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 999px;
+  max-width: 220px;
+}
+.git-pill .git-icon { color: var(--muted); flex: 0 0 auto; }
+.git-pill #git-branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
+}
+.git-pill.active { border-color: var(--accent); color: var(--accent); }
+
+.git-count,
+.git-ahead {
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #1f2226;
+  font-weight: 600;
+}
+.git-count.conflict { background: var(--err); color: #fff; }
+.git-ahead { background: var(--accent); color: #fff; }
+
+.git-panel {
+  position: absolute;
+  top: 44px;
+  right: 12px;
+  z-index: 40;
+  width: 340px;
+  max-height: calc(100% - 64px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.git-panel.busy { opacity: 0.85; }
+
+.git-where { color: var(--muted); font-size: 11px; }
+
+.git-files {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  max-height: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.git-files > * { flex: 0 0 auto; }  /* same reason as .messages > * */
+
+.git-file { display: flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.git-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-state {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.git-state.modified { color: var(--warn); }
+.git-state.untracked { color: var(--ok); }
+.git-state.added { color: var(--ok); }
+.git-state.deleted { color: var(--err); }
+.git-state.conflicted { color: var(--err); }
+
+.git-empty { color: var(--muted); font-size: 12px; }
+
+.git-compose { display: flex; flex-direction: column; gap: 6px; }
+.git-compose textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.git-compose textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.git-message-note { color: var(--muted); font-size: 11px; }
+.git-message-note.warn { color: var(--warn); }
+
+.git-buttons { display: flex; align-items: center; gap: 6px; }
+.git-buttons .spacer { flex: 1; }
+
+.git-output {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 6px;
+}
+.git-output.ok { color: var(--ok); }
+.git-output.err { color: var(--err); }
+.git-output.busy { color: var(--warn); }

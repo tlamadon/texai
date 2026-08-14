@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 __all__ = [
     "SelectRequest",
+    "SourceWrite",
+    "CommitRequest",
     "SourceLocation",
     "SelectResponse",
     "SelectionRef",
@@ -100,3 +102,32 @@ class SelectResponse(BaseModel):
     message: str
     source: SourceLocation
     selection: dict[str, Any]
+
+
+MAX_SOURCE_TEXT = 5_000_000
+
+
+class SourceWrite(BaseModel):
+    """An editor save: the new text plus the hash it was based on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(min_length=1, max_length=1024)
+    text: str = Field(max_length=MAX_SOURCE_TEXT)
+    baseSha: str | None = Field(default=None, max_length=64)
+
+    @field_validator("file")
+    @classmethod
+    def _reject_traversal(cls, value: str) -> str:
+        candidate = PurePosixPath(value)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("file must be a relative path inside the project")
+        return value
+
+
+class CommitRequest(BaseModel):
+    """A commit message, as edited by the user before they pressed Commit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=4000)

@@ -166,6 +166,7 @@ export class MarksLayer {
     // their card, accepted ones stay collapsed until asked for.
     this.state = new Map();
     this.anchors = new Map();
+    this.onEdit = null; // open a change's line in the source editor
 
     if (this.button) {
       this.button.addEventListener('click', () => this.toggle());
@@ -361,7 +362,14 @@ export class MarksLayer {
     card.dataset.markId = mark.id;
 
     const head = el('div', 'mark-card-head');
-    head.append(el('span', 'mark-where', `${mark.file}:${mark.newStart}`));
+    // The location doubles as the way into the editor at that exact line.
+    const where = el('button', 'mark-where', `${mark.file}:${mark.newStart}`);
+    where.title = 'Open this line in the editor';
+    where.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.onEdit?.(mark.file, mark.newStart);
+    });
+    head.append(where);
     head.append(el('span', 'spacer'));
 
     const accept = el('button', 'mark-accept', 'Accept');

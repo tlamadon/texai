@@ -308,3 +308,194 @@ def test_event_route_is_registered(config: AppConfig):
     app = create_app(config, synctex_runner=fake_runner())
     routes = {getattr(route, "path", None) for route in app.routes}
     assert "/api/events" in routes
+
+
+# ---------------------------------------------------------------- editing
+
+
+def test_source_files_lists_the_project(config: AppConfig):
+    client = make_client(config, fake_runner())
+    body = client.get("/api/source/files").json()
+    assert "sections/model.tex" in body["files"]
+    assert not any(f.endswith(".pdf") for f in body["files"])
+
+
+def test_source_round_trip(config: AppConfig, project: Path):
+    client = make_client(config, fake_runner())
+
+    loaded = client.get("/api/source", params={"file": "sections/model.tex"}).json()
+    assert loaded["text"] == "\\section{Model}\n"
+
+    response = client.post(
+        "/api/source",
+        json={"file": "sections/model.tex", "text": "\\section{Edited}\n", "baseSha": loaded["sha"]},
+    )
+    assert response.status_code == 200, response.text
+    assert (project / "sections" / "model.tex").read_text() == "\\section{Edited}\n"
+    # No build command is configured in tests, so the rebuild is a no-op, not a crash.
+    assert "build" in response.json()
+
+
+@pytest.mark.parametrize(
+    "file",
+    ["../escape.tex", "/etc/passwd", "build/main.pdf"],
+)
+def test_source_read_refuses_paths_it_should_not_serve(config: AppConfig, file: str):
+    client = make_client(config, fake_runner())
+    assert client.get("/api/source", params={"file": file}).status_code in (404, 422)
+
+
+@pytest.mark.parametrize("file", ["../escape.tex", "sections/../../escape.tex"])
+def test_source_write_refuses_to_escape_the_root(config: AppConfig, project: Path, file: str):
+    client = make_client(config, fake_runner())
+    response = client.post("/api/source", json={"file": file, "text": "pwned", "baseSha": None})
+    assert response.status_code == 422
+    assert not (project.parent / "escape.tex").exists()
+
+
+def test_source_write_refuses_stale_saves(config: AppConfig, project: Path):
+    client = make_client(config, fake_runner())
+    client.get("/api/source", params={"file": "sections/model.tex"})
+    (project / "sections" / "model.tex").write_text("someone else got here first\n")
+
+    response = client.post(
+        "/api/source",
+        json={"file": "sections/model.tex", "text": "mine\n", "baseSha": "0" * 16},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "source_conflict"
+    assert (project / "sections" / "model.tex").read_text() == "someone else got here first\n"
+
+
+def test_resolve_maps_a_point_without_recording_it(config: AppConfig):
+    client = make_client(config, fake_runner())
+    response = client.post("/api/resolve", json={"page": 1, "x": 100.0, "y": 200.0})
+
+    assert response.status_code == 200
+    assert response.json() == {"file": "sections/model.tex", "line": 143, "column": 1}
+    # Unlike /api/select, it leaves no trace on disk.
+    assert not config.selection_file.exists()
+
+
+def test_resolve_rejects_bad_coordinates(config: AppConfig):
+    client = make_client(config, fake_runner())
+    assert client.post("/api/resolve", json={"page": 0, "x": 1.0, "y": 1.0}).status_code == 422
+
+
+# ---------------------------------------------------------------- git
+
+
+def git_repo(root: Path) -> None:
+    import subprocess
+
+    def run(*args: str):
+        subprocess.run(list(args), cwd=root, capture_output=True, text=True, check=False)
+
+    run("git", "init", "-q", "-b", "main", ".")
+    run("git", "config", "user.email", "test@example.com")
+    run("git", "config", "user.name", "Test")
+    run("git", "config", "commit.gpgsign", "false")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "initial")
+
+
+def fake_writer(message: str = "Tighten the model section", source: str = "agent"):
+    async def writer(config, status, diff, model=None):  # noqa: ARG001
+        writer.calls.append({"diff": diff, "dirty": status.dirty})
+        return {"message": message, "source": source}
+
+    writer.calls = []  # type: ignore[attr-defined]
+    return writer
+
+
+def test_git_status_without_a_repository(config: AppConfig):
+    client = make_client(config, fake_runner())
+    body = client.get("/api/git/status").json()
+    assert body["repo"] is False
+    assert body["dirty"] == 0
+
+
+def test_git_status_reports_uncommitted_work(config: AppConfig, project: Path):
+    git_repo(project)
+    (project / "sections" / "model.tex").write_text("\\section{Changed}\n")
+    client = make_client(config, fake_runner())
+
+    body = client.get("/api/git/status").json()
+
+    assert body["repo"] is True
+    assert body["branch"] == "main"
+    assert body["dirty"] == 1
+    assert body["files"][0]["path"] == "sections/model.tex"
+
+
+def test_git_message_asks_the_agent_with_a_diff(config: AppConfig, project: Path):
+    git_repo(project)
+    (project / "sections" / "model.tex").write_text("\\section{Changed}\n")
+    writer = fake_writer()
+    client = TestClient(
+        create_app(config, synctex_runner=fake_runner(), message_writer=writer),
+        base_url="http://127.0.0.1",
+    )
+
+    body = client.post("/api/git/message", json={}).json()
+
+    assert body["message"] == "Tighten the model section"
+    assert body["source"] == "agent"
+    assert len(writer.calls) == 1
+    assert "section{Changed}" in writer.calls[0]["diff"]
+
+
+def test_git_message_needs_something_to_describe(config: AppConfig, project: Path):
+    git_repo(project)
+    client = TestClient(
+        create_app(config, synctex_runner=fake_runner(), message_writer=fake_writer()),
+        base_url="http://127.0.0.1",
+    )
+    response = client.post("/api/git/message", json={})
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "git_clean"
+
+
+def test_git_commit_records_the_message(config: AppConfig, project: Path):
+    import subprocess
+
+    git_repo(project)
+    (project / "sections" / "model.tex").write_text("\\section{Changed}\n")
+    client = make_client(config, fake_runner())
+
+    body = client.post("/api/git/commit", json={"message": "Rework the model"}).json()
+
+    assert body["ok"] is True
+    assert body["subject"] == "Rework the model"
+    assert body["status"]["dirty"] == 0
+    log = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s"], cwd=project, capture_output=True, text=True
+    )
+    assert log.stdout.strip() == "Rework the model"
+
+
+def test_git_commit_reports_failure_clearly(config: AppConfig, project: Path):
+    git_repo(project)
+    client = make_client(config, fake_runner())
+
+    response = client.post("/api/git/commit", json={"message": "nothing to do"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "git_failed"
+    assert "Nothing to commit" in response.json()["detail"]["message"]
+
+
+@pytest.mark.parametrize("payload", [{}, {"message": ""}, {"message": "x", "extra": 1}])
+def test_git_commit_validates_its_input(config: AppConfig, payload: dict):
+    client = make_client(config, fake_runner())
+    assert client.post("/api/git/commit", json=payload).status_code == 422
+
+
+def test_git_pull_and_push_report_their_failures(config: AppConfig, project: Path):
+    git_repo(project)
+    client = make_client(config, fake_runner())
+
+    for route in ("/api/git/pull", "/api/git/push"):
+        response = client.post(route, json={})
+        assert response.status_code == 409, route
+        assert response.json()["detail"]["error"] == "git_failed"

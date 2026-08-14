@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>texai</title>
   <link rel="stylesheet" href="/static/vendor/pdfjs/text_layer.css">
+  <link rel="stylesheet" href="/static/vendor/codemirror/codemirror.css">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -35,7 +36,42 @@
         <button id="copy-reference" type="button" class="secondary" disabled
                 title="Copy the last selection as text">Copy reference</button>
         <span id="conn" class="conn" title="PDF watcher">watching</span>
+
+        <button id="git-pill" class="git-pill" type="button" hidden>
+          <svg class="git-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <path fill="currentColor" d="M5 3.25a1.75 1.75 0 1 0-2.5 1.585v6.33a1.75 1.75 0 1 0 1.5 0V8.5c.4.32.9.5 1.5.5h2.75a2.75 2.75 0 0 0 2.75-2.665A1.75 1.75 0 1 0 9.5 6.25 1.25 1.25 0 0 1 8.25 7.5H5.5c-.28 0-.5-.22-.5-.5V4.835c.3-.17.5-.47.5-.835ZM3.75 2.5a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Zm0 10a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Zm7.5-10a.75.75 0 1 1 0 1.5.75.75 0 0 1 0-1.5Z"/>
+          </svg>
+          <span id="git-branch">&mdash;</span>
+          <span id="git-count" class="git-count" hidden>0</span>
+          <span id="git-ahead" class="git-ahead" hidden></span>
+        </button>
       </header>
+
+      <section id="git-panel" class="git-panel" hidden aria-label="Git">
+        <div id="git-where" class="git-where"></div>
+        <div id="git-files" class="git-files"></div>
+
+        <div id="git-compose" class="git-compose" hidden>
+          <textarea id="git-message" rows="4"
+                    placeholder="Commit message"></textarea>
+          <div id="git-message-note" class="git-message-note"></div>
+          <div class="git-buttons">
+            <div class="spacer"></div>
+            <button id="git-cancel" type="button" class="ghost">Cancel</button>
+            <button id="git-confirm" type="button" class="primary">Commit</button>
+          </div>
+        </div>
+
+        <div class="git-buttons">
+          <button id="git-commit" type="button" class="secondary">Commit</button>
+          <div class="spacer"></div>
+          <button id="git-pull" type="button" class="ghost"
+                  title="git pull --rebase">Pull</button>
+          <button id="git-push" type="button" class="ghost">Push</button>
+        </div>
+
+        <div id="git-output" class="git-output" hidden></div>
+      </section>
 
       <main id="viewer-container" class="viewer-container">
         <div id="viewer" class="viewer"></div>
@@ -44,7 +80,7 @@
 
       <footer class="hintbar">
         <kbd id="mod-key">Cmd</kbd>-click a passage to attach it to your next message.
-        Select text first to include it.
+        Select text first to include it. <kbd>Alt</kbd>-click to edit its source.
       </footer>
     </section>
 
@@ -56,6 +92,8 @@
         <div class="tabs" role="tablist">
           <button id="tab-chat" class="tab active" type="button" role="tab">Chat</button>
           <button id="tab-transcript" class="tab" type="button" role="tab">Transcript</button>
+          <button id="tab-source" class="tab" type="button" role="tab"
+                  title="Edit the LaTeX source; saving rebuilds the PDF">Source</button>
         </div>
         <span id="agent-status" class="agent-status">checking&hellip;</span>
         <div class="spacer"></div>
@@ -75,7 +113,21 @@
 
       <pre id="transcript" class="transcript" hidden></pre>
 
-      <div class="composer">
+      <section id="editor-pane" class="editor-pane" hidden>
+        <div class="editor-bar">
+          <select id="editor-file" class="editor-file" title="File being edited"></select>
+          <span id="editor-dirty" class="dot" title="Unsaved changes" hidden>&bull;</span>
+          <div class="spacer"></div>
+          <button id="editor-revert" type="button" class="ghost"
+                  title="Discard your edits and reload from disk">Reload</button>
+          <button id="editor-save" type="button" class="secondary"
+                  title="Save and rebuild the PDF (Cmd/Ctrl-S)">Save</button>
+        </div>
+        <div id="editor-host" class="editor-host"></div>
+        <div id="editor-status" class="editor-status"></div>
+      </section>
+
+      <div id="composer" class="composer">
         <div id="chips" class="chips"></div>
         <textarea id="composer-input" rows="3"
                   placeholder="What should change? (Enter to send, Shift-Enter for a new line)"></textarea>
@@ -91,6 +143,9 @@
 
   <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
+  <script src="/static/vendor/codemirror/codemirror.js"></script>
+  <script src="/static/vendor/codemirror/stex.js"></script>
+  <script src="/static/vendor/codemirror/matchbrackets.js"></script>
   <script type="module" src="/static/app.js"></script>
 </body>
 </html>

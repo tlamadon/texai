@@ -387,3 +387,67 @@ async def test_rejecting_an_unknown_change(project: Path):
     controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, ScriptedAgent(bus, []))
     with pytest.raises(LookupError):
         await controller.reject_change("nope")
+
+
+# ---------------------------------------------------------------- hand edits
+
+
+async def test_a_hand_edit_is_not_queued_for_review(project: Path):
+    """The review is about the agent's work; my own typing is not up for accept/reject."""
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "tighten this")
+    assert len(controller.session_changes()) == 1
+
+    # Hand-edit a different file while the review is open.
+    (project / "main.tex").write_text("\\documentclass{article}\n% mine\n")
+    controller.absorb_manual_edit("main.tex")
+
+    changes = controller.session_changes()
+    assert [c["file"] for c in changes] == ["sections/model.tex"]
+
+
+async def test_a_hand_edit_on_top_of_an_agent_change_absorbs_only_that_file(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "tighten this")
+
+    # Keep typing in the file the agent just edited. Nothing is left to review,
+    # because the baseline now says "this is where we started" — and the text
+    # on disk is mine, untouched.
+    (project / "sections" / "model.tex").write_text("alpha\nBETA and mine\ngamma\n")
+    controller.absorb_manual_edit("sections/model.tex")
+
+    assert controller.session_changes() == []
+    assert (project / "sections" / "model.tex").read_text() == "alpha\nBETA and mine\ngamma\n"
+
+
+async def test_absorbing_a_deleted_file(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "tighten this")
+
+    (project / "sections" / "model.tex").unlink()
+    controller.absorb_manual_edit("sections/model.tex")
+
+    assert controller.session_changes() == []
+
+
+async def test_absorbing_before_any_review_session_does_nothing(project: Path):
+    """Editing before the agent has run needs no baseline, and must not crash."""
+    bus = EventBus()
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, ScriptedAgent(bus, []))
+
+    (project / "sections" / "model.tex").write_text("typed before any turn\n")
+    controller.absorb_manual_edit("sections/model.tex")
+
+    assert controller.session_changes() == []
+    # The first turn then treats my text as the starting point, not as its own work.
+    controller.agent.actions = [edit(project, "typed before any turn\nand the agent's line\n")]
+    await run_to_completion(controller, "add a line")
+    changes = controller.session_changes()
+    assert len(changes) == 1
+    assert "agent" in changes[0]["after"]

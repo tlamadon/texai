@@ -3,6 +3,9 @@
 A canvas for LaTeX: read the compiled PDF on the left, talk to a coding agent on
 the right. Cmd/Ctrl-click a passage to attach it to your message; the agent edits
 the source, `texai` rebuilds the document, and the page reloads in place.
+Alt-click instead and you get the LaTeX source at that spot in an editor, where
+saving recompiles. When you like where it has got to, commit it without leaving
+the page.
 
 The bridge that makes it work is SyncTeX — a pixel on page 7 becomes
 `sections/model.tex:143`, which is what the agent actually needs.
@@ -207,7 +210,7 @@ The tool only scrolls; it cannot change anything.
 
 The panel has a **Chat** tab and a **Transcript** tab over the same underlying
 stream of entries, so the transcript cannot show something the chat quietly
-dropped.
+dropped. (A third tab, **Source**, is the editor — see below.)
 
 - **Chat** — prose in full, everything else as one-line activity: which files
   were touched, whether the build passed, the diff, the revert button, the cost.
@@ -251,6 +254,69 @@ claude --resume <session-id>
 Run that in your project directory and Claude Code picks up the *same*
 conversation — full TUI, slash commands, everything. Drive one at a time: the
 browser panel and a terminal both writing to one session will confuse both.
+
+### Editing it yourself
+
+Not everything is worth a prompt. The **Source** tab is a LaTeX editor over the
+same files the agent edits: **Alt-click** any passage in the PDF to open its
+source at that line, type, and **Cmd/Ctrl-S** to save. Saving recompiles and the
+page reloads where you were.
+
+```
+Alt-click "the elasticity of substitution"  →  Source tab, sections/model.tex:41
+```
+
+The `file:line` label on a change card opens the same editor at that change, for
+when it is faster to fix the agent's work than to describe the fix.
+
+Two writers on one tree needs a rule, so every save carries a hash of the text it
+was based on. If the agent rewrote the file while it sat open, the save is
+refused with *"changed since you opened it"* rather than discarding that work;
+**Reload** takes their version. Going the other way, when a turn finishes, an
+open file with no unsaved typing quietly picks up the agent's version.
+
+Your own saves are not part of the review. They fold into the baseline, so the
+Changes overlay keeps showing what the *agent* did — your typing never arrives as
+a hunk waiting to be accepted.
+
+A save that breaks the document reports the LaTeX errors under the editor and
+marks the offending lines. The line numbers in a TeX log name no file, so a line
+is only marked when the text the log quotes is really on it; the rest still show
+in the message.
+
+Only files a LaTeX build reads are editable — `.tex`, `.bib`, `.cls`, `.sty`,
+`.bbx`, `.cbx`, `.lco` — and only inside `--root`.
+
+### Committing
+
+If the project is in a git repository, the toolbar carries a pill: the branch,
+how many files are uncommitted, and how many commits are waiting to be pushed.
+
+```
+⑂ main  2  ↑1
+```
+
+Click it for the file list and three buttons. **Commit** asks the agent to read
+the diff and write a message, then shows it in an editable box — nothing is
+committed until you press Commit again, and you can rewrite the message first.
+**Pull** is `git pull --rebase`; **Push** publishes, setting an upstream if the
+branch has none and there is only one remote to mean.
+
+Everything is scoped to `--root` with an explicit pathspec. If your paper is a
+subdirectory of a bigger repository, the panel says so, and a commit made here
+takes only files under the root — work you staged elsewhere in that repository
+stays staged and uncommitted.
+
+The refusals are as deliberate as the actions. A pull will not run over
+uncommitted work, a commit will not run over unresolved conflicts, and network
+operations run with prompting disabled: a repository that needs a password fails
+in seconds with a message rather than hanging on a prompt in a terminal you
+cannot see. Opening the panel fetches (at most once a minute) so "behind" is a
+real number and not a stale one.
+
+The commit message is a one-shot query with no tools — it cannot edit anything,
+and it never enters the review conversation or the transcript. If the agent is
+unavailable it falls back to `Update sections/model.tex, ...` and says so.
 
 ### Options
 
@@ -331,10 +397,17 @@ absent.
 
 ## Third-party code
 
-`src/texai/static/vendor/pdfjs/` is a pinned copy of
-[PDF.js](https://github.com/mozilla/pdf.js) 5.4.149 (Apache-2.0), vendored so
-the viewer needs no CDN at runtime. Its licence travels with it in that
-directory. Everything else here is MIT — see `LICENSE`.
+`src/texai/static/vendor/` holds pinned copies of two libraries, vendored so
+nothing is fetched from a CDN at runtime:
+
+- `pdfjs/` — [PDF.js](https://github.com/mozilla/pdf.js) 5.4.149 (Apache-2.0),
+  which renders the document.
+- `codemirror/` — [CodeMirror](https://codemirror.net/5/) 5.65.21 (MIT), which
+  is the Source tab. Version 5 rather than 6 because it ships plain UMD files
+  and this project has no build step.
+
+Each licence travels with its directory. Everything else here is MIT — see
+`LICENSE`.
 
 ## Development
 
@@ -368,9 +441,13 @@ src/texai/
   hunks.py       structured diff hunks: stable ids, per-hunk rollback
   navigate.py    locating a source line in the rendered PDF
   turns.py       snapshot -> agent -> build -> diff, and the review session
+  source.py      reading and writing source files for the editor
+  git.py         root-scoped status, commit, pull --rebase, push
+  commitmsg.py   the agent's one-shot commit message, with a fallback
   server.py      FastAPI routes
-  static/        vanilla two-panel UI + vendored PDF.js
-                 (marks.js draws the inline change markers)
+  static/        vanilla two-panel UI + vendored PDF.js and CodeMirror
+                 (marks.js draws the inline change markers,
+                  editor.js is the Source tab, git.js the git panel)
 ```
 
 ## Not built yet
@@ -381,9 +458,10 @@ src/texai/
 - **Streaming partial text.** Agent messages appear per block, not per token.
   The SDK supports finer streaming (`include_partial_messages`); the panel does
   not use it yet.
-- **Word-level highlights.** Markers cover the whole line, because that is what
-  SyncTeX reports. Narrowing them means matching the diff text against the
-  PDF.js text layer.
+- **Highlights across hyphenation and rewrapping.** Markers are narrowed to the
+  changed words by matching the diff against the PDF.js text layer. A word
+  broken across a line, or one whose glyphs the layer splits oddly, still falls
+  back to banding its line.
 - **An embedded interactive terminal.** The Transcript tab is read-only. A real
   in-browser terminal (xterm.js over a PTY) would be a second agent process
   unless it took over the loop entirely — which would cost the snapshot, build

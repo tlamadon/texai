@@ -47,6 +47,8 @@ export class ChatPanel {
       interrupt: document.getElementById('interrupt'),
       tabChat: document.getElementById('tab-chat'),
       tabTranscript: document.getElementById('tab-transcript'),
+      tabSource: document.getElementById('tab-source'),
+      editorPane: document.getElementById('editor-pane'),
       attach: document.getElementById('attach-terminal'),
     };
 
@@ -61,6 +63,7 @@ export class ChatPanel {
     this.onChangesUpdated = null;
     this.onGoTo = null;      // click a file:line reference
     this.onNavigate = null;  // the agent moved the view itself
+    this.onViewChange = null; // chat / transcript / source
 
     this._wire();
   }
@@ -73,6 +76,7 @@ export class ChatPanel {
     this.els.interrupt.addEventListener('click', () => this.interrupt());
     this.els.tabChat.addEventListener('click', () => this.setView('chat'));
     this.els.tabTranscript.addEventListener('click', () => this.setView('transcript'));
+    this.els.tabSource.addEventListener('click', () => this.setView('source'));
     this.els.attach.addEventListener('click', () => this.copyResumeCommand());
     this.els.input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
@@ -84,12 +88,14 @@ export class ChatPanel {
 
   setView(view) {
     this.view = view;
-    const isChat = view === 'chat';
-    this.els.messages.hidden = !isChat;
-    this.els.transcript.hidden = isChat;
-    this.els.tabChat.classList.toggle('active', isChat);
-    this.els.tabTranscript.classList.toggle('active', !isChat);
-    if (!isChat) this._scrollTranscript();
+    this.els.messages.hidden = view !== 'chat';
+    this.els.transcript.hidden = view !== 'transcript';
+    this.els.editorPane.hidden = view !== 'source';
+    this.els.tabChat.classList.toggle('active', view === 'chat');
+    this.els.tabTranscript.classList.toggle('active', view === 'transcript');
+    this.els.tabSource.classList.toggle('active', view === 'source');
+    if (view === 'transcript') this._scrollTranscript();
+    this.onViewChange?.(view);
   }
 
   async start() {

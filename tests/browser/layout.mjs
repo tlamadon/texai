@@ -57,11 +57,15 @@ class CDP {
       awaitPromise: true,
       returnByValue: true,
     });
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.text);
+    if (r.exceptionDetails) {
+      const d = r.exceptionDetails;
+      throw new Error(`${d.text}: ${d.exception?.description || d.exception?.value || ''}`);
+    }
     return r.result.value;
   }
   json(expression) {
-    return this.eval(`JSON.stringify(${expression})`).then(JSON.parse);
+    // Await first: JSON.stringify of a pending promise is just '{}'.
+    return this.eval(`Promise.resolve(${expression}).then(v => JSON.stringify(v))`).then(JSON.parse);
   }
 }
 
@@ -392,7 +396,31 @@ check('surrounding words are not struck', !/which makes this good/.test(card.del
 check('only the new words are emphasised', /often contested/.test(card.addMarked) && !/which makes this good/.test(card.addMarked), card.addMarked);
 check('added words are not struck through', !card.addLine.includes('line-through'), card.addLine);
 check('the two are different colours', card.delColor !== card.addColor, `${card.delColor} vs ${card.addColor}`);
-check('accept and reject are on the card', card.buttons.slice(0, 2).join(',') === 'Accept,Reject', card.buttons.join(','));
+// The location label is a button too (it opens the editor), so match by name
+// rather than by position.
+check('accept and reject are on the card', ['Accept', 'Reject'].every(l => card.buttons.includes(l)),
+  card.buttons.join(','));
+check('the card links to its line in the source', card.buttons.some(l => /\.tex:\d+$/.test(l)),
+  card.buttons.join(','));
+
+// Clicking that label opens the editor at exactly that line.
+const fromCard = await cdp.json(`(async () => {
+  const label = [...document.querySelectorAll('.mark-card .mark-where')][0];
+  const wanted = label.textContent;
+  label.click();
+  await new Promise(r => setTimeout(r, 1200));
+  const ed = window.__texai.editor;
+  return {
+    wanted,
+    view: window.__texai.chat.view,
+    landed: ed.file ? ed.file + ':' + (ed.cm.getCursor().line + 1) : null,
+  };
+})()`);
+console.log('edit from card:', fromCard);
+check('clicking the location opens the editor there', fromCard.landed === fromCard.wanted,
+  `${fromCard.landed} vs ${fromCard.wanted}`);
+check('and it switches to the Source view', fromCard.view === 'source', fromCard.view);
+await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
 check('overlapping cards are pushed apart', card.overlap !== null && card.overlap <= 0, `${card.overlap}px overlap`);
 check('a pure insertion says so', /new/.test(card.insertNote), card.insertNote);
 
@@ -583,6 +611,228 @@ const mathOnly = await cdp.eval(`(() => {
 check('a purely mathematical change still gets its line band', mathOnly === 1, String(mathOnly));
 
 await cdp.eval(`(() => { const m = window.__texai.marks; m.marks = []; m.enabled = false; m.draw(); return true; })()`);
+
+/* ---------------- the source editor ---------------- */
+
+// Nothing here saves: these are geometry checks, and a save would rebuild the
+// example out from under the rest of the suite.
+
+const editorOpen = await cdp.json(`(async () => {
+  window.__texai.chat.setView('source');
+  await window.__texai.editor.open('main.tex');
+  await new Promise(r => setTimeout(r, 400));
+
+  const pane = document.getElementById('editor-pane');
+  const host = document.getElementById('editor-host');
+  const scroller = host.querySelector('.CodeMirror-scroll');
+  const status = document.getElementById('editor-status');
+  const paneRect = pane.getBoundingClientRect();
+  const hostRect = host.getBoundingClientRect();
+
+  return {
+    paneH: Math.round(paneRect.height),
+    paneBottom: Math.round(paneRect.bottom),
+    hostH: Math.round(hostRect.height),
+    hostW: Math.round(hostRect.width),
+    lineH: Math.round(host.querySelector('.CodeMirror-line')?.getBoundingClientRect().height || 0),
+    gutter: !!host.querySelector('.CodeMirror-linenumber'),
+    scrollH: scroller ? scroller.scrollHeight : 0,
+    clientH: scroller ? scroller.clientHeight : 0,
+    statusBottom: Math.round(status.getBoundingClientRect().bottom),
+    windowH: window.innerHeight,
+    rootScrollH: document.documentElement.scrollHeight,
+    rootClientH: document.documentElement.clientHeight,
+    messagesVisible: document.getElementById('messages').getBoundingClientRect().height > 0,
+    transcriptVisible: document.getElementById('transcript').getBoundingClientRect().height > 0,
+    composerVisible: document.getElementById('composer').getBoundingClientRect().height > 0,
+  };
+})()`);
+console.log('editor:', editorOpen);
+
+check('the editor pane fills the panel', editorOpen.paneH > 200, `${editorOpen.paneH}px`);
+check('the editor itself has height', editorOpen.hostH > 150, `${editorOpen.hostH}px`);
+check('the editor itself has width', editorOpen.hostW > 200, `${editorOpen.hostW}px`);
+check('CodeMirror laid its lines out', editorOpen.lineH > 5, `${editorOpen.lineH}px`);
+check('the gutter is rendered', editorOpen.gutter);
+check('the chat list is really hidden behind the tab', !editorOpen.messagesVisible);
+check('the transcript is really hidden behind the tab', !editorOpen.transcriptVisible);
+check('the composer is out of the way while editing', !editorOpen.composerVisible);
+check('the status line sits inside the window', editorOpen.statusBottom <= editorOpen.windowH + 1,
+  `${editorOpen.statusBottom} vs ${editorOpen.windowH}`);
+check('the editor does not make the page scroll', editorOpen.rootScrollH <= editorOpen.rootClientH + 1,
+  `${editorOpen.rootScrollH} vs ${editorOpen.rootClientH}`);
+check('a long file scrolls inside the editor', editorOpen.scrollH > editorOpen.clientH,
+  `${editorOpen.scrollH} vs ${editorOpen.clientH}`);
+
+// Jumping to a line must move the editor's own scroller, not the document.
+const jumped = await cdp.json(`(async () => {
+  const ed = window.__texai.editor;
+  const scroller = document.querySelector('#editor-host .CodeMirror-scroll');
+  const before = scroller.scrollTop;
+  ed.goToLine(ed.cm.lineCount());
+  await new Promise(r => setTimeout(r, 300));
+  return {
+    moved: scroller.scrollTop > before,
+    cursor: ed.cm.getCursor().line + 1,
+    lines: ed.cm.lineCount(),
+    rootScrollTop: document.documentElement.scrollTop,
+    pdfStillThere: document.querySelectorAll('#viewer canvas').length > 0,
+  };
+})()`);
+console.log('jump to line:', jumped);
+check('jumping scrolls the editor', jumped.moved);
+check('the cursor lands on the requested line', jumped.cursor === jumped.lines,
+  `${jumped.cursor} of ${jumped.lines}`);
+check('the page itself did not scroll', jumped.rootScrollTop === 0, String(jumped.rootScrollTop));
+check('the PDF is untouched by editing', jumped.pdfStillThere);
+
+// CodeMirror measures nothing while hidden, so coming back must re-measure.
+const editorRoundTrip = await cdp.json(`(async () => {
+  window.__texai.chat.setView('chat');
+  await new Promise(r => setTimeout(r, 250));
+  const hidden = document.getElementById('editor-host').getBoundingClientRect().height;
+  const composerBack = document.getElementById('composer').getBoundingClientRect().height > 0;
+  window.__texai.chat.setView('source');
+  await new Promise(r => setTimeout(r, 400));
+  const host = document.getElementById('editor-host');
+  return {
+    hidden: Math.round(hidden),
+    composerBack,
+    shown: Math.round(host.getBoundingClientRect().height),
+    lineH: Math.round(host.querySelector('.CodeMirror-line')?.getBoundingClientRect().height || 0),
+    lineW: Math.round(host.querySelector('.CodeMirror-line')?.getBoundingClientRect().width || 0),
+  };
+})()`);
+console.log('tab round trip:', editorRoundTrip);
+check('the editor collapses on other tabs', editorRoundTrip.hidden === 0, `${editorRoundTrip.hidden}px`);
+check('the composer returns with the chat', editorRoundTrip.composerBack);
+check('the editor comes back with height', editorRoundTrip.shown > 150, `${editorRoundTrip.shown}px`);
+check('and its lines are measured again', editorRoundTrip.lineH > 5 && editorRoundTrip.lineW > 50,
+  `${editorRoundTrip.lineW}x${editorRoundTrip.lineH}`);
+
+// A dirty buffer must announce itself before you navigate away and lose it.
+const editorDirty = await cdp.json(`(() => {
+  const ed = window.__texai.editor;
+  ed.cm.replaceRange('% scratch\\n', { line: 0, ch: 0 });
+  const marked = {
+    dirty: ed.dirty,
+    dot: document.getElementById('editor-dirty').getBoundingClientRect().height > 0,
+  };
+  ed.cm.undo();
+  ed._setDirty(false);
+  return marked;
+})()`);
+check('typing raises the unsaved marker', editorDirty.dirty && editorDirty.dot, JSON.stringify(editorDirty));
+
+await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
+
+/* ---------------- the git pill and panel ---------------- */
+
+// Geometry only. This suite runs against example/, which lives inside texai's
+// own repository, so it must never click Commit, Pull or Push.
+
+const gitPill = await cdp.json(`(() => {
+  const pill = document.getElementById('git-pill');
+  const r = pill.getBoundingClientRect();
+  const toolbar = document.querySelector('.toolbar').getBoundingClientRect();
+  return {
+    visible: r.height > 0,
+    insideToolbar: r.top >= toolbar.top - 1 && r.bottom <= toolbar.bottom + 1,
+    onScreen: r.right <= window.innerWidth + 1 && r.left >= 0,
+    width: Math.round(r.width),
+    iconWidth: Math.round(pill.querySelector('svg')?.getBoundingClientRect().width || 0),
+    branch: document.getElementById('git-branch').textContent,
+  };
+})()`);
+console.log('git pill:', gitPill);
+check('the git pill sits in the toolbar', gitPill.visible && gitPill.insideToolbar, JSON.stringify(gitPill));
+check('the git pill stays on screen', gitPill.onScreen, `right edge at ${gitPill.width}px wide`);
+check('the branch icon is drawn', gitPill.iconWidth > 4, `${gitPill.iconWidth}px`);
+check('the pill is compact', gitPill.width <= 220, `${gitPill.width}px`);
+
+// A long branch name must not stretch the toolbar.
+const longBranch = await cdp.json(`(() => {
+  const el = document.getElementById('git-branch');
+  const was = el.textContent;
+  el.textContent = 'feature/a-very-long-branch-name-that-someone-really-used';
+  const pill = document.getElementById('git-pill').getBoundingClientRect();
+  const out = {
+    width: Math.round(pill.width),
+    onScreen: pill.right <= window.innerWidth + 1,
+    rootScroll: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+  };
+  el.textContent = was;
+  return out;
+})()`);
+console.log('long branch name:', longBranch);
+check('a long branch name does not overflow the toolbar', longBranch.onScreen && longBranch.width <= 240,
+  `${longBranch.width}px`);
+check('and does not make the page scroll sideways', longBranch.rootScroll);
+
+const gitPanel = await cdp.json(`(async () => {
+  document.getElementById('git-pill').click();
+  await new Promise(r => setTimeout(r, 900));
+  const panel = document.getElementById('git-panel');
+  const r = panel.getBoundingClientRect();
+  const files = document.getElementById('git-files');
+  return {
+    open: r.height > 0,
+    onScreen: r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1
+      && r.left >= 0 && r.top >= 0,
+    width: Math.round(r.width),
+    filesScroll: files.scrollHeight > files.clientHeight ? files.clientHeight > 0 : true,
+    filesMax: Math.round(files.getBoundingClientRect().height),
+    buttonRows: document.querySelectorAll('#git-panel .git-buttons').length,
+    composeHidden: document.getElementById('git-compose').hidden,
+    aboveThePdf: (() => {
+      const mid = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      const hit = document.elementFromPoint(mid.x, mid.y);
+      return hit ? panel.contains(hit) : false;
+    })(),
+  };
+})()`);
+console.log('git panel:', gitPanel);
+check('the git panel opens', gitPanel.open);
+check('the git panel stays within the window', gitPanel.onScreen, JSON.stringify(gitPanel));
+check('the git panel sits above the document', gitPanel.aboveThePdf);
+check('its file list is bounded', gitPanel.filesMax <= 190, `${gitPanel.filesMax}px`);
+check('the message box starts hidden', gitPanel.composeHidden);
+
+// Escape closes it; so does clicking the document.
+const dismiss = await cdp.json(`(async () => {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await new Promise(r => setTimeout(r, 250));
+  const afterEscape = document.getElementById('git-panel').getBoundingClientRect().height;
+
+  document.getElementById('git-pill').click();
+  await new Promise(r => setTimeout(r, 700));
+  const reopened = document.getElementById('git-panel').getBoundingClientRect().height;
+
+  document.getElementById('viewer').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 250));
+  const afterClickAway = document.getElementById('git-panel').getBoundingClientRect().height;
+  return { afterEscape: Math.round(afterEscape), reopened: Math.round(reopened), afterClickAway: Math.round(afterClickAway) };
+})()`);
+console.log('dismissing:', dismiss);
+check('Escape closes the git panel', dismiss.afterEscape === 0, `${dismiss.afterEscape}px`);
+check('the pill reopens it', dismiss.reopened > 0, `${dismiss.reopened}px`);
+check('clicking the document closes it', dismiss.afterClickAway === 0, `${dismiss.afterClickAway}px`);
+
+// A project outside git shows no pill at all.
+const noRepo = await cdp.json(`(() => {
+  const git = window.__texai.git;
+  const real = git.status;
+  git.status = { repo: false, reason: 'not a repo', dirty: 0, ahead: 0, behind: 0, files: [] };
+  git._render();
+  const hidden = document.getElementById('git-pill').getBoundingClientRect().height === 0;
+  git.status = real;
+  git._render();
+  const backAgain = document.getElementById('git-pill').getBoundingClientRect().height > 0;
+  return { hidden, backAgain };
+})()`);
+console.log('outside git:', noRepo);
+check('a project outside git shows no pill', noRepo.hidden);
+check('and the pill returns for one inside git', noRepo.backAgain);
 
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);

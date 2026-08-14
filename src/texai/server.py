@@ -16,12 +16,27 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .agent import AgentSession, AgentUnavailable, sdk_status
+from .commitmsg import propose_message
 from .config import AppConfig
 from .events import EventBus, sse_stream
-from .models import ChatRequest, SelectRequest, SelectResponse
+from .git import GitError
+from .git import commit as git_commit
+from .git import fetch_remote
+from .git import probe as git_probe
+from .git import pull_rebase as git_pull_rebase
+from .git import push as git_push
+from .git import scoped_diff
+from .models import ChatRequest, CommitRequest, SelectRequest, SelectResponse, SourceWrite
 from .navigate import LocateError, locate, locate_range
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .selection import atomic_write_json, build_selection
+from .source import (
+    SourceConflict,
+    SourceError,
+    list_sources,
+    read_source,
+    write_source,
+)
 from .synctex import (
     SyncTexDataMissing,
     SyncTexError,
@@ -70,11 +85,12 @@ def create_app(
     config: AppConfig,
     synctex_runner: SyncTexRunner = run_synctex_edit,
     agent: AgentSession | None = None,
+    message_writer: Callable[..., Any] = propose_message,
 ) -> FastAPI:
     """Build the application for one review session.
 
-    ``synctex_runner`` and ``agent`` are injectable so tests can exercise the
-    API without a real TeX installation or a live agent session.
+    ``synctex_runner``, ``agent`` and ``message_writer`` are injectable so tests
+    can exercise the API without a real TeX installation or a live agent.
     """
     # An injected agent brings its own bus; everything must publish to the same one.
     bus = agent.bus if agent is not None else EventBus()
@@ -181,6 +197,51 @@ def create_app(
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise _error(500, "selection_unreadable", f"Cannot read {path}: {exc}") from exc
+
+    def _synctex_source(payload: SelectRequest) -> dict[str, Any]:
+        """Map a click to a source location, with no side effects."""
+        if not config.pdf_path.is_file():
+            raise _error(404, "pdf_missing", f"PDF not found: {config.pdf_rel}")
+        try:
+            location = synctex_runner(
+                config.pdf_path,
+                payload.page,
+                payload.x,
+                payload.y,
+                executable=config.synctex_executable,
+            )
+        except SyncTexExecutableMissing as exc:
+            raise _error(503, "synctex_missing", str(exc)) from exc
+        except SyncTexDataMissing as exc:
+            raise _error(409, "synctex_data_missing", str(exc)) from exc
+        except SyncTexNoResult as exc:
+            raise _error(404, "synctex_no_result", str(exc)) from exc
+        except SyncTexError as exc:
+            raise _error(500, "synctex_failed", str(exc)) from exc
+
+        try:
+            source_path = resolve_source_path(location.input, config.root, config.search_dirs)
+            source_rel = to_project_relative(source_path, config.root)
+        except PathOutsideRootError as exc:
+            raise _error(
+                422,
+                "source_outside_root",
+                f"SyncTeX resolved to {exc.path}, which is outside the project root "
+                f"{config.root}.",
+            ) from exc
+        except ValueError as exc:
+            raise _error(422, "source_unresolvable", str(exc)) from exc
+
+        return {"file": source_rel, "line": location.line, "column": location.column}
+
+    @app.post("/api/resolve")
+    async def resolve(payload: SelectRequest) -> dict[str, Any]:
+        """Where in the source a point on the page came from.
+
+        The same lookup as /api/select but without recording anything — used to
+        open the editor at a spot without disturbing the selection file.
+        """
+        return _synctex_source(payload)
 
     @app.post("/api/select", response_model=SelectResponse)
     async def select(payload: SelectRequest) -> SelectResponse:
@@ -314,6 +375,111 @@ def create_app(
             return await asyncio.to_thread(locate, config, file, line)
         except LocateError as exc:
             raise _error(404, "not_locatable", str(exc)) from exc
+
+    # ------------------------------------------------------------------ git
+
+    # One git operation at a time: two concurrent commits, or a commit racing a
+    # rebase, would fight over the index.
+    git_lock = asyncio.Lock()
+
+    async def _git_status() -> dict[str, Any]:
+        return (await asyncio.to_thread(git_probe, config)).as_dict()
+
+    async def _git_action(action: Callable[[], dict[str, Any]], event: str) -> dict[str, Any]:
+        if git_lock.locked():
+            raise _error(409, "git_busy", "Another git operation is still running.")
+        async with git_lock:
+            try:
+                result = await asyncio.to_thread(action)
+            except GitError as exc:
+                raise _error(409, "git_failed", str(exc)) from exc
+        status = await _git_status()
+        bus.publish("git_changed", action=event, **{k: v for k, v in status.items() if k != "files"})
+        return {"ok": True, **result, "status": status}
+
+    @app.get("/api/git/status")
+    async def git_status(fetch: bool = False) -> dict[str, Any]:
+        """Where git stands.
+
+        ``fetch=1`` refreshes remote-tracking refs first, so "behind" is not
+        stale. It is rate-limited inside, and a failure there is ignored: the
+        local half of the answer is still worth having.
+        """
+        if fetch:
+            try:
+                await asyncio.to_thread(fetch_remote, config)
+            except GitError:
+                pass
+        return await _git_status()
+
+    @app.post("/api/git/message")
+    async def git_message() -> dict[str, Any]:
+        """Ask the agent for a commit message. Never fails: it falls back to a summary."""
+        status = await asyncio.to_thread(git_probe, config)
+        if not status.repo:
+            raise _error(409, "git_unavailable", status.reason or "Not a git repository.")
+        if not status.files:
+            raise _error(409, "git_clean", "Nothing to commit.")
+
+        diff = await asyncio.to_thread(scoped_diff, config)
+        proposed = await message_writer(config, status, diff, agent_session.model)
+        return {**proposed, "dirty": status.dirty}
+
+    @app.post("/api/git/commit")
+    async def git_commit_route(payload: CommitRequest) -> dict[str, Any]:
+        return await _git_action(lambda: git_commit(config, payload.message), "commit")
+
+    @app.post("/api/git/pull")
+    async def git_pull_route() -> dict[str, Any]:
+        return await _git_action(lambda: git_pull_rebase(config), "pull")
+
+    @app.post("/api/git/push")
+    async def git_push_route() -> dict[str, Any]:
+        return await _git_action(lambda: git_push(config), "push")
+
+    # -------------------------------------------------------------- editing
+
+    @app.get("/api/source/files")
+    async def source_files() -> dict[str, Any]:
+        return {"files": list_sources(config), "rootTex": (
+            to_project_relative(config.root_tex, config.root) if config.root_tex else None
+        )}
+
+    @app.get("/api/source")
+    async def get_source(file: str) -> dict[str, Any]:
+        try:
+            return read_source(config, file)
+        except SourceError as exc:
+            raise _error(404, "source_unavailable", str(exc)) from exc
+
+    @app.post("/api/source")
+    async def put_source(payload: SourceWrite) -> dict[str, Any]:
+        """Save an edit and recompile.
+
+        The save is folded into the review baseline, so hand edits do not show
+        up as agent changes awaiting review.
+        """
+        if controller.busy:
+            raise _error(409, "agent_busy", "The agent is editing right now; try again in a moment.")
+        try:
+            written = write_source(config, payload.file, payload.text, payload.baseSha)
+        except SourceConflict as exc:
+            raise _error(409, "source_conflict", str(exc)) from exc
+        except SourceError as exc:
+            raise _error(422, "source_unwritable", str(exc)) from exc
+
+        controller.absorb_manual_edit(written["file"])
+        bus.publish("source_saved", file=written["file"])
+
+        result = await controller.rebuild()
+        build = {
+            "ok": bool(result and result.ok),
+            "errors": list(result.errors) if result else [],
+            "summary": result.summary() if result else "No build command configured.",
+        }
+        bus.publish("build_finished", turnId=None, attempt=1, ok=build["ok"],
+                    errors=build["errors"], summary=build["summary"])
+        return {"ok": True, **written, "build": build}
 
     @app.get("/api/changes")
     async def session_changes() -> dict[str, Any]:

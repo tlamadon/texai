@@ -105,5 +105,12 @@ cat <project-root>/.texai/current-selection.json
 ## Notes
 
 - Keep one `texai` per project root; restart it if the user switches PDFs.
+- The user commits from the toolbar's git pill; you do not need to. If they ask
+  you to commit, prefer that button — it scopes the commit to the project root,
+  which matters when the paper is a subdirectory of a larger repository.
+- The user may be editing too: the Source tab lets them Alt-click a passage and
+  change the LaTeX by hand. Re-read a file before editing it if any time has
+  passed — their save wins on disk, and yours would be refused if you tried to
+  write stale text through the same door.
 - Do not edit `.texai/current-selection.json` — it is written by the tool.
 - Add `.texai/` to `.gitignore` if the project tracks build output.
