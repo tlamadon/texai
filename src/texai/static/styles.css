@@ -330,7 +330,9 @@ kbd {
   border: 1px solid var(--panel-border);
   color: var(--muted);
 }
-.badge.applied { color: var(--ok); border-color: var(--ok); }
+.badge.applied { color: var(--accent); border-color: var(--accent); }
+.badge.accepted { color: var(--ok); border-color: var(--ok); }
+.badge.mixed { color: var(--warn); border-color: var(--warn); }
 .badge.reverted { color: var(--warn); border-color: var(--warn); }
 .badge.failed { color: var(--err); border-color: var(--err); }
 .badge.answered { color: var(--muted); }

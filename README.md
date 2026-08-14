@@ -120,6 +120,30 @@ annotation in the browser's font, and math appears as source (`$\alpha$`).
 And the card overlays the page, so it covers the lines beneath it until you
 collapse it.
 
+### One review, many turns
+
+Changes accumulate. A second turn does not retire the first one's changes —
+everything stays pending until you deal with it, and the toolbar counts what is
+outstanding (`Changes (3)`). **Accept all** closes the review and starts a fresh
+one from the current state.
+
+That works because pending changes are computed against a **session baseline**,
+not per turn: one coherent set, recomputed from the baseline every time. Showing
+several turns' own diffs at once would be wrong rather than merely unimplemented
+— turn 1's changes describe a file turn 2 has since edited, so rejecting an old
+one would quietly undo newer work too.
+
+Each turn's badge follows what became of its edits:
+
+| Badge | Meaning |
+| --- | --- |
+| `applied` | edits landed and compiled, still pending review |
+| `accepted` | every change from that turn was accepted |
+| `rejected` | its changes are gone from the pending set — rolled back |
+| `mixed` | some accepted, some still pending |
+| `answered` | a question; nothing changed |
+| `reverted` | the build could not be fixed, so the turn undid itself |
+
 **Reject** rolls back that one change and leaves the rest of the turn alone, so
 you can keep three edits out of four from a batch. It is a reconstruction, not a
 patch: the file is rebuilt from the turn's snapshot with the rejected region
@@ -334,7 +358,7 @@ src/texai/
   snapshots.py   per-turn source copies, diffing and revert
   hunks.py       structured diff hunks: stable ids, per-hunk rollback
   navigate.py    locating a source line in the rendered PDF
-  turns.py       snapshot -> agent -> build -> diff, or revert
+  turns.py       snapshot -> agent -> build -> diff, and the review session
   server.py      FastAPI routes
   static/        vanilla two-panel UI + vendored PDF.js
                  (marks.js draws the inline change markers)

@@ -34,6 +34,7 @@ __all__ = ["Turn", "TurnController", "TurnBusy"]
 
 MAX_BUILD_ATTEMPTS = 3
 KEEP_SNAPSHOTS = 20
+BASELINE_ID = "baseline"
 
 
 class TurnBusy(RuntimeError):
@@ -56,6 +57,10 @@ class Turn:
     transcript: list[dict[str, Any]] = field(default_factory=list)
     hunks: list[dict[str, Any]] = field(default_factory=list)
     accepted_hunks: list[str] = field(default_factory=list)
+    # (file, first line, last line) per hunk, so session changes can be traced
+    # back to the turn that made them even after later turns renumber things.
+    ranges: list[tuple[str, int, int]] = field(default_factory=list)
+    review: str = "pending"  # pending | accepted | rejected | mixed
     cost_usd: float | None = None
     error: str | None = None
     reverted: bool = False
@@ -80,6 +85,7 @@ class Turn:
             "transcript": self.transcript,
             "hunks": self.hunks,
             "acceptedHunks": self.accepted_hunks,
+            "review": self.review,
             "costUsd": self.cost_usd,
             "error": self.error,
             "reverted": self.reverted,
@@ -95,6 +101,10 @@ class TurnController:
         self.agent = agent
         self.turns: list[Turn] = []
         self._snapshots: dict[str, Snapshot] = {}
+        # Everything changed since here is "pending review", however many turns
+        # it took. Per-turn snapshots still back the whole-turn Revert.
+        self._baseline: Snapshot | None = None
+        self._accepted: set[str] = set()
         self._task: asyncio.Task[None] | None = None
         self._counter = 0
 
@@ -124,6 +134,11 @@ class TurnController:
             raise TurnBusy("an agent turn is already running")
         if not self.agent.running:
             await self.agent.start()  # raises AgentUnavailable with a usable message
+
+        if self._baseline is None:
+            self._baseline = take_snapshot(
+                self.config.root, self.config.snapshots_dir, BASELINE_ID
+            )
 
         turn = Turn(
             id=self._new_turn_id(),
@@ -167,6 +182,10 @@ class TurnController:
             if build is not None and build.ok:
                 turn.changes = diff_against(snapshot, self.config.root)
                 turn.hunks = [h.as_dict() for h in hunks_against(snapshot, self.config.root)]
+                turn.ranges = [
+                    (str(h["file"]), int(h["newStart"]), int(h["newEnd"] or h["newStart"]))
+                    for h in turn.hunks
+                ]
                 turn.build_ok = True
                 turn.status = "applied"
             else:
@@ -268,7 +287,9 @@ class TurnController:
         turn.cost_usd = round((turn.cost_usd or 0.0) + cost, 6)
 
     def _finish(self, turn: Turn) -> None:
+        self.refresh_review_states()
         self.bus.publish("turn_finished", turn=turn.as_dict())
+        self.bus.publish("changes_updated", reason="turn_finished")
 
     # --------------------------------------------------------------- reverting
 
@@ -291,63 +312,108 @@ class TurnController:
         self.bus.publish("turn_finished", turn=turn.as_dict())
         return turn
 
-    async def accept_hunk(self, turn_id: str, hunk_id: str) -> Turn:
-        """Mark one change as reviewed. Nothing on disk moves."""
-        turn = self._turn_with_hunk(turn_id, hunk_id)
-        if hunk_id not in turn.accepted_hunks:
-            turn.accepted_hunks.append(hunk_id)
-        self.bus.publish("hunk_accepted", turnId=turn.id, hunkId=hunk_id)
-        self.bus.publish("turn_finished", turn=turn.as_dict())
-        return turn
+    # ------------------------------------------------- the review session
 
-    async def reject_hunk(self, turn_id: str, hunk_id: str) -> Turn:
-        """Roll one change back to its pre-turn text, keeping the rest of the turn."""
+    def session_changes(self) -> list[dict[str, Any]]:
+        """Everything changed since the baseline, whichever turn produced it.
+
+        Recomputed from the baseline every time rather than remembered, so the
+        set stays honest after later turns rewrite the same lines.
+        """
+        if self._baseline is None:
+            return []
+        changes = []
+        for hunk in hunks_against(self._baseline, self.config.root):
+            entry = hunk.as_dict()
+            entry["status"] = "accepted" if hunk.id in self._accepted else "pending"
+            entry["turnId"] = self._attribute(hunk.file, hunk.new_start, hunk.new_end)
+            changes.append(entry)
+        return changes
+
+    def _attribute(self, file: str, start: int, end: int) -> str | None:
+        """The most recent turn whose edits overlap this region."""
+        for turn in reversed(self.turns):
+            for path, first, last in turn.ranges:
+                if path == file and start <= last and end >= first:
+                    return turn.id
+        return None
+
+    def refresh_review_states(self) -> None:
+        """Recompute each turn's review state from the pending set."""
+        changes = self.session_changes()
+        by_turn: dict[str, list[str]] = {}
+        for change in changes:
+            if change["turnId"]:
+                by_turn.setdefault(change["turnId"], []).append(change["status"])
+
+        for turn in self.turns:
+            if turn.status not in ("applied", "accepted", "rejected", "mixed"):
+                continue
+            states = by_turn.get(turn.id, [])
+            if not turn.ranges:
+                turn.review = "pending"
+            elif not states:
+                # Its edits are gone from the pending set: rolled back.
+                turn.review = "rejected"
+            elif all(s == "accepted" for s in states):
+                turn.review = "accepted"
+            elif any(s == "accepted" for s in states):
+                turn.review = "mixed"
+            else:
+                turn.review = "pending"
+
+    async def accept_change(self, hunk_id: str) -> None:
+        """Mark one change reviewed. Nothing on disk moves."""
+        if not any(c["id"] == hunk_id for c in self.session_changes()):
+            raise LookupError(hunk_id)
+        self._accepted.add(hunk_id)
+        self.refresh_review_states()
+        self.bus.publish("changes_updated", reason="accepted", hunkId=hunk_id)
+
+    async def reject_change(self, hunk_id: str) -> None:
+        """Roll one change back to its pre-session text, keeping the rest."""
         if self.busy:
             raise TurnBusy("wait for the running turn to finish")
-        turn = self._turn_with_hunk(turn_id, hunk_id)
-        snapshot = self._snapshots.get(turn_id)
-        if snapshot is None or not snapshot.directory.is_dir():
-            raise FileNotFoundError(f"no snapshot kept for {turn_id}")
+        if self._baseline is None:
+            raise LookupError(hunk_id)
 
-        hunk = next(h for h in turn.hunks if h["id"] == hunk_id)
-        relative = str(hunk["file"])
-        before, after = read_pair(snapshot, self.config.root, relative)
+        target = next((c for c in self.session_changes() if c["id"] == hunk_id), None)
+        if target is None:
+            raise LookupError(hunk_id)
+
+        relative = str(target["file"])
+        before, after = read_pair(self._baseline, self.config.root, relative)
         rebuilt = reconstruct(before, after, [hunk_id], relative)
 
-        target = self.config.root / relative
+        path = self.config.root / relative
         if rebuilt:
-            atomic_write_text(target, rebuilt)
-        elif target.is_file():
-            # The turn created this file and every hunk in it is now rejected.
-            target.unlink()
+            atomic_write_text(path, rebuilt)
+        elif path.is_file():
+            path.unlink()  # the session created this file and nothing is left
 
-        self._emit(turn, notice_entry(f"Rejected one change in {relative}."))
+        self._accepted.discard(hunk_id)
         await self._rebuild_quietly()
+        self.refresh_review_states()
+        self.bus.publish("changes_updated", reason="rejected", hunkId=hunk_id, file=relative)
 
-        # Re-diff from the snapshot: the rejected region now matches, so it
-        # simply drops out and the remaining hunks keep their content-derived ids.
-        turn.changes = diff_against(snapshot, self.config.root)
-        turn.hunks = [h.as_dict() for h in hunks_against(snapshot, self.config.root)]
-        turn.accepted_hunks = [h for h in turn.accepted_hunks if h != hunk_id]
-        if not turn.changes:
-            turn.status = "reverted"
-            turn.reverted = True
-
-        self.bus.publish("hunk_rejected", turnId=turn.id, hunkId=hunk_id, file=relative)
-        self.bus.publish("turn_finished", turn=turn.as_dict())
-        return turn
-
-    def _turn_with_hunk(self, turn_id: str, hunk_id: str) -> Turn:
-        turn = self.get(turn_id)
-        if turn is None:
-            raise KeyError(turn_id)
-        if not any(h["id"] == hunk_id for h in turn.hunks):
-            raise LookupError(hunk_id)
-        return turn
+    async def accept_all(self) -> int:
+        """Close the review: everything still pending becomes the new baseline."""
+        pending = [c for c in self.session_changes() if c["status"] == "pending"]
+        self._baseline = take_snapshot(self.config.root, self.config.snapshots_dir, BASELINE_ID)
+        self._accepted.clear()
+        for turn in self.turns:
+            if turn.ranges:
+                turn.review = "accepted"
+        self.bus.publish("changes_updated", reason="accepted_all", count=len(pending))
+        return len(pending)
 
     def _prune_snapshots(self) -> None:
-        """Keep the most recent snapshots only; they are full source copies."""
-        keep = {turn.id for turn in self.turns[-KEEP_SNAPSHOTS:]}
+        """Keep the most recent snapshots only; they are full source copies.
+
+        The session baseline is never pruned: it is what every pending change
+        is described against, and losing it would empty the review.
+        """
+        keep = {turn.id for turn in self.turns[-KEEP_SNAPSHOTS:]} | {BASELINE_ID}
         for turn_id in list(self._snapshots):
             if turn_id in keep:
                 continue

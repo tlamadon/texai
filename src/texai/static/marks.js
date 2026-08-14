@@ -155,18 +155,22 @@ function narrowRects(entry, bandRect, phrases) {
 }
 
 export class MarksLayer {
-  constructor({ viewer, button }) {
+  constructor({ viewer, button, acceptAllButton }) {
     this.viewer = viewer;
     this.button = button;
+    this.acceptAllButton = acceptAllButton;
     this.enabled = localStorage.getItem(STORAGE_KEY) === '1';
-    this.turnId = null;
     this.marks = [];
+    this.pending = 0;
     this.collapsed = new Set();
     this.openPopover = null;
 
     if (this.button) {
       this.button.addEventListener('click', () => this.toggle());
       this._renderButton();
+    }
+    if (this.acceptAllButton) {
+      this.acceptAllButton.addEventListener('click', () => this.acceptAll());
     }
   }
 
@@ -190,27 +194,32 @@ export class MarksLayer {
     const n = this.marks.filter((m) => !m.accepted).length;
     this.button.textContent = this.enabled && n ? `Changes (${n})` : 'Show changes';
     this.button.setAttribute('aria-pressed', String(this.enabled));
-  }
-
-  /** Point at a turn's changes. Called when a turn finishes. */
-  async showTurn(turnId) {
-    this.turnId = turnId;
-    if (this.enabled) await this.refresh();
+    if (this.acceptAllButton) this.acceptAllButton.hidden = !this.enabled || n === 0;
   }
 
   async refresh() {
-    if (!this.turnId) {
-      this.clear();
-      return;
-    }
     try {
-      const data = await getJSON(`/api/turns/${this.turnId}/marks`);
+      // Session-scoped: every change still pending review, not just the last
+      // turn's, and always described against the state the review started from.
+      const data = await getJSON('/api/changes');
       this.marks = data.marks || [];
+      this.pending = data.pending || 0;
     } catch {
       this.marks = [];
+      this.pending = 0;
     }
     this._renderButton();
     this.draw();
+  }
+
+  async acceptAll() {
+    try {
+      const { accepted } = await postJSON('/api/changes/accept-all', {});
+      showToast(accepted ? `Accepted ${accepted} change${accepted === 1 ? '' : 's'}.` : 'Nothing pending.');
+      await this.refresh();
+    } catch (err) {
+      showToast(err.message || String(err), { type: 'error' });
+    }
   }
 
   clear() {
@@ -413,7 +422,7 @@ export class MarksLayer {
   async _act(mark, action, button) {
     button.disabled = true;
     try {
-      await postJSON(`/api/turns/${this.turnId}/hunks/${mark.id}/${action}`, {});
+      await postJSON(`/api/changes/${mark.id}/${action}`, {});
       this._closePopover();
       if (action === 'accept') {
         showToast('Change accepted.');

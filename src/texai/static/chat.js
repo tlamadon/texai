@@ -58,6 +58,7 @@ export class ChatPanel {
     this.view = 'chat';
     this.lastTranscriptTurn = null;
     this.onTurnFinished = null;
+    this.onChangesUpdated = null;
     this.onGoTo = null;      // click a file:line reference
     this.onNavigate = null;  // the agent moved the view itself
 
@@ -109,8 +110,7 @@ export class ChatPanel {
         this._appendTurnRule(turn);
       }
       this._setBusy(history.busy);
-      const latest = [...history.turns].reverse().find((t) => t.hunks?.length);
-      if (latest) this.onTurnFinished?.(latest);
+      this.onChangesUpdated?.();
     } catch {
       /* no history yet */
     }
@@ -322,6 +322,10 @@ export class ChatPanel {
         this.agent = { ...this.agent, available: true, reason: null };
         this._renderStatus();
         break;
+      case 'changes_updated':
+        this.onChangesUpdated?.();
+        this._refreshTurnStates();
+        break;
       case 'navigate':
         this.onNavigate?.(event);
         break;
@@ -335,6 +339,19 @@ export class ChatPanel {
         break;
       default:
         break;
+    }
+  }
+
+  /** Re-badge every turn from the server's view of the review. */
+  async _refreshTurnStates() {
+    try {
+      const { turns } = await getJSON('/api/turns');
+      for (const turn of turns) {
+        const card = this.cards.get(turn.id);
+        if (card) this._badge(card, turn);
+      }
+    } catch {
+      /* the badges will catch up on the next event */
     }
   }
 
@@ -478,10 +495,22 @@ export class ChatPanel {
     this._finishCard(turn);
   }
 
+  /**
+   * The badge says what became of the turn's edits, not just that they landed.
+   * A turn stays "applied" until its changes are reviewed, then reads
+   * accepted, rejected, or mixed.
+   */
+  _badge(card, turn) {
+    const reviewed = turn.status === 'applied' && turn.review && turn.review !== 'pending';
+    const label = reviewed ? turn.review : turn.status;
+    card.badge.className = `badge ${label}`;
+    card.badge.textContent = label;
+    card.badge.title = reviewed ? `applied, then ${turn.review}` : '';
+  }
+
   _finishCard(turn) {
     const card = this.cards.get(turn.id) || this._cardFor(turn);
-    card.badge.className = `badge ${turn.status}`;
-    card.badge.textContent = turn.status;
+    this._badge(card, turn);
 
     card.footer.replaceChildren();
 

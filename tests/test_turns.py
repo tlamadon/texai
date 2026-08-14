@@ -61,6 +61,14 @@ def make_config(project: Path, build_command: str) -> AppConfig:
     return AppConfig.create(project, project / "main.pdf", build_command=build_command)
 
 
+def create(project: Path, relative: str, text: str) -> Callable[[], TurnOutcome]:
+    def action() -> TurnOutcome:
+        (project / relative).write_text(text)
+        return TurnOutcome(ok=True, text=f"created {relative}")
+
+    return action
+
+
 def edit(project: Path, text: str) -> Callable[[], TurnOutcome]:
     def action() -> TurnOutcome:
         (project / "sections" / "model.tex").write_text(text)
@@ -252,4 +260,130 @@ async def test_events_describe_the_turn(project: Path):
     assert types[0] == "turn_started"
     assert "build_started" in types
     assert "build_finished" in types
-    assert types[-1] == "turn_finished"
+    assert "turn_finished" in types
+    # The review set moves whenever a turn lands, so the UI is told to refetch.
+    assert types[-1] == "changes_updated"
+
+
+# ------------------------------------------------------- the review session
+
+
+async def test_changes_from_several_turns_are_all_pending(project: Path):
+    """A second turn must not silently retire the first turn's changes."""
+    bus = EventBus()
+    agent = ScriptedAgent(
+        bus,
+        [
+            edit(project, "alpha\nBETA\ngamma\n"),
+            create(project, "sections/other.tex", "new file\n"),
+        ],
+    )
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+
+    await run_to_completion(controller, "first")
+    await run_to_completion(controller, "second")
+
+    files = {c["file"] for c in controller.session_changes()}
+    assert files == {"sections/model.tex", "sections/other.tex"}
+
+
+async def test_rejecting_an_old_change_leaves_newer_work_alone(project: Path):
+    """The point of a session baseline: turn 1 can be undone after turn 2."""
+    bus = EventBus()
+    agent = ScriptedAgent(
+        bus,
+        [
+            edit(project, "alpha\nBETA\ngamma\n"),
+            create(project, "sections/later.tex", "later work\n"),
+        ],
+    )
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+
+    await run_to_completion(controller, "first")
+    await run_to_completion(controller, "second")
+
+    stale = next(c for c in controller.session_changes() if c["file"] == "sections/model.tex")
+    await controller.reject_change(stale["id"])
+
+    assert (project / "sections" / "model.tex").read_text() == "alpha\nbeta\ngamma\n"
+    assert (project / "sections" / "later.tex").read_text() == "later work\n"
+
+
+async def test_accepting_marks_a_change_reviewed_without_touching_disk(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "change it")
+
+    change = controller.session_changes()[0]
+    await controller.accept_change(change["id"])
+
+    after = controller.session_changes()[0]
+    assert after["status"] == "accepted"
+    assert (project / "sections" / "model.tex").read_text() == "alpha\nBETA\ngamma\n"
+
+
+async def test_accept_all_empties_the_review(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "change it")
+
+    assert len(controller.session_changes()) == 1
+    accepted = await controller.accept_all()
+    assert accepted == 1
+    assert controller.session_changes() == []
+    # The text stays; only the baseline moved.
+    assert (project / "sections" / "model.tex").read_text() == "alpha\nBETA\ngamma\n"
+
+
+async def test_turn_review_state_tracks_its_changes(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "change it")
+    turn = controller.turns[-1]
+
+    assert turn.status == "applied"
+    assert turn.review == "pending"
+
+    change = controller.session_changes()[0]
+    await controller.accept_change(change["id"])
+    assert turn.review == "accepted"
+
+    await controller.reject_change(change["id"])
+    assert turn.review == "rejected"
+
+
+async def test_a_question_turn_has_nothing_to_review(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [lambda: TurnOutcome(ok=True, text="no edits")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "a question")
+    assert controller.turns[-1].review == "pending"
+    assert controller.session_changes() == []
+
+
+async def test_changes_are_attributed_to_the_turn_that_made_them(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(
+        bus,
+        [
+            edit(project, "alpha\nBETA\ngamma\n"),
+            create(project, "sections/second.tex", "second\n"),
+        ],
+    )
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "first")
+    await run_to_completion(controller, "second")
+
+    by_file = {c["file"]: c["turnId"] for c in controller.session_changes()}
+    assert by_file["sections/model.tex"] == controller.turns[0].id
+    assert by_file["sections/second.tex"] == controller.turns[1].id
+
+
+async def test_rejecting_an_unknown_change(project: Path):
+    bus = EventBus()
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, ScriptedAgent(bus, []))
+    with pytest.raises(LookupError):
+        await controller.reject_change("nope")

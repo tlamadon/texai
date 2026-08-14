@@ -29,7 +29,6 @@ from .synctex import (
     SyncTexLocation,
     SyncTexNoResult,
     run_synctex_edit,
-    run_synctex_view,
 )
 from .turns import TurnBusy, TurnController
 
@@ -316,66 +315,60 @@ def create_app(
         except LocateError as exc:
             raise _error(404, "not_locatable", str(exc)) from exc
 
-    @app.get("/api/turns/{turn_id}/marks")
-    async def turn_marks(turn_id: str) -> dict[str, Any]:
-        """Each change in the turn, located in the rebuilt PDF.
+    @app.get("/api/changes")
+    async def session_changes() -> dict[str, Any]:
+        """Every change pending review, located in the rebuilt PDF.
 
-        This is the click direction run backwards: ``synctex view`` maps the
-        new source line to the boxes it produced, so the viewer can draw the
-        marker over the text that actually changed.
+        Session-scoped rather than per-turn: a change made three turns ago is
+        still shown, and is still described against the state the review
+        started from, so accepting or rejecting it cannot disturb later work.
         """
-        turn = controller.get(turn_id)
-        if turn is None:
-            raise _error(404, "turn_not_found", f"No turn {turn_id}.")
+        changes = controller.session_changes()
 
-        def locate() -> list[dict[str, Any]]:
+        def locate_all() -> list[dict[str, Any]]:
             marks: list[dict[str, Any]] = []
-            for hunk in turn.hunks:
+            for change in changes:
                 boxes: list[dict[str, Any]] = []
                 try:
-                    # The whole changed span, not just its first line.
                     boxes = locate_range(
                         config,
-                        str(hunk["file"]),
-                        int(hunk["newStart"]),
-                        int(hunk.get("newEnd") or hunk["newStart"]),
+                        str(change["file"]),
+                        int(change["newStart"]),
+                        int(change.get("newEnd") or change["newStart"]),
                     )["boxes"]
                 except (LocateError, SyncTexError):
                     boxes = []  # unlocatable changes still list in the panel
-                marks.append(
-                    {
-                        **hunk,
-                        "boxes": boxes,
-                        "accepted": hunk["id"] in turn.accepted_hunks,
-                    }
-                )
+                marks.append({**change, "boxes": boxes, "accepted": change["status"] == "accepted"})
             return marks
 
-        return {"turnId": turn.id, "status": turn.status, "marks": await asyncio.to_thread(locate)}
+        return {
+            "pending": sum(1 for c in changes if c["status"] == "pending"),
+            "accepted": sum(1 for c in changes if c["status"] == "accepted"),
+            "marks": await asyncio.to_thread(locate_all),
+        }
 
-    @app.post("/api/turns/{turn_id}/hunks/{hunk_id}/accept")
-    async def accept_hunk(turn_id: str, hunk_id: str) -> dict[str, Any]:
+    @app.post("/api/changes/accept-all")
+    async def accept_all_changes() -> dict[str, Any]:
+        count = await controller.accept_all()
+        return {"ok": True, "accepted": count}
+
+    @app.post("/api/changes/{hunk_id}/accept")
+    async def accept_change(hunk_id: str) -> dict[str, Any]:
         try:
-            turn = await controller.accept_hunk(turn_id, hunk_id)
-        except KeyError as exc:
-            raise _error(404, "turn_not_found", f"No turn {turn_id}.") from exc
+            await controller.accept_change(hunk_id)
         except LookupError as exc:
-            raise _error(404, "hunk_not_found", f"No change {hunk_id} in {turn_id}.") from exc
-        return {"ok": True, "turn": turn.as_dict()}
+            raise _error(404, "change_not_found", f"No pending change {hunk_id}.") from exc
+        return {"ok": True}
 
-    @app.post("/api/turns/{turn_id}/hunks/{hunk_id}/reject")
-    async def reject_hunk(turn_id: str, hunk_id: str) -> dict[str, Any]:
+    @app.post("/api/changes/{hunk_id}/reject")
+    async def reject_change(hunk_id: str) -> dict[str, Any]:
         try:
-            turn = await controller.reject_hunk(turn_id, hunk_id)
+            await controller.reject_change(hunk_id)
         except TurnBusy as exc:
             raise _error(409, "agent_busy", str(exc)) from exc
-        except KeyError as exc:
-            raise _error(404, "turn_not_found", f"No turn {turn_id}.") from exc
         except LookupError as exc:
-            raise _error(404, "hunk_not_found", f"No change {hunk_id} in {turn_id}.") from exc
-        except FileNotFoundError as exc:
-            raise _error(410, "snapshot_gone", str(exc)) from exc
-        return {"ok": True, "turn": turn.as_dict()}
+            raise _error(404, "change_not_found", f"No pending change {hunk_id}.") from exc
+        return {"ok": True}
 
     @app.post("/api/turns/{turn_id}/revert")
     async def revert_turn(turn_id: str) -> dict[str, Any]:

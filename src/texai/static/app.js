@@ -23,6 +23,7 @@ const els = {
   zoomFit: document.getElementById('zoom-fit'),
   copyRef: document.getElementById('copy-reference'),
   toggleMarks: document.getElementById('toggle-marks'),
+  acceptAll: document.getElementById('accept-all'),
   conn: document.getElementById('conn'),
   modKey: document.getElementById('mod-key'),
 };
@@ -41,7 +42,7 @@ const viewer = new PdfViewer({
 });
 
 const chat = new ChatPanel();
-marks = new MarksLayer({ viewer, button: els.toggleMarks });
+marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.acceptAll });
 /* ---------------- moving the view ---------------- */
 
 function showLocation(loc) {
@@ -72,9 +73,9 @@ chat.onNavigate = (event) => {
   if (event.why) showToast(event.why);
 };
 
-chat.onTurnFinished = (turn) => {
-  if (turn.status === 'applied' || turn.hunks?.length) marks.showTurn(turn.id);
-};
+// Changes accumulate across turns until accepted, so any of these just means
+// "the pending set moved".
+chat.onChangesUpdated = () => marks.refresh();
 
 let lastSelection = null;
 let pdfVersion = null;

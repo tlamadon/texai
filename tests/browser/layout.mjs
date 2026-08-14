@@ -332,7 +332,6 @@ const card = await cdp.json(`(() => {
   const box2 = { page: 1, x: 72, y: 313, width: 468, height: 10 };
   const near = { page: 1, x: 72, y: 340, width: 468, height: 10 };
 
-  marks.turnId = 't0001';
   marks.enabled = true;
   marks.collapsed.clear();
   marks.marks = [
@@ -449,7 +448,6 @@ const narrow = await cdp.json(`(() => {
   const topPdf = entry.viewport.convertToPdfPoint(0, lineTop);
   const box = { page: 1, x: 0, y: by1 - topPdf[1], width: 468, height: 12 };
 
-  marks.turnId = 't0001';
   marks.enabled = true;
   marks.collapsed.clear();
   marks.marks = [{
@@ -499,7 +497,6 @@ const spread = await cdp.json(`(() => {
   const lineHeight = 12;
 
   // Three lines: the words live on the middle one only.
-  marks.turnId = 't0001';
   marks.enabled = true;
   marks.collapsed.clear();
   marks.marks = [{
