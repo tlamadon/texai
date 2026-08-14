@@ -7,7 +7,21 @@ the source, `texai` rebuilds the document, and the page reloads in place.
 The bridge that makes it work is SyncTeX — a pixel on page 7 becomes
 `sections/model.tex:143`, which is what the agent actually needs.
 
+## Install
+
+```bash
+pip install "texai[agent]"   # viewer + SyncTeX bridge + the chat agent
+pip install texai            # viewer + SyncTeX bridge only (no chat panel)
+```
+
+The `[agent]` extra pulls in the Claude Agent SDK; the plain install runs the
+viewer and SyncTeX bridge and tells you what is missing if you open the panel.
+See [Turning on the agent](#turning-on-the-agent) for the `claude` CLI it also
+needs.
+
 ## Quick start
+
+From a checkout of this repo:
 
 ```bash
 uv sync

@@ -144,7 +144,16 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn  # imported late so --help stays fast
 
     agent = AgentSession(config, EventBus(), model=args.model)
-    uvicorn.run(create_app(config, agent=agent), host=HOST, port=port, log_level="warning")
+    uvicorn.run(
+        create_app(config, agent=agent),
+        host=HOST,
+        port=port,
+        log_level="warning",
+        # The viewer holds an SSE connection open indefinitely, so a graceful
+        # shutdown never completes on its own. Without a timeout the first
+        # Ctrl-C waits forever; cap it so the stream is cancelled and we exit.
+        timeout_graceful_shutdown=2,
+    )
     return 0
 
 
