@@ -110,9 +110,10 @@ Only the words that actually differ are struck through (red) or emphasised
 (green); the surrounding text is kept, dimmed, for context. Striking a whole
 wrapped line when three words changed just makes you hunt for the difference.
 
-Accepting collapses a change to a plain band; clicking a band folds its card
-away and back. Nothing blocks — ignore them and keep working if you would
-rather.
+Clicking a highlight always shows its card, next to the band you clicked. The
+card's `x` hides it again, and clicking the highlight brings it back — including
+for changes you have already accepted, which start collapsed. Nothing blocks:
+ignore them and keep working if you would rather.
 
 Two things to know about the card. The removed text **is not in the PDF** —
 LaTeX never typeset it, because it was removed — so it is drawn as an

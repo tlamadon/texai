@@ -333,7 +333,8 @@ const card = await cdp.json(`(() => {
   const near = { page: 1, x: 72, y: 340, width: 468, height: 10 };
 
   marks.enabled = true;
-  marks.collapsed.clear();
+  marks.state.clear();
+  marks.anchors.clear();
   marks.marks = [
     { id: 'aaa', file: 'sections/model.tex', newStart: 9, kind: 'replace',
       before: 'the parameter a reader is most likely to argue with, which makes this good.',
@@ -395,20 +396,41 @@ check('accept and reject are on the card', card.buttons.slice(0, 2).join(',') ==
 check('overlapping cards are pushed apart', card.overlap !== null && card.overlap <= 0, `${card.overlap}px overlap`);
 check('a pure insertion says so', /new/.test(card.insertNote), card.insertNote);
 
-// Clicking the band collapses the card; accepted changes start collapsed.
-const collapse = await cdp.json(`(() => {
+// Clicking a highlight must always show its card, never hide one; the x hides.
+const clicking = await cdp.json(`(() => {
   const { marks, viewer } = window.__texai;
   const entry = viewer.pageEntry(1);
-  entry.el.querySelector('.mark').click();
-  const afterClick = entry.el.querySelectorAll('.mark-card').length;
-  marks.marks[0].accepted = true;
-  marks.collapsed.clear();
+  const band = () => entry.el.querySelector('.mark');
+  const cards = () => entry.el.querySelectorAll('.mark-card').length;
+
+  band().click();
+  const afterFirstClick = cards();
+  band().click();
+  const afterSecondClick = cards();
+
+  entry.el.querySelector('.mark-hide').click();
+  const afterHide = cards();
+  band().click();
+  const afterReopen = cards();
+
+  // An accepted change starts collapsed but must still open on click.
+  marks.marks.forEach(m => { m.accepted = true; });
+  marks.state.clear();
+  marks.anchors.clear();
   marks.draw();
-  return { afterClick, whenAccepted: entry.el.querySelectorAll('.mark-card').length };
+  const whenAccepted = cards();
+  band().click();
+  const acceptedReopened = cards();
+
+  return { afterFirstClick, afterSecondClick, afterHide, afterReopen, whenAccepted, acceptedReopened };
 })()`);
-console.log('collapse:', collapse);
-check('clicking a band collapses its card', collapse.afterClick === 1, String(collapse.afterClick));
-check('an accepted change collapses to a band', collapse.whenAccepted === 1, String(collapse.whenAccepted));
+console.log('clicking:', clicking);
+check('clicking a highlight keeps its card open', clicking.afterFirstClick >= 1 && clicking.afterSecondClick >= 1,
+  `${clicking.afterFirstClick} then ${clicking.afterSecondClick}`);
+check('the x button hides it', clicking.afterHide < clicking.afterFirstClick, String(clicking.afterHide));
+check('clicking again brings it back', clicking.afterReopen >= 1, String(clicking.afterReopen));
+check('an accepted change starts collapsed', clicking.whenAccepted === 0, String(clicking.whenAccepted));
+check('an accepted change can still be opened', clicking.acceptedReopened >= 1, String(clicking.acceptedReopened));
 
 await cdp.eval(`(() => { const m = window.__texai.marks; m.marks = []; m.enabled = false; m.draw(); return true; })()`);
 
@@ -449,7 +471,8 @@ const narrow = await cdp.json(`(() => {
   const box = { page: 1, x: 0, y: by1 - topPdf[1], width: 468, height: 12 };
 
   marks.enabled = true;
-  marks.collapsed.clear();
+  marks.state.clear();
+  marks.anchors.clear();
   marks.marks = [{
     id: 'narrow1', file: 'a.tex', newStart: 1, kind: 'replace',
     before: 'x', after: phrase, accepted: false,
@@ -498,7 +521,8 @@ const spread = await cdp.json(`(() => {
 
   // Three lines: the words live on the middle one only.
   marks.enabled = true;
-  marks.collapsed.clear();
+  marks.state.clear();
+  marks.anchors.clear();
   marks.marks = [{
     id: 'spread1', file: 'a.tex', newStart: 1, kind: 'replace',
     before: 'x', after: phrase, accepted: false,

@@ -162,8 +162,10 @@ export class MarksLayer {
     this.enabled = localStorage.getItem(STORAGE_KEY) === '1';
     this.marks = [];
     this.pending = 0;
-    this.collapsed = new Set();
-    this.openPopover = null;
+    // Explicit per-change state. Unset means the default: pending changes show
+    // their card, accepted ones stay collapsed until asked for.
+    this.state = new Map();
+    this.anchors = new Map();
 
     if (this.button) {
       this.button.addEventListener('click', () => this.toggle());
@@ -222,8 +224,14 @@ export class MarksLayer {
     }
   }
 
+  /** Whether this change's card should be showing. */
+  _isOpen(mark) {
+    const explicit = this.state.get(mark.id);
+    if (explicit) return explicit === 'open';
+    return !mark.accepted;
+  }
+
   clear() {
-    this._closePopover();
     for (const entry of this.viewer.pages) {
       entry.el.querySelector('.mark-layer')?.remove();
     }
@@ -240,7 +248,7 @@ export class MarksLayer {
     if (!this.enabled || !this.marks.length) return;
 
     for (const mark of this.marks) {
-      const collapsed = mark.accepted || this.collapsed.has(mark.id);
+      const open = this._isOpen(mark);
       let last = null;
 
       const phrases = changedPhrases(mark.afterParts);
@@ -260,12 +268,13 @@ export class MarksLayer {
           entry,
           layer: this._layerFor(entry),
           rect,
+          box,
           narrow: narrowRects(entry, rect, phrases),
         });
       }
       const narrowed = placements.some((p) => p.narrow.length);
 
-      for (const { entry, layer, rect, narrow } of placements) {
+      for (const { entry, layer, rect, box, narrow } of placements) {
         if (narrowed && !narrow.length) {
           last = { entry, layer, rect }; // still anchors the card
           continue;
@@ -275,17 +284,20 @@ export class MarksLayer {
         for (const target of targets) {
           const node = el(
             'div',
-            `mark ${mark.kind}${collapsed ? ' accepted' : ''}${narrowed ? ' narrow' : ''}`
+            `mark ${mark.kind}${mark.accepted ? ' accepted' : ''}${narrowed ? ' narrow' : ''}`
           );
           node.style.left = `${target.left}px`;
           node.style.top = `${target.top}px`;
           node.style.width = `${Math.max(target.width, 8)}px`;
           node.style.height = `${Math.max(target.height, 6)}px`;
-          node.title = `${mark.file}:${mark.newStart} — click to ${collapsed ? 'expand' : 'collapse'}`;
+          node.title = `${mark.file}:${mark.newStart} — click to see the change`;
+          // Remember the *box*, not the rendered rect or its layer: layers are
+          // rebuilt on every draw, and pixel rects go stale the moment you zoom.
+          const here = { page: box.page, box };
           node.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
-            this._toggle(mark);
+            this._open(mark, here); // show it next to the band actually clicked
           });
           layer.append(node);
         }
@@ -294,7 +306,7 @@ export class MarksLayer {
 
       // The old text is not on the page — LaTeX never typeset it — so the card
       // below the change is where "before" actually gets shown.
-      if (last && !collapsed) this._drawCard(last, mark);
+      if (open) this._drawCard(this._resolveAnchor(mark) || last, mark);
     }
 
     for (const entry of this.viewer.pages) this._unstack(entry);
@@ -309,13 +321,42 @@ export class MarksLayer {
     return layer;
   }
 
-  _toggle(mark) {
-    if (this.collapsed.has(mark.id)) this.collapsed.delete(mark.id);
-    else this.collapsed.add(mark.id);
+  /**
+   * Clicking a highlight always shows its card — never hides it.
+   *
+   * Toggling read as "nothing happened": a change's card is anchored to the
+   * last line it touches, which can be some way from the band you clicked, so
+   * a toggle would quietly close a card you could not see. Collapsing is the
+   * card's own x button.
+   */
+  _open(mark, anchor) {
+    this.state.set(mark.id, 'open');
+    if (anchor) this.anchors.set(mark.id, anchor);
     this.draw();
   }
 
-  _drawCard({ entry, layer, rect }, mark) {
+  _close(mark) {
+    this.state.set(mark.id, 'closed');
+    this.anchors.delete(mark.id);
+    this.draw();
+  }
+
+  /** Turn a remembered click into a live anchor for the current render. */
+  _resolveAnchor(mark) {
+    const remembered = this.anchors.get(mark.id);
+    if (!remembered) return null;
+    const entry = this.viewer.pageEntry(remembered.page);
+    if (!entry || !entry.viewport) return null;
+    return {
+      entry,
+      layer: this._layerFor(entry),
+      rect: this.viewer.pdfRectToPageRect(entry, remembered.box),
+    };
+  }
+
+  _drawCard(anchor, mark) {
+    if (!anchor) return;
+    const { entry, layer, rect } = anchor;
     const card = el('div', 'mark-card');
     card.dataset.markId = mark.id;
 
@@ -336,10 +377,10 @@ export class MarksLayer {
       this._act(mark, 'reject', reject);
     });
     const hide = el('button', 'mark-hide', '×');
-    hide.title = 'Collapse';
+    hide.title = 'Hide this change';
     hide.addEventListener('click', (event) => {
       event.stopPropagation();
-      this._toggle(mark);
+      this._close(mark);
     });
     head.append(accept, reject, hide);
     card.append(head);
@@ -368,66 +409,19 @@ export class MarksLayer {
     }
   }
 
-  /* ---------------- popover ---------------- */
-
-  _closePopover() {
-    this.openPopover?.remove();
-    this.openPopover = null;
-  }
-
-  _openPopover(entry, anchor, mark) {
-    this._closePopover();
-
-    const pop = el('div', 'mark-popover');
-    pop.append(el('div', 'mark-where', `${mark.file}:${mark.newStart}`));
-
-    if (mark.before) {
-      const before = el('pre', 'mark-before');
-      before.textContent = mark.before.slice(0, MAX_POPOVER_TEXT).replace(/\n$/, '');
-      pop.append(before);
-    }
-    if (mark.after) {
-      const after = el('pre', 'mark-after');
-      after.textContent = mark.after.slice(0, MAX_POPOVER_TEXT).replace(/\n$/, '');
-      pop.append(after);
-    }
-    if (!mark.before) pop.append(el('div', 'mark-note', 'Added by the agent.'));
-    if (!mark.after) pop.append(el('div', 'mark-note', 'Removed by the agent.'));
-
-    const actions = el('div', 'mark-actions');
-    const accept = el('button', 'primary', 'Accept');
-    accept.addEventListener('click', () => this._act(mark, 'accept', accept));
-    const reject = el('button', 'danger', 'Reject');
-    reject.addEventListener('click', () => this._act(mark, 'reject', reject));
-    actions.append(accept, reject);
-    pop.append(actions);
-
-    // Anchor under the band, nudged back inside the page if it would overflow.
-    const top = anchor.offsetTop + anchor.offsetHeight + 6;
-    pop.style.top = `${top}px`;
-    pop.style.left = `${Math.max(4, anchor.offsetLeft)}px`;
-    entry.el.append(pop);
-
-    const overflow = pop.getBoundingClientRect().right - entry.el.getBoundingClientRect().right;
-    if (overflow > 0) pop.style.left = `${Math.max(4, anchor.offsetLeft - overflow - 8)}px`;
-
-    this.openPopover = pop;
-    setTimeout(() => {
-      document.addEventListener('click', this._dismiss, { once: true });
-    }, 0);
-  }
-
-  _dismiss = () => this._closePopover();
-
   async _act(mark, action, button) {
     button.disabled = true;
     try {
       await postJSON(`/api/changes/${mark.id}/${action}`, {});
-      this._closePopover();
       if (action === 'accept') {
+        // Accepted changes collapse by default; clicking the band reopens them.
+        this.state.delete(mark.id);
+        this.anchors.delete(mark.id);
         showToast('Change accepted.');
         await this.refresh();
       } else {
+        this.state.delete(mark.id);
+        this.anchors.delete(mark.id);
         showToast(`Rejected — rebuilding ${mark.file}…`);
         // The rebuild changes the PDF; the watcher reloads it and the marks are
         // refreshed once the new render exists.
