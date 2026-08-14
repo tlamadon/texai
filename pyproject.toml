@@ -19,6 +19,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    "claude-agent-sdk>=0.2.138",
     "fastapi>=0.115",
     "pydantic>=2.7",
     "uvicorn>=0.30",
@@ -32,8 +33,9 @@ Repository = "https://github.com/tlamadon/texai"
 texai = "texai.cli:main"
 
 [project.optional-dependencies]
-# The chat panel needs this; the viewer and SyncTeX bridge do not.
-agent = ["claude-agent-sdk>=0.2.138"]
+# The agent SDK is a plain dependency now. This extra is kept so that the
+# `texai[agent]` install line already published in 0.1.0 keeps working.
+agent = []
 
 [dependency-groups]
 dev = [

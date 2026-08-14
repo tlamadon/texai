@@ -1004,14 +1004,10 @@ name = "texai"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "claude-agent-sdk" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "uvicorn" },
-]
-
-[package.optional-dependencies]
-agent = [
-    { name = "claude-agent-sdk" },
 ]
 
 [package.dev-dependencies]
@@ -1023,7 +1019,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "claude-agent-sdk", marker = "extra == 'agent'", specifier = ">=0.2.138" },
+    { name = "claude-agent-sdk", specifier = ">=0.2.138" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "uvicorn", specifier = ">=0.30" },

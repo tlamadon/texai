@@ -38,8 +38,8 @@ ALLOWED_TOOLS = [
 DISALLOWED_TOOLS = ["Bash", "WebFetch", "WebSearch", "Task", "KillShell", "BashOutput"]
 
 INSTALL_HINT = (
-    "The Claude Agent SDK is not installed. Run `uv sync --group agent` "
-    "(or `uv add claude-agent-sdk`) and restart texai."
+    "The Claude Agent SDK is missing. It ships with texai, so the environment "
+    "is incomplete — run `uv sync` (or `pip install --upgrade texai`) and restart."
 )
 CLI_HINT = (
     "The `claude` CLI was not found on PATH. The Agent SDK drives it, so install "

@@ -10,14 +10,18 @@ The bridge that makes it work is SyncTeX — a pixel on page 7 becomes
 ## Install
 
 ```bash
-pip install "texai[agent]"   # viewer + SyncTeX bridge + the chat agent
-pip install texai            # viewer + SyncTeX bridge only (no chat panel)
+pip install texai
 ```
 
-The `[agent]` extra pulls in the Claude Agent SDK; the plain install runs the
-viewer and SyncTeX bridge and tells you what is missing if you open the panel.
-See [Turning on the agent](#turning-on-the-agent) for the `claude` CLI it also
-needs.
+That is everything, agent included. The one piece it cannot install for you is
+the **`claude` CLI**, which the agent SDK drives and which supplies the
+credentials — see [Turning on the agent](#turning-on-the-agent). Without it the
+viewer, the SyncTeX bridge and the selection file all still work, and the chat
+panel says what is missing.
+
+(`pip install "texai[agent]"` still works. The extra is empty now that the SDK
+is a plain dependency, and is kept only so the 0.1.0 install line does not
+break.)
 
 ## Quick start
 
@@ -45,13 +49,16 @@ uv run texai --root /path/to/paper --pdf build/main.pdf --open
 
 ### Turning on the agent
 
-The chat panel needs the Claude Agent SDK and the `claude` CLI. Without them the
-viewer, the SyncTeX bridge and the selection file all still work, and the panel
-tells you what is missing.
+The Claude Agent SDK installs with texai. The remaining requirement is the
+**`claude` CLI**, which the SDK drives:
 
 ```bash
-uv sync --extra agent      # installs claude-agent-sdk
+uv sync                    # the agent SDK comes with it
+uv run texai --root . --pdf build/main.pdf --open
 ```
+
+Without the CLI the viewer, the SyncTeX bridge and the selection file all still
+work, and the panel names the missing piece rather than failing vaguely.
 
 The agent runs as a normal local Claude Code session and uses whatever
 credentials `claude` is already logged in with — your subscription, if that is
@@ -298,7 +305,8 @@ that flow.
 - `uv` and Python ≥ 3.10.
 - A TeX installation providing `synctex` and `latexmk`.
 - A PDF compiled with SyncTeX enabled — a `.synctex.gz` next to it.
-- For the chat panel: `claude-agent-sdk` and the `claude` CLI.
+- The `claude` CLI, for the chat panel. The agent SDK itself installs with
+  texai.
 
 Missing pieces are reported specifically rather than as a generic failure: the
 CLI warns at startup, and clicking or sending tells you exactly which piece is
@@ -331,7 +339,7 @@ directory. Everything else here is MIT — see `LICENSE`.
 ## Development
 
 ```bash
-uv sync --extra agent
+uv sync
 uv run pytest              # unit + orchestration tests
 tests/browser/run.sh       # layout regression checks (needs node + Chrome)
 ```
