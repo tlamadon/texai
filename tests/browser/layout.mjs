@@ -413,6 +413,107 @@ check('an accepted change collapses to a band', collapse.whenAccepted === 1, Str
 
 await cdp.eval(`(() => { const m = window.__texai.marks; m.marks = []; m.enabled = false; m.draw(); return true; })()`);
 
+/* ---------------- word-precise highlighting ---------------- */
+
+// Back to the top first: the jump test above scrolled to page 4, and the viewer
+// discards the text layer of pages far off screen, so page 1 would have no
+// spans left to match against.
+await cdp.eval(`(() => { document.getElementById('viewer-container').scrollTop = 0; return true; })()`);
+for (let i = 0; i < 20; i += 1) {
+  const spans = await cdp.eval(
+    `window.__texai.viewer.pageEntry(1).el.querySelectorAll('.textLayer span').length`
+  );
+  if (spans > 20) break;
+  await sleep(300);
+}
+
+// SyncTeX only reports the line box, so a one-word change would band the whole
+// line. The changed words are matched against the rendered text layer instead.
+const narrow = await cdp.json(`(() => {
+  const { marks, viewer } = window.__texai;
+  const entry = viewer.pageEntry(1);
+
+  // Pick real rendered text off the page and pretend it is what changed.
+  // The text layer splits into small spans, so take the widest short one.
+  const pageRect = entry.el.getBoundingClientRect();
+  const span = [...entry.el.querySelectorAll('.textLayer span')]
+    .filter(s => s.textContent.trim().length >= 6 &&
+                 s.getBoundingClientRect().width < pageRect.width * 0.4)
+    .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+  if (!span) return { skip: true };
+  const phrase = span.textContent.trim();
+  const spanRect = span.getBoundingClientRect();
+  // The band covers the whole line this word sits on.
+  const lineTop = spanRect.top - pageRect.top;
+  const [bx0, , , by1] = entry.viewport.viewBox;
+  const topPdf = entry.viewport.convertToPdfPoint(0, lineTop);
+  const box = { page: 1, x: 0, y: by1 - topPdf[1], width: 468, height: 12 };
+
+  marks.turnId = 't0001';
+  marks.enabled = true;
+  marks.collapsed.clear();
+  marks.marks = [{
+    id: 'narrow1', file: 'a.tex', newStart: 1, kind: 'replace',
+    before: 'x', after: phrase, accepted: false,
+    afterParts: [{ text: phrase, changed: true }],
+    boxes: [box],
+  }];
+  marks.draw();
+
+  const bands = [...entry.el.querySelectorAll('.mark')];
+  const widths = bands.map(b => Math.round(b.getBoundingClientRect().width));
+  return {
+    phrase,
+    bands: bands.length,
+    narrowCount: bands.filter(b => b.classList.contains('narrow')).length,
+    widths,
+    lineWidth: Math.round(entry.viewport.width * (468 / (entry.viewport.viewBox[2] - entry.viewport.viewBox[0]))),
+    spanWidth: Math.round(spanRect.width),
+  };
+})()`);
+console.log('narrow:', narrow);
+check('a test phrase was found on the page', !narrow.skip);
+check('the changed words are found in the text layer', narrow.narrowCount > 0, `${narrow.narrowCount} of ${narrow.bands}`);
+check(
+  'the highlight is narrower than the whole line',
+  narrow.widths.length > 0 && Math.max(...narrow.widths) < narrow.lineWidth * 0.9,
+  `${Math.max(...narrow.widths)}px vs a ${narrow.lineWidth}px line`
+);
+
+// Words that cannot be matched must keep the full-line band, not vanish.
+const fallback = await cdp.json(`(() => {
+  const { marks, viewer } = window.__texai;
+  const entry = viewer.pageEntry(1);
+  marks.marks = [{
+    id: 'nope', file: 'a.tex', newStart: 1, kind: 'replace',
+    before: 'x', after: 'zzqq unmatchable gibberish', accepted: false,
+    afterParts: [{ text: 'zzqq unmatchable gibberish', changed: true }],
+    boxes: [{ page: 1, x: 72, y: 300, width: 468, height: 10 }],
+  }];
+  marks.draw();
+  const bands = [...entry.el.querySelectorAll('.mark')];
+  return { bands: bands.length, narrow: bands.filter(b => b.classList.contains('narrow')).length };
+})()`);
+console.log('fallback:', fallback);
+check('unmatchable text falls back to the line band', fallback.bands === 1 && fallback.narrow === 0,
+  JSON.stringify(fallback));
+
+// Math and macros never appear literally in the render, so they are not searched for.
+const mathOnly = await cdp.eval(`(() => {
+  const { marks, viewer } = window.__texai;
+  marks.marks = [{
+    id: 'math', file: 'a.tex', newStart: 1, kind: 'replace',
+    before: 'x', after: '$\\\\alpha$', accepted: false,
+    afterParts: [{ text: '$\\\\alpha$', changed: true }],
+    boxes: [{ page: 1, x: 72, y: 300, width: 468, height: 10 }],
+  }];
+  marks.draw();
+  return viewer.pageEntry(1).el.querySelectorAll('.mark').length;
+})()`);
+check('a purely mathematical change still gets its line band', mathOnly === 1, String(mathOnly));
+
+await cdp.eval(`(() => { const m = window.__texai.marks; m.marks = []; m.enabled = false; m.draw(); return true; })()`);
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

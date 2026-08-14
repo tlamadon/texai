@@ -50,6 +50,110 @@ const el = (tag, className, text) => {
   return node;
 };
 
+
+const escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The words that are new in this change, as phrases that stand a chance of
+ * appearing literally in the rendered text.
+ *
+ * Tokens carrying LaTeX markup are dropped: `$\alpha$` renders as a glyph, not
+ * as those characters, so searching for it would only ever fail. What is left
+ * are runs of plain words, which is what we can actually find on the page.
+ */
+export function changedPhrases(parts) {
+  const phrases = [];
+  for (const part of parts || []) {
+    if (!part.changed) continue;
+    let run = [];
+    for (const token of part.text.split(/\s+/)) {
+      if (!token) continue;
+      if (/[\\${}~^_&%#]/.test(token)) {
+        if (run.length) phrases.push(run.join(' '));
+        run = [];
+      } else {
+        run.push(token);
+      }
+    }
+    if (run.length) phrases.push(run.join(' '));
+  }
+  // Very short fragments match everywhere; they would highlight the wrong words.
+  return phrases.filter((p) => p.replace(/[^\p{L}\p{N}]/gu, '').length >= 3);
+}
+
+/** Text-layer spans whose vertical extent overlaps a band, in reading order. */
+function spansInBand(entry, bandRect) {
+  const pageRect = entry.el.getBoundingClientRect();
+  return [...entry.el.querySelectorAll('.textLayer span')].filter((span) => {
+    const r = span.getBoundingClientRect();
+    const top = r.top - pageRect.top;
+    const bottom = r.bottom - pageRect.top;
+    return bottom > bandRect.top + 1 && top < bandRect.top + bandRect.height - 1;
+  });
+}
+
+/**
+ * Rectangles covering just the changed words inside a band.
+ *
+ * Returns [] when the words cannot be found — hyphenation, ligatures and
+ * anything the source spells differently from the render — and the caller then
+ * keeps the whole-line band rather than highlighting nothing.
+ */
+function narrowRects(entry, bandRect, phrases) {
+  const spans = spansInBand(entry, bandRect);
+  if (!spans.length || !phrases.length) return [];
+
+  // One string across the band, remembering which text node each offset is in.
+  let text = '';
+  const segments = [];
+  for (const span of spans) {
+    const node = span.firstChild;
+    if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+    segments.push({ node, start: text.length, end: text.length + node.data.length });
+    text += node.data;
+    if (!/\s$/.test(node.data)) text += ' '; // spans usually abut without a space
+  }
+  if (!segments.length) return [];
+
+  const at = (offset) => {
+    for (const segment of segments) {
+      if (offset >= segment.start && offset <= segment.end) {
+        return { node: segment.node, offset: offset - segment.start };
+      }
+    }
+    const last = segments[segments.length - 1];
+    return { node: last.node, offset: last.end - last.start };
+  };
+
+  const pageRect = entry.el.getBoundingClientRect();
+  const rects = [];
+  for (const phrase of phrases) {
+    const pattern = phrase.split(/\s+/).map(escapeRegExp).join('\\s+');
+    const match = new RegExp(pattern, 'i').exec(text);
+    if (!match) continue;
+
+    const from = at(match.index);
+    const to = at(match.index + match[0].length);
+    const range = document.createRange();
+    try {
+      range.setStart(from.node, from.offset);
+      range.setEnd(to.node, to.offset);
+    } catch {
+      continue;
+    }
+    for (const r of range.getClientRects()) {
+      if (r.width < 1 || r.height < 1) continue;
+      rects.push({
+        left: r.left - pageRect.left,
+        top: r.top - pageRect.top,
+        width: r.width,
+        height: r.height,
+      });
+    }
+  }
+  return rects;
+}
+
 export class MarksLayer {
   constructor({ viewer, button }) {
     this.viewer = viewer;
@@ -130,24 +234,38 @@ export class MarksLayer {
       const collapsed = mark.accepted || this.collapsed.has(mark.id);
       let last = null;
 
+      const phrases = changedPhrases(mark.afterParts);
+
       for (const box of mark.boxes || []) {
         const entry = this.viewer.pageEntry(box.page);
         if (!entry || !entry.viewport) continue;
 
         const layer = this._layerFor(entry);
         const rect = this.viewer.pdfRectToPageRect(entry, box);
-        const node = el('div', `mark ${mark.kind}${collapsed ? ' accepted' : ''}`);
-        node.style.left = `${rect.left}px`;
-        node.style.top = `${rect.top}px`;
-        node.style.width = `${Math.max(rect.width, 8)}px`;
-        node.style.height = `${Math.max(rect.height, 6)}px`;
-        node.title = `${mark.file}:${mark.newStart} — click to ${collapsed ? 'expand' : 'collapse'}`;
-        node.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          this._toggle(mark);
-        });
-        layer.append(node);
+
+        // SyncTeX only knows the line box, so a one-word change would band the
+        // whole line. Find the changed words in the text layer and highlight
+        // just those; fall back to the line when they cannot be matched.
+        const narrow = narrowRects(entry, rect, phrases);
+        const targets = narrow.length ? narrow : [rect];
+
+        for (const target of targets) {
+          const node = el(
+            'div',
+            `mark ${mark.kind}${collapsed ? ' accepted' : ''}${narrow.length ? ' narrow' : ''}`
+          );
+          node.style.left = `${target.left}px`;
+          node.style.top = `${target.top}px`;
+          node.style.width = `${Math.max(target.width, 8)}px`;
+          node.style.height = `${Math.max(target.height, 6)}px`;
+          node.title = `${mark.file}:${mark.newStart} — click to ${collapsed ? 'expand' : 'collapse'}`;
+          node.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this._toggle(mark);
+          });
+          layer.append(node);
+        }
         last = { entry, layer, rect };
       }
 

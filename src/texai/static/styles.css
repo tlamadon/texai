@@ -475,6 +475,18 @@ button.toggle.active {
   transition: background 120ms ease;
 }
 .mark:hover { background: rgba(76, 141, 255, 0.38); }
+
+/* A word-precise highlight, matched against the rendered text layer rather
+   than the line box SyncTeX reports. Tighter, so it reads as an underline of
+   the words themselves. */
+.mark.narrow {
+  border-radius: 3px;
+  background: rgba(76, 141, 255, 0.30);
+  border-bottom-width: 2px;
+}
+.mark.narrow:hover { background: rgba(76, 141, 255, 0.48); }
+.mark.narrow.insert { background: rgba(63, 185, 80, 0.28); }
+.mark.narrow.delete { background: rgba(248, 81, 73, 0.26); }
 .mark.insert { background: rgba(63, 185, 80, 0.20); border-bottom-color: var(--ok); }
 .mark.insert:hover { background: rgba(63, 185, 80, 0.36); }
 .mark.delete { background: rgba(248, 81, 73, 0.18); border-bottom-color: var(--err); }

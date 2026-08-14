@@ -131,10 +131,15 @@ working if you would rather.
 
 Where it is approximate, honestly:
 
-- Highlights are **line-level**. SyncTeX reports the line box, which is the full
-  column width, so a one-word change highlights its whole line. Every source
-  line of a change is mapped, not just the first — a rewritten paragraph is
-  banded across all the rendered lines it produced.
+- Highlights are **word-level where they can be**. SyncTeX only reports the line
+  box — the full column width — so the changed words are matched against the
+  rendered text layer and highlighted directly. When they cannot be found the
+  whole line is banded instead, which happens for changes that are pure LaTeX
+  (`$\alpha$` renders as a glyph, not as those characters), for hyphenated
+  words split across lines, and for pure deletions, which have no new text to
+  point at.
+- Every source line of a change is mapped, not just the first, so a rewritten
+  paragraph is banded across all the rendered lines it produced.
 - **Deletions** have no place in the new PDF and anchor to the neighbouring line.
 - Changes inside math, floats or `tikz` tend to map to the environment's opening
   line — the same weakness the click direction has.

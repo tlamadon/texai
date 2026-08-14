@@ -193,8 +193,16 @@ export class PdfViewer {
       viewport,
     });
     entry.textLayer = textLayer;
-    textLayer.render().catch(() => {});
+
+    // Twice, deliberately. Overlays that only need geometry appear at once;
+    // anything that reads the rendered text — matching changed words against
+    // the text layer — needs the spans, which do not exist until render()
+    // resolves. Drawing is idempotent, so the second pass just refines.
     this.onRender(entry);
+    textLayer
+      .render()
+      .then(() => this.onRender(entry))
+      .catch(() => {});
   }
 
   /* ---------------- scroll position ---------------- */
