@@ -14,7 +14,17 @@ A small document for exercising \texttt{pdf-review}. It has prose here in
 \texttt{main.tex} and four sections pulled in from separate files, together with
 equations, tables and enough text to run over several pages, so that clicking
 around the compiled PDF shows whether a selection is resolved to the right source
-file and not merely to the right line.
+file and not merely to the right line. The content is deliberately unremarkable:
+a constant-returns production function, a household problem, a short panel of
+invented data, and the regressions one would run on it. Nothing in the argument
+needs defending, which means any passage can be marked, rewritten or deleted
+without the test losing its point. What the document is arranged to stress is
+everything between a rendered box and the line that produced it: paragraphs that
+wrap across a page break, displayed equations that sit a line away from the text
+introducing them, floating tables that \LaTeX{} is free to move far from their
+source, and \verb|\paragraph| headings that put several plausible lines within a
+sentence of each other. A selection that survives all four, in the right file,
+is a selection an editing agent can act on.
 \end{abstract}
 
 \section{Introduction}
@@ -29,17 +39,17 @@ pulled in with \verb|\input|. The same goes for the data, results and robustness
 sections: each one is its own file under \texttt{sections/}, and each one is a
 different answer to the question ``where did that sentence come from?''
 
-To make the test worth running, the document is long enough to spill over
+To make the exercise genuinely useful, the document is long enough to spill over
 several pages. Page breaks are where a naive line-based mapping tends to go
 wrong, because the box a reader clicks on may have been set on one page while
 the paragraph that produced it started on the previous one. Floating tables make
 this worse, since \LaTeX{} is free to move them far from the source line that
 defined them.
 
-What follows is plain vanilla economics by design: a production function, a
+What follows is vanilla economics by design: a production function, a
 household problem, a panel of invented data, and the regressions one would run
-on it. Ordinary is the point. A reviewer's attention should go to the mechanics
-of selecting and rewriting passages, not to the argument, and any sentence here
+on it. Ordinary is the point. A reviewer's attention should go to the machinery
+for marking and rewriting passages, not to the argument, and any sentence here
 can be replaced without anyone mourning it.
 
 \input{sections/model.tex}
