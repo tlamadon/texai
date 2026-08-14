@@ -1,0 +1,77 @@
+\section{Results}
+
+Taking logs of~\eqref{eq:production} and differencing over time gives the usual
+growth-accounting decomposition,
+\begin{equation}
+  \Delta \log Y_{t} = \Delta \log A_{t} + \alpha \, \Delta \log K_{t}
+    + (1 - \alpha) \, \Delta \log L_{t},
+  \label{eq:growth}
+\end{equation}
+so measured output growth splits into a productivity term and the two factor
+terms weighted by $\alpha$ and $1 - \alpha$.
+
+The result worth stating is what~\eqref{eq:growth} leaves behind: whatever is not
+explained by capital and labour is charged to $A_{t}$, which is why the residual
+carries so much of the action in practice. This paragraph also lives in
+\texttt{sections/results.tex}, giving a second file to click on.
+
+\subsection{Point estimates}
+
+Estimating~\eqref{eq:growth} on the panel of Section~\ref{sec:data} by
+least squares with unit and year effects gives $\hat{\alpha} = 0.34$ with a
+standard error of $0.02$, comfortably inside the range the calibration
+literature treats as uncontroversial. The implied productivity residual accounts
+for a little under half of average output growth, and rather more than half of
+its variance across economies.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{lrrr}
+    \hline
+    & \multicolumn{1}{c}{(1)} & \multicolumn{1}{c}{(2)} & \multicolumn{1}{c}{(3)} \\
+    \hline
+    $\Delta \log K$  & 0.34 & 0.31 & 0.36 \\
+                     & (0.02) & (0.03) & (0.02) \\
+    $\Delta \log L$  & 0.66 & 0.69 & 0.64 \\
+                     & (0.02) & (0.03) & (0.02) \\
+    Unit effects     & Yes & Yes & Yes \\
+    Year effects     & No  & Yes & Yes \\
+    Balanced sample  & No  & No  & Yes \\
+    \hline
+    Observations     & 1{,}512 & 1{,}512 & 1{,}280 \\
+    $R^{2}$          & 0.61 & 0.68 & 0.71 \\
+    \hline
+  \end{tabular}
+  \caption{Growth-accounting regressions. Standard errors clustered by unit in
+    parentheses; factor shares constrained to sum to one.}
+  \label{tab:estimates}
+\end{table}
+
+Table~\ref{tab:estimates} shows that the estimate is not delicate. Adding year
+effects moves $\hat{\alpha}$ by three points, restricting attention to the
+balanced sample moves it by two in the other direction, and no specification
+takes it outside $[0.30, 0.37]$. Given the exponent in~\eqref{eq:kstar}, however,
+even that narrow band maps into a range for $K^{\star}$ of roughly twenty per
+cent, which is a good deal less comforting than the standard errors suggest.
+
+\subsection{Transition dynamics}
+
+Simulating the model forward from a capital stock half its steady-state value
+produces the familiar concave path: output growth starts near six per cent and
+decays geometrically toward zero. The half-life of the gap is
+\begin{equation}
+  h = \frac{\log 2}{\lambda},
+  \qquad
+  \lambda \approx (1 - \alpha)\left( \beta^{-1} - 1 + \delta \right),
+  \label{eq:halflife}
+\end{equation}
+which at the estimated parameters is a little over eighteen years. Convergence
+in this class of models is slow, and~\eqref{eq:halflife} makes clear that it is
+slow for a structural reason rather than an accident of calibration: raising
+$\alpha$ lowers $\lambda$ directly.
+
+The gap between the model's transition and the data's is where an honest draft
+starts hedging. The simulated paths are smoother than the observed ones, they
+lack the persistence of the measured residual, and they cannot reproduce the
+handful of large contractions that survive in the sample. A reader who wants to
+argue with any of that will find this paragraph a convenient place to start.

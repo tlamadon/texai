@@ -1,0 +1,73 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+
+\title{A Tiny Example for \texttt{pdf-review}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A small document for exercising \texttt{pdf-review}. It has prose here in
+\texttt{main.tex} and four sections pulled in from separate files, together with
+equations, tables and enough text to run over several pages, so that clicking
+around the compiled PDF shows whether a selection is resolved to the right source
+file and not merely to the right line.
+\end{abstract}
+
+\section{Introduction}
+
+This document exists so you can try \texttt{pdf-review} end to end. Compile it
+with SyncTeX enabled, start the viewer, and Cmd/Ctrl-click anywhere below: the
+source file and line for that spot are written to
+\texttt{.pdf-review/current-selection.json}.
+
+The interesting case is text that lives in another file, so the model section is
+pulled in with \verb|\input|. The same goes for the data, results and robustness
+sections: each one is its own file under \texttt{sections/}, and each one is a
+different answer to the question ``where did that sentence come from?''
+
+To make the test worth running, the document is long enough to spill over
+several pages. Page breaks are where a naive line-based mapping tends to go
+wrong, because the box a reader clicks on may have been set on one page while
+the paragraph that produced it started on the previous one. Floating tables make
+this worse, since \LaTeX{} is free to move them far from the source line that
+defined them.
+
+The content below is deliberately ordinary economics: a production function, a
+household problem, a panel of invented data, and the regressions one would run
+on it. Ordinary is the point. A reviewer's attention should go to the mechanics
+of selecting and rewriting passages, not to the argument, and any sentence here
+can be replaced without anyone mourning it.
+
+\input{sections/model.tex}
+
+\input{sections/robustness.tex}
+
+\input{sections/data.tex}
+
+\input{sections/results.tex}
+
+\section{Conclusion}
+
+Poke this paragraph and it should shout \texttt{main.tex}; poke the model section
+and it should shout \texttt{sections/model.tex}. That is the whole trick: an
+agent handed a naked line number is a tourist without a map.
+
+With five sections spread across four files, the mapping has room to fail in the
+ways that matter. A click in the middle of a wrapped paragraph should still land
+on the paragraph, a click in a displayed equation should land on the equation
+rather than on the line after it, and a click inside a table should land
+somewhere in the \texttt{tabular} rather than wherever the float happened to
+drift to.
+
+Section~\ref{sec:robustness} is the best place to try the awkward cases, since
+its \verb|\paragraph| headings put short runs of text next to each other and
+give SyncTeX several plausible lines to choose from. If a selection there comes
+back with the right file and a line within a sentence or two of the text you
+meant, the loop is working as intended; the model reads the surrounding lines
+anyway and finds the passage from the quoted words.
+
+\end{document}

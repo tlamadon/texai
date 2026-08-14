@@ -1,0 +1,48 @@
+\section{Data}
+\label{sec:data}
+
+The exercise uses an unbalanced panel of $N = 42$ imaginary economies observed
+annually from 1980 to 2019. Output, capital and employment are the three series
+we need; everything else in the source files is carried along because deleting
+columns from a panel is the kind of chore that always waits until the referee
+report arrives.
+
+Capital is constructed by the perpetual inventory method,
+\begin{equation}
+  K_{t+1} = (1 - \delta) K_{t} + I_{t},
+  \label{eq:pim}
+\end{equation}
+initialised at the average investment-output ratio of the first five years and a
+depreciation rate of $\delta = 0.06$. The initial condition matters much less
+than one might fear: by construction the influence of $K_{0}$ decays at rate
+$(1 - \delta)^{t}$, so after two decades roughly three per cent of it survives.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{lrrrr}
+    \hline
+    Variable & Mean & Std.\ dev. & Min & Max \\
+    \hline
+    Output growth, $\Delta \log Y$   & 0.024 & 0.031 & $-0.084$ & 0.112 \\
+    Capital growth, $\Delta \log K$  & 0.031 & 0.019 & $-0.012$ & 0.094 \\
+    Employment growth, $\Delta \log L$ & 0.009 & 0.014 & $-0.041$ & 0.058 \\
+    Investment rate, $I / Y$         & 0.221 & 0.047 & 0.108 & 0.361 \\
+    Capital-output ratio, $K / Y$    & 2.870 & 0.612 & 1.640 & 4.410 \\
+    \hline
+  \end{tabular}
+  \caption{Summary statistics for the estimation sample, 1980--2019.}
+  \label{tab:summary}
+\end{table}
+
+Table~\ref{tab:summary} reports the moments the model is asked to match. The
+capital-output ratio is the one that does the most work, since together
+with~\eqref{eq:kstar} it identifies $\alpha$ up to the assumed real interest
+rate. Nothing here is real, but the numbers are chosen to look plausible enough
+that a reader will click on them before checking whether they are.
+
+Two sample restrictions are worth flagging. Economies with fewer than fifteen
+consecutive observations are dropped, which removes six of the smallest units
+and about four per cent of the observations. Years in which measured output
+falls by more than ten per cent are kept rather than winsorised; they are rare,
+they are informative about the residual, and dropping them would be the sort of
+quiet decision that a reader has every right to object to in the margin.

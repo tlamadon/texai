@@ -1,0 +1,76 @@
+\section{Model}
+
+Let output be produced by a constant-returns technology, so that
+\begin{equation}
+  Y_{t} = A_{t} K_{t}^{\alpha} L_{t}^{1 - \alpha},
+  \label{eq:production}
+\end{equation}
+where $A_{t}$ is total factor productivity, $K_{t}$ is capital, and $L_{t}$ is
+labour. The elasticity $\alpha$ is the parameter a reader is most likely to
+argue with, which makes this a good paragraph to click on.
+
+Equation~\eqref{eq:production} is deliberately unremarkable. What matters is
+that this sentence lives in \texttt{sections/model.tex} rather than in
+\texttt{main.tex}, so a click here exercises the path mapping back to the
+project root.
+
+\subsection{Households}
+
+A representative household chooses consumption $C_{t}$ and next-period capital
+$K_{t+1}$ to maximise
+\begin{equation}
+  \sum_{t = 0}^{\infty} \beta^{t} \, u(C_{t}),
+  \qquad
+  u(C) = \frac{C^{1 - \sigma} - 1}{1 - \sigma},
+  \label{eq:utility}
+\end{equation}
+subject to the resource constraint
+\begin{equation}
+  C_{t} + K_{t+1} = Y_{t} + (1 - \delta) K_{t},
+  \label{eq:budget}
+\end{equation}
+with discount factor $\beta \in (0, 1)$, intertemporal elasticity $1 / \sigma$,
+and depreciation rate $\delta$. Labour is supplied inelastically at $L_{t} = 1$,
+which is the sort of assumption that survives in a draft precisely because
+nobody bothers to click on it.
+
+Combining the first-order conditions for~\eqref{eq:utility} and~\eqref{eq:budget}
+means using the budget constraint to write
+$C_{t} = Y_{t} + (1 - \delta) K_{t} - K_{t+1}$, substituting it into the
+objective, and differentiating with respect to the single remaining choice
+variable $K_{t+1}$. The date-$t$ term contributes $-\beta^{t} u'(C_{t})$, and the
+date-$(t+1)$ term contributes $\beta^{t+1} u'(C_{t+1})$ multiplied by the gross
+return on a unit of capital, $\alpha A_{t+1} K_{t+1}^{\alpha - 1} + 1 - \delta$,
+where the first piece is the marginal product implied
+by~\eqref{eq:production} and the second is the undepreciated stock. Setting the
+sum to zero and using $u'(C) = C^{-\sigma}$ gives the Euler equation
+\begin{equation}
+  \left( \frac{C_{t+1}}{C_{t}} \right)^{\sigma}
+    = \beta \left[ \alpha A_{t+1} K_{t+1}^{\alpha - 1} + 1 - \delta \right],
+  \label{eq:euler}
+\end{equation}
+which says the household equates the marginal cost of saving today to the
+discounted marginal return tomorrow. Everything that follows is a consequence
+of~\eqref{eq:euler} and a transversality condition we will not write down.
+
+\subsection{Steady state}
+
+Setting $A_{t} = A$ and $C_{t+1} = C_{t}$ in~\eqref{eq:euler} pins down the
+capital stock,
+\begin{equation}
+  K^{\star}
+    = \left( \frac{\alpha A}{\beta^{-1} - 1 + \delta} \right)^{\frac{1}{1 - \alpha}},
+  \label{eq:kstar}
+\end{equation}
+and steady-state consumption follows from~\eqref{eq:budget} as
+$C^{\star} = A (K^{\star})^{\alpha} - \delta K^{\star}$. The comparative statics
+are the ones every reader expects: $K^{\star}$ rises with patience and with
+productivity, and falls as capital wears out faster.
+
+Two features of~\eqref{eq:kstar} matter later. First, the exponent
+$1 / (1 - \alpha)$ means that a small change in $\alpha$ moves the steady state a
+lot, so the calibration of $\alpha$ deserves more attention than it usually
+receives. Second, nothing in the steady state depends on $\sigma$; the
+intertemporal elasticity governs the speed of transition rather than the
+destination. Readers who dislike this separation tend to say so in the margin,
+which is exactly the kind of comment this document is built to collect.

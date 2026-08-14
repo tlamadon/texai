@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>texai</title>
+  <link rel="stylesheet" href="/static/vendor/pdfjs/text_layer.css">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <!-- ---------------- canvas: the rendered document ---------------- -->
+    <section class="canvas-pane">
+      <header class="toolbar">
+        <span class="brand">texai</span>
+        <span id="pdf-name" class="pdf-name" title="PDF being reviewed">&mdash;</span>
+
+        <div class="group">
+          <button id="zoom-out" type="button" title="Zoom out">&minus;</button>
+          <span id="zoom-level" class="readout">100%</span>
+          <button id="zoom-in" type="button" title="Zoom in">+</button>
+          <button id="zoom-fit" type="button" title="Fit page width">Fit</button>
+        </div>
+
+        <div class="group">
+          <span class="readout">Page <span id="page-current">1</span> / <span id="page-count">?</span></span>
+        </div>
+
+        <div class="spacer"></div>
+
+        <button id="toggle-marks" type="button" class="toggle"
+                title="Show what the agent changed, inline on the page">Show changes</button>
+        <button id="copy-reference" type="button" class="secondary" disabled
+                title="Copy the last selection as text">Copy reference</button>
+        <span id="conn" class="conn" title="PDF watcher">watching</span>
+      </header>
+
+      <main id="viewer-container" class="viewer-container">
+        <div id="viewer" class="viewer"></div>
+        <div id="empty" class="empty">Loading PDF&hellip;</div>
+      </main>
+
+      <footer class="hintbar">
+        <kbd id="mod-key">Cmd</kbd>-click a passage to attach it to your next message.
+        Select text first to include it.
+      </footer>
+    </section>
+
+    <div id="splitter" class="splitter" title="Drag to resize"></div>
+
+    <!-- ---------------- chat: the agent ---------------- -->
+    <aside class="chat-pane">
+      <header class="chat-header">
+        <div class="tabs" role="tablist">
+          <button id="tab-chat" class="tab active" type="button" role="tab">Chat</button>
+          <button id="tab-transcript" class="tab" type="button" role="tab">Transcript</button>
+        </div>
+        <span id="agent-status" class="agent-status">checking&hellip;</span>
+        <div class="spacer"></div>
+        <button id="attach-terminal" type="button" class="ghost" hidden
+                title="Copy a command that attaches your terminal to this same session">
+          Attach terminal
+        </button>
+        <button id="interrupt" type="button" class="danger" hidden>Stop</button>
+      </header>
+
+      <div id="messages" class="messages">
+        <div class="placeholder" id="chat-placeholder">
+          Cmd/Ctrl-click a passage in the PDF, say what you want changed, and send.
+          The agent edits the source, the document is rebuilt, and the page reloads here.
+        </div>
+      </div>
+
+      <pre id="transcript" class="transcript" hidden></pre>
+
+      <div class="composer">
+        <div id="chips" class="chips"></div>
+        <textarea id="composer-input" rows="3"
+                  placeholder="What should change? (Enter to send, Shift-Enter for a new line)"></textarea>
+        <div class="composer-actions">
+          <span id="composer-hint" class="hint"></span>
+          <div class="spacer"></div>
+          <button id="clear-chips" type="button" class="ghost" hidden>Clear</button>
+          <button id="send" type="button" class="primary">Send</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
