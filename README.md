@@ -139,7 +139,10 @@ Where it is approximate, honestly:
   words split across lines, and for pure deletions, which have no new text to
   point at.
 - Every source line of a change is mapped, not just the first, so a rewritten
-  paragraph is banded across all the rendered lines it produced.
+  paragraph is found wherever it landed. Lines of that span which contain none
+  of the changed words are left unmarked — rewrapping moves text between source
+  lines, and banding them all would highlight the lines above and below the
+  words that actually changed.
 - **Deletions** have no place in the new PDF and anchor to the neighbouring line.
 - Changes inside math, floats or `tikz` tend to map to the environment's opening
   line — the same weakness the click direction has.

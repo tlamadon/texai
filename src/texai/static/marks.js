@@ -236,23 +236,37 @@ export class MarksLayer {
 
       const phrases = changedPhrases(mark.afterParts);
 
+      // Resolve every box first. A rewrapped paragraph spans several source
+      // lines even when only a few words differ, so most of its lines match
+      // nothing — and falling back to a line band per box would highlight the
+      // lines above and below the words that actually changed. The fallback
+      // therefore belongs to the change as a whole: narrow it everywhere we
+      // can, and only band whole lines when we could not narrow it anywhere.
+      const placements = [];
       for (const box of mark.boxes || []) {
         const entry = this.viewer.pageEntry(box.page);
         if (!entry || !entry.viewport) continue;
-
-        const layer = this._layerFor(entry);
         const rect = this.viewer.pdfRectToPageRect(entry, box);
+        placements.push({
+          entry,
+          layer: this._layerFor(entry),
+          rect,
+          narrow: narrowRects(entry, rect, phrases),
+        });
+      }
+      const narrowed = placements.some((p) => p.narrow.length);
 
-        // SyncTeX only knows the line box, so a one-word change would band the
-        // whole line. Find the changed words in the text layer and highlight
-        // just those; fall back to the line when they cannot be matched.
-        const narrow = narrowRects(entry, rect, phrases);
-        const targets = narrow.length ? narrow : [rect];
+      for (const { entry, layer, rect, narrow } of placements) {
+        if (narrowed && !narrow.length) {
+          last = { entry, layer, rect }; // still anchors the card
+          continue;
+        }
+        const targets = narrowed ? narrow : [rect];
 
         for (const target of targets) {
           const node = el(
             'div',
-            `mark ${mark.kind}${collapsed ? ' accepted' : ''}${narrow.length ? ' narrow' : ''}`
+            `mark ${mark.kind}${collapsed ? ' accepted' : ''}${narrowed ? ' narrow' : ''}`
           );
           node.style.left = `${target.left}px`;
           node.style.top = `${target.top}px`;

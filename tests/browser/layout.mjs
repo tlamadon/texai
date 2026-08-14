@@ -480,6 +480,55 @@ check(
   `${Math.max(...narrow.widths)}px vs a ${narrow.lineWidth}px line`
 );
 
+// A rewrapped paragraph spans several lines while only a few words differ.
+// The lines that match nothing must stay clean, not fall back to a line band.
+const spread = await cdp.json(`(() => {
+  const { marks, viewer } = window.__texai;
+  const entry = viewer.pageEntry(1);
+  const pageRect = entry.el.getBoundingClientRect();
+  const span = [...entry.el.querySelectorAll('.textLayer span')]
+    .filter(s => s.textContent.trim().length >= 6 &&
+                 s.getBoundingClientRect().width < pageRect.width * 0.4)
+    .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+  if (!span) return { skip: true };
+
+  const phrase = span.textContent.trim();
+  const lineTop = span.getBoundingClientRect().top - pageRect.top;
+  const [, , , by1] = entry.viewport.viewBox;
+  const onLine = by1 - entry.viewport.convertToPdfPoint(0, lineTop)[1];
+  const lineHeight = 12;
+
+  // Three lines: the words live on the middle one only.
+  marks.turnId = 't0001';
+  marks.enabled = true;
+  marks.collapsed.clear();
+  marks.marks = [{
+    id: 'spread1', file: 'a.tex', newStart: 1, kind: 'replace',
+    before: 'x', after: phrase, accepted: false,
+    afterParts: [{ text: phrase, changed: true }],
+    boxes: [
+      { page: 1, x: 0, y: onLine - 26, width: 468, height: lineHeight },
+      { page: 1, x: 0, y: onLine, width: 468, height: lineHeight },
+      { page: 1, x: 0, y: onLine + 26, width: 468, height: lineHeight },
+    ],
+  }];
+  marks.draw();
+
+  const bands = [...entry.el.querySelectorAll('.mark')];
+  const widths = bands.map(b => Math.round(b.getBoundingClientRect().width));
+  return {
+    bands: bands.length,
+    widths,
+    wide: widths.filter(w => w > pageRect.width * 0.6).length,
+    narrowCount: bands.filter(b => b.classList.contains('narrow')).length,
+  };
+})()`);
+console.log('spread:', spread);
+check('lines with no changed words are left clean', spread.wide === 0,
+  `${spread.wide} full-width band(s) among ${JSON.stringify(spread.widths)}`);
+check('only the matched words are banded', spread.narrowCount === spread.bands && spread.bands > 0,
+  `${spread.narrowCount} narrow of ${spread.bands}`);
+
 // Words that cannot be matched must keep the full-line band, not vanish.
 const fallback = await cdp.json(`(() => {
   const { marks, viewer } = window.__texai;
