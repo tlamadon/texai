@@ -116,6 +116,8 @@
 
       <section id="editor-pane" class="editor-pane" hidden>
         <div class="editor-bar">
+          <button id="outline-toggle" type="button" class="ghost icon" aria-pressed="true"
+                  title="Show the outline of this file">&#9776;</button>
           <select id="editor-file" class="editor-file" title="File being edited"></select>
           <span id="editor-dirty" class="dot" title="Unsaved changes" hidden>&bull;</span>
           <div class="spacer"></div>
@@ -124,7 +126,23 @@
           <button id="editor-save" type="button" class="secondary"
                   title="Save and rebuild the PDF (Cmd/Ctrl-S)">Save</button>
         </div>
-        <div id="editor-host" class="editor-host"></div>
+        <div class="editor-body">
+          <nav id="outline" class="outline" aria-label="Outline">
+            <div class="outline-head">
+              <span>Outline</span>
+              <div class="spacer"></div>
+              <button id="outline-search" type="button" class="ghost icon"
+                      title="Go to a section or a file">
+                <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                  <path fill="none" stroke="currentColor" stroke-width="1.6"
+                        d="M7 1.8a5.2 5.2 0 1 0 0 10.4A5.2 5.2 0 0 0 7 1.8Zm3.9 8.9 3.3 3.3"/>
+                </svg>
+              </button>
+            </div>
+            <div id="outline-list" class="outline-list"></div>
+          </nav>
+          <div id="editor-host" class="editor-host"></div>
+        </div>
         <div id="editor-status" class="editor-status"></div>
       </section>
 
@@ -140,6 +158,22 @@
         </div>
       </div>
     </aside>
+  </div>
+
+  <!-- ---------------- go to a section or a file ---------------- -->
+  <div id="jump" class="jump" hidden>
+    <div class="jump-box" role="dialog" aria-label="Go to">
+      <div class="jump-field">
+        <input id="jump-input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Go to a section or a file&hellip;">
+        <span id="jump-count" class="jump-count"></span>
+      </div>
+      <ul id="jump-list" class="jump-list" role="listbox"></ul>
+      <div class="jump-hint">
+        <kbd>&uarr;</kbd><kbd>&darr;</kbd> move &middot; <kbd>Enter</kbd> jump &middot;
+        <kbd>Esc</kbd> close
+      </div>
+    </div>
   </div>
 
   <div id="toast-stack" class="toast-stack" aria-live="polite"></div>

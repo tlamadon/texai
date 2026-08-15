@@ -27,7 +27,9 @@ back marked on the page for you to accept or reject.
   terminal when you want the full CLI.
 - **Take over by hand whenever you like.** Alt-click opens the LaTeX at that
   spot in an editor; Cmd/Ctrl-S saves and recompiles, and the page reloads where
-  you were. Clicking in the source scrolls the PDF back to it.
+  you were. Clicking in the source scrolls the PDF back to it. An outline of the
+  document sits beside the editor, and Cmd/Ctrl-P jumps to any section in the
+  project by name.
 - **Know how far you have drifted from git.** The toolbar carries the branch,
   how many files are uncommitted, and how many commits you are ahead or behind
   the remote — scoped to your project, even when it is a subdirectory of a
@@ -356,6 +358,48 @@ Alt-click "the elasticity of substitution"  →  Source tab, sections/model.tex:
 The `file:line` label on a change card opens the same editor at that change, for
 when it is faster to fix the agent's work than to describe the fix.
 
+### Finding your way around the source
+
+Beside the editor is the document's outline: every `\section` and its relatives,
+the figures and tables under their captions, theorem-like statements under their
+titles, beamer frames, and the `\input` lines that pull the rest of the paper in.
+Clicking a heading goes there in the source *and* scrolls the PDF to it; clicking
+an `\input` opens the file it names. Whatever the cursor is inside is marked as
+it moves.
+
+```
+Results
+  Point estimates
+    Table: Growth-accounting regressions. Standard errors…
+  Transition dynamics
+```
+
+Floats are named by their `\caption`, wherever it sits in the environment —
+usually under fifty lines of `tabular`. Statements are named by their
+`\begin{theorem}[optional title]`, or failing that by their `\label`.
+`\newtheorem` declarations are read as they are met, so `\begin{ass}` shows up
+as *Assumption* once the file declaring it has been read; the usual names
+(`theorem`, `lemma`, `prop`, `defn`, `assumption`, …) work without any
+declaration. Equations and `proof` blocks are left out — there are too many of
+them to be a map.
+
+It is read from the buffer rather than from the file on disk, so a heading you
+typed a second ago is already in the list, at the line it is really on. `≡` in
+the editor bar folds the column away when the pane is narrow.
+
+**Cmd/Ctrl-P** opens *go to*: type a few letters of any heading in the project,
+or of a file name, and jump.
+
+```
+Cmd-P, "housh"  →  Households                              sections/model.tex:17
+Cmd-P, "summ"   →  Table: Summary statistics for the esti… sections/data.tex:20
+Cmd-P, "robu"   →  sections/robustness.tex
+```
+
+The match is fuzzy — the letters need only appear in order — and headings in the
+file you are editing come first. Headings elsewhere are read from disk the first
+time you open the palette, and re-read whenever you or the agent writes.
+
 Two writers on one tree needs a rule, so every save carries a hash of the text it
 was based on. If the agent rewrote the file while it sat open, the save is
 refused with *"changed since you opened it"* rather than discarding that work;
@@ -564,7 +608,8 @@ src/texai/
   server.py      FastAPI routes
   static/        vanilla two-panel UI + vendored PDF.js and CodeMirror
                  (marks.js draws the inline change markers,
-                  editor.js is the Source tab, git.js the git panel)
+                  editor.js is the Source tab, outline.js its table of
+                  contents, jump.js the go-to palette, git.js the git panel)
 ```
 
 ## Not built yet

@@ -5,6 +5,7 @@ import { getJSON, postJSON } from './api.js';
 import { ChatPanel } from './chat.js';
 import { GitPanel } from './git.js';
 import { SourceEditor } from './editor.js';
+import { QuickJump } from './jump.js';
 import { MarksLayer } from './marks.js';
 import { showToast } from './toast.js';
 import { PdfViewer } from './viewer.js';
@@ -51,7 +52,22 @@ marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.a
 // reloads the page, so there is nothing to do here but let it happen.
 const editor = new SourceEditor();
 const git = new GitPanel();
-editor.onSaved = () => git.refresh();
+
+// Go to a heading anywhere in the project, or to a file, without leaving the
+// keyboard. The open buffer answers for itself so the line numbers are right
+// even mid-edit; the rest of the project is read from disk and cached.
+const jump = new QuickJump({
+  files: () => editor.ensureFiles(),
+  current: () => ({ file: editor.file, entries: editor.entries }),
+  onPick: (file, line) => jumpToSource(file, line),
+  onDismiss: () => editor.focus(),
+});
+editor.onJump = () => jump.toggle();
+
+editor.onSaved = () => {
+  git.refresh();
+  jump.invalidate();
+};
 // The reverse of Cmd-click: put the cursor in the source, see it in the PDF.
 editor.onReveal = (file, line) => file && goTo(file, line, { quiet: true });
 
@@ -65,6 +81,12 @@ chat.onViewChange = (view) => {
 async function editAt(file, line, column = null) {
   chat.setView('source');
   await editor.open(file, line, column);
+}
+
+/** Jumping from the outline or the palette moves both panes to the same place. */
+async function jumpToSource(file, line) {
+  await editAt(file, line);
+  if (line != null) goTo(file, line, { quiet: true });
 }
 /* ---------------- moving the view ---------------- */
 
@@ -116,6 +138,8 @@ chat.onNavigate = (event) => {
 chat.onChangesUpdated = () => {
   marks.refresh();
   git.refresh();
+  // The agent's edits move headings around; the cached outlines are stale.
+  jump.invalidate();
   // The agent may have rewritten the file sitting in the editor; take its
   // version unless there is unsaved typing to protect.
   editor.reload();
@@ -333,6 +357,23 @@ els.viewer.addEventListener('click', onViewerClick);
   });
 })();
 
+// Cmd/Ctrl-P opens the go-to palette from anywhere, including from inside the
+// editor and the composer — so it is caught on the way down, before CodeMirror
+// or the browser's print dialog get a say. Ctrl-P on a Mac is left alone: it
+// moves the cursor up a line, as it does in every other text field there.
+document.addEventListener(
+  'keydown',
+  (event) => {
+    const modifier = IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    if (!modifier || event.altKey || event.shiftKey) return;
+    if (event.key !== 'p' && event.key !== 'P') return;
+    event.preventDefault();
+    event.stopPropagation();
+    jump.toggle();
+  },
+  true
+);
+
 document.addEventListener('keydown', (event) => {
   if (event.target instanceof HTMLInputElement) return;
   if (event.target instanceof HTMLTextAreaElement) return;
@@ -351,6 +392,8 @@ document.addEventListener('keydown', (event) => {
 
 async function boot() {
   els.modKey.textContent = IS_MAC ? 'Cmd' : 'Ctrl';
+  const goTo = document.getElementById('outline-search');
+  goTo.title = `${goTo.title} (${IS_MAC ? 'Cmd' : 'Ctrl'}-P)`;
   try {
     const info = await getJSON('/api/info');
     els.pdfName.textContent = info.pdf;
@@ -379,6 +422,6 @@ async function boot() {
 
 // Exposed for the browser layout suite (and handy from the devtools console).
 // Read-only handles; nothing here is part of the page's own control flow.
-window.__texai = { viewer, chat, marks, editor, git };
+window.__texai = { viewer, chat, marks, editor, git, jump };
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));

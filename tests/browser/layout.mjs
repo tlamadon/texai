@@ -724,6 +724,297 @@ const editorDirty = await cdp.json(`(() => {
 })()`);
 check('typing raises the unsaved marker', editorDirty.dirty && editorDirty.dot, JSON.stringify(editorDirty));
 
+/* ---------------- the outline column ---------------- */
+
+const outline = await cdp.json(`(async () => {
+  await window.__texai.editor.open('main.tex');
+  await new Promise(r => setTimeout(r, 300));
+  const panel = document.getElementById('outline');
+  const host = document.getElementById('editor-host');
+  const rows = [...document.querySelectorAll('.outline-row')];
+  const p = panel.getBoundingClientRect();
+  const h = host.getBoundingClientRect();
+  const list = document.getElementById('outline-list');
+  return {
+    titles: rows.map(r => r.textContent),
+    inputs: rows.filter(r => r.classList.contains('kind-input')).length,
+    panelW: Math.round(p.width),
+    panelH: Math.round(p.height),
+    hostW: Math.round(h.width),
+    sideBySide: Math.abs(p.top - h.top) <= 1 && p.right <= h.left + 1,
+    listScrolls: list.scrollHeight <= list.clientHeight || list.clientHeight > 0,
+    insidePane: p.bottom <= document.getElementById('editor-pane').getBoundingClientRect().bottom + 1,
+    rootScrollH: document.documentElement.scrollHeight,
+    rootClientH: document.documentElement.clientHeight,
+  };
+})()`);
+console.log('outline:', outline);
+
+check("the outline lists the document's headings", outline.titles.includes('Introduction')
+  && outline.titles.includes('Conclusion'), outline.titles.join(' | '));
+check('and the files it pulls in', outline.inputs === 4, String(outline.inputs));
+check('the outline sits beside the code, not over it', outline.sideBySide);
+check('the editor keeps a usable width', outline.hostW > 150, `${outline.hostW}px`);
+check('the outline stays inside the pane', outline.insidePane && outline.panelH > 100,
+  `${outline.panelH}px`);
+check('the outline does not make the page scroll',
+  outline.rootScrollH <= outline.rootClientH + 1,
+  `${outline.rootScrollH} vs ${outline.rootClientH}`);
+
+// A heading is a place in the source: clicking it goes there.
+const outlinePick = await cdp.json(`(async () => {
+  [...document.querySelectorAll('.outline-row')].find(r => r.textContent === 'Conclusion').click();
+  await new Promise(r => setTimeout(r, 400));
+  const ed = window.__texai.editor;
+  const scroller = document.querySelector('#editor-host .CodeMirror-scroll');
+  return {
+    line: ed.cm.getCursor().line + 1,
+    text: ed.cm.getLine(ed.cm.getCursor().line),
+    active: document.querySelector('.outline-row.active')?.textContent,
+    scrolled: scroller.scrollTop > 0,
+    rootScrollTop: document.documentElement.scrollTop,
+  };
+})()`);
+console.log('outline pick:', outlinePick);
+check('clicking a heading lands on it', outlinePick.text === '\\section{Conclusion}',
+  JSON.stringify(outlinePick.text));
+check('the editor scrolls there', outlinePick.scrolled && outlinePick.rootScrollTop === 0);
+check('and the outline marks where the cursor is', outlinePick.active === 'Conclusion',
+  String(outlinePick.active));
+
+// An \input is a link to the file it pulls in.
+const outlineInput = await cdp.json(`(async () => {
+  document.querySelector('.outline-row.kind-input').click();
+  await new Promise(r => setTimeout(r, 600));
+  return {
+    file: window.__texai.editor.file,
+    first: document.querySelector('.outline-row')?.textContent,
+    titles: [...document.querySelectorAll('.outline-row')].map(r => r.textContent),
+  };
+})()`);
+console.log('outline input:', outlineInput);
+check('an \\input row opens the file it pulls in', outlineInput.file === 'sections/model.tex',
+  String(outlineInput.file));
+check('and the outline follows the file that opened', outlineInput.first === 'Model',
+  outlineInput.titles.join(' | '));
+
+// The outline is read from the buffer, not from disk, so unsaved headings are
+// in it — and at the line they are really on.
+const outlineLive = await cdp.json(`(async () => {
+  const ed = window.__texai.editor;
+  ed.cm.replaceRange('\\\\section{Scratch}\\n', { line: 0, ch: 0 });
+  await new Promise(r => setTimeout(r, 500));
+  const typed = [...document.querySelectorAll('.outline-row')].map(r => r.textContent);
+  ed.cm.undo();
+  ed._setDirty(false);
+  await new Promise(r => setTimeout(r, 500));
+  return { typed, after: [...document.querySelectorAll('.outline-row')].map(r => r.textContent) };
+})()`);
+console.log('outline while typing:', outlineLive);
+check('a heading typed just now is in the outline', outlineLive.typed[0] === 'Scratch',
+  outlineLive.typed.join(' | '));
+check('and leaves again when it is undone', !outlineLive.after.includes('Scratch'),
+  outlineLive.after.join(' | '));
+
+// A caption is long prose on one nowrap line: the column must clip it, not
+// grow to fit it and shove the editor out of the pane.
+const outlineLong = await cdp.json(`(async () => {
+  await window.__texai.editor.open('sections/results.tex', 27);
+  await new Promise(r => setTimeout(r, 500));
+  const panel = document.getElementById('outline');
+  const host = document.getElementById('editor-host');
+  const row = document.querySelector('.outline-row.active');
+  const pane = document.getElementById('editor-pane').getBoundingClientRect();
+  return {
+    panelW: Math.round(panel.getBoundingClientRect().width),
+    hostW: Math.round(host.getBoundingClientRect().width),
+    hostRight: Math.round(host.getBoundingClientRect().right),
+    paneRight: Math.round(pane.right),
+    active: row?.textContent.slice(0, 20),
+    rowClipped: row ? row.scrollWidth > row.clientWidth : false,
+    paneScrolledSideways: document.querySelector('.chat-pane').scrollLeft,
+  };
+})()`);
+console.log('outline with a long caption:', outlineLong);
+check('a long caption does not widen the outline', outlineLong.panelW <= 200,
+  `${outlineLong.panelW}px`);
+check('and the editor stays inside the pane',
+  outlineLong.hostRight <= outlineLong.paneRight + 1 && outlineLong.hostW > 150,
+  `${outlineLong.hostRight} vs ${outlineLong.paneRight}, ${outlineLong.hostW}px wide`);
+check('the caption is clipped, not wrapped or spilled', outlineLong.rowClipped,
+  outlineLong.active);
+check('the panel is not scrolled sideways', outlineLong.paneScrolledSideways === 0,
+  String(outlineLong.paneScrolledSideways));
+
+const outlineToggle = await cdp.json(`(() => {
+  const button = document.getElementById('outline-toggle');
+  button.click();
+  const folded = {
+    panelW: document.getElementById('outline').getBoundingClientRect().width,
+    hostW: Math.round(document.getElementById('editor-host').getBoundingClientRect().width),
+  };
+  button.click();
+  return { folded, backW: document.getElementById('outline').getBoundingClientRect().width };
+})()`);
+console.log('outline toggle:', outlineToggle);
+check('the outline folds away', outlineToggle.folded.panelW === 0, `${outlineToggle.folded.panelW}px`);
+check('and the editor takes the space', outlineToggle.folded.hostW > outline.hostW,
+  `${outlineToggle.folded.hostW} vs ${outline.hostW}`);
+check('and it comes back', outlineToggle.backW > 0, `${outlineToggle.backW}px`);
+
+/* ---------------- what the outline finds ---------------- */
+
+// The parser, against a document with every shape it is meant to pick up.
+// Run in the page, on the module the page actually loads.
+const parsed = await cdp.json(`(async () => {
+  const { parseOutline } = await import('/static/outline.js');
+  const doc = [
+    '\\\\newtheorem{ass}{Assumption}',
+    '% \\\\section{Commented out}',
+    '\\\\section{Theory}',
+    '\\\\begin{ass}[Regularity]',
+    'It holds.',
+    '\\\\end{ass}',
+    '\\\\begin{lemma}\\\\label{lem:key}',
+    '\\\\end{lemma}',
+    '\\\\subsection{Evidence}',
+    '\\\\begin{table}[ht]',
+    '\\\\begin{tabular}{cc} a & b \\\\end{tabular}',
+    '\\\\caption{Summary of the \\\\textit{estimates}.}',
+    '\\\\end{table}',
+    '\\\\begin{verbatim}',
+    '\\\\section{Not a section}',
+    '\\\\end{verbatim}',
+    '\\\\begin{proof} skipped \\\\end{proof}',
+    '\\\\input{sections/data}',
+  ].join('\\n');
+  return parseOutline(doc).map(e => [e.line, e.level, e.kind, e.title]);
+})()`);
+console.log('parsed:', parsed);
+
+const titles = parsed.map((e) => e[3]);
+check('a declared \\newtheorem is listed under its printed name and title',
+  titles.includes('Assumption: Regularity'), titles.join(' | '));
+check('a statement the file never declares is recognised anyway, by its label',
+  titles.includes('Lemma: lem:key'), titles.join(' | '));
+check('a float is listed under its caption, at the line it starts on',
+  parsed.some((e) => e[3] === 'Table: Summary of the estimates.' && e[0] === 10 && e[2] === 'float'),
+  JSON.stringify(parsed.filter((e) => e[2] === 'float')));
+check('floats and statements hang under their heading',
+  parsed.find((e) => e[2] === 'float')[1] > parsed.find((e) => e[3] === 'Evidence')[1]);
+check('a commented-out heading is not in the outline', !titles.includes('Commented out'));
+check('nor is one inside verbatim', !titles.includes('Not a section'));
+check('a proof is not a statement worth listing', !titles.some((t) => t.startsWith('Proof')));
+
+/* ---------------- the go-to palette ---------------- */
+
+const palette = await cdp.json(`(async () => {
+  await window.__texai.editor.open('main.tex');
+  window.__texai.jump.invalidate();
+  window.__texai.jump.show();
+  await new Promise(r => setTimeout(r, 1500));   // the project scan is a fetch per file
+  const input = document.getElementById('jump-input');
+  const focused = document.activeElement === input;
+  input.value = 'househ';
+  input.dispatchEvent(new Event('input'));
+  await new Promise(r => setTimeout(r, 150));
+  const rows = [...document.querySelectorAll('.jump-row')];
+  const box = document.querySelector('.jump-box').getBoundingClientRect();
+  return {
+    focused,
+    visible: !document.getElementById('jump').hidden,
+    count: rows.length,
+    top: rows[0]?.querySelector('.jump-label')?.textContent,
+    detail: rows[0]?.querySelector('.jump-detail')?.textContent,
+    marked: rows[0]?.querySelectorAll('.jump-label b').length ?? 0,
+    insideWindow: box.right <= window.innerWidth + 1 && box.bottom <= window.innerHeight + 1
+      && box.left >= -1 && box.top >= -1,
+  };
+})()`);
+console.log('palette:', palette);
+check('the palette opens with the field focused', palette.visible && palette.focused);
+check('it fits in the window', palette.insideWindow);
+check('a fuzzy query finds a heading in another file', palette.top === 'Households',
+  `${palette.top} — ${palette.detail}`);
+check('and says which file and line it is on', palette.detail === 'sections/model.tex:17',
+  String(palette.detail));
+check('the matched letters are marked', palette.marked > 0, String(palette.marked));
+
+// Floats are indexed too, and the example keeps its tables in another file.
+const paletteFloat = await cdp.json(`(async () => {
+  const input = document.getElementById('jump-input');
+  input.value = 'summary';
+  input.dispatchEvent(new Event('input'));
+  await new Promise(r => setTimeout(r, 150));
+  const row = document.querySelector('.jump-row');
+  return {
+    top: row?.querySelector('.jump-label')?.textContent,
+    detail: row?.querySelector('.jump-detail')?.textContent,
+  };
+})()`);
+console.log('palette float:', paletteFloat);
+check('a table is findable by its caption, across files',
+  paletteFloat.top === 'Table: Summary statistics for the estimation sample, 1980--2019.'
+    && paletteFloat.detail === 'sections/data.tex:20',
+  `${paletteFloat.top} — ${paletteFloat.detail}`);
+
+const paletteEnter = await cdp.json(`(async () => {
+  const input = document.getElementById('jump-input');
+  input.value = 'househ';
+  input.dispatchEvent(new Event('input'));
+  await new Promise(r => setTimeout(r, 150));
+  document.getElementById('jump-input').dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await new Promise(r => setTimeout(r, 800));
+  const ed = window.__texai.editor;
+  return {
+    hidden: document.getElementById('jump').hidden,
+    file: ed.file,
+    text: ed.cm.getLine(ed.cm.getCursor().line),
+    active: document.querySelector('.outline-row.active')?.textContent,
+  };
+})()`);
+console.log('palette pick:', paletteEnter);
+check('Enter jumps to the heading, in its own file',
+  paletteEnter.file === 'sections/model.tex' && paletteEnter.text === '\\subsection{Households}',
+  JSON.stringify(paletteEnter));
+check('the palette closes behind it', paletteEnter.hidden);
+check('and the outline lands on the same heading', paletteEnter.active === 'Households',
+  String(paletteEnter.active));
+
+// The shortcut itself, dispatched as a real key event: Cmd-P on a Mac,
+// Ctrl-P elsewhere. It has to win against CodeMirror, which has the focus.
+const mac = await cdp.eval(`navigator.platform.toUpperCase().includes('MAC')`);
+const modifiers = mac ? 4 : 2;
+const key = (type, name, code, vk) => cdp.send('Input.dispatchKeyEvent', {
+  type, modifiers: name === 'Escape' ? 0 : modifiers, key: name, code,
+  windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk,
+});
+
+await key('rawKeyDown', 'p', 'KeyP', 80);
+await key('keyUp', 'p', 'KeyP', 80);
+await sleep(300);
+const byShortcut = await cdp.json(`(() => {
+  const cm = window.__texai.editor.cm;
+  return {
+    open: !document.getElementById('jump').hidden,
+    focused: document.activeElement === document.getElementById('jump-input'),
+    cursorLine: cm.getLine(cm.getCursor().line),
+    dirty: window.__texai.editor.dirty,
+  };
+})()`);
+console.log('palette shortcut:', byShortcut);
+check(`${mac ? 'Cmd' : 'Ctrl'}-P opens the palette from the editor`,
+  byShortcut.open && byShortcut.focused, JSON.stringify(byShortcut));
+check('and the keystroke never reaches the buffer',
+  !byShortcut.dirty && byShortcut.cursorLine === '\\subsection{Households}',
+  JSON.stringify(byShortcut));
+
+await key('rawKeyDown', 'Escape', 'Escape', 27);
+await key('keyUp', 'Escape', 'Escape', 27);
+await sleep(250);
+check('Esc closes it again', await cdp.eval(`document.getElementById('jump').hidden`));
+
 await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
 
 /* ---------------- the git pill and panel ---------------- */
