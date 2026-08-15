@@ -1,6 +1,8 @@
 [project]
 name = "texai"
-version = "0.1.0"
+# Single-sourced from src/texai/__init__.py, so a release cannot ship a
+# package whose reported version disagrees with its metadata.
+dynamic = ["version"]
 description = "A canvas for LaTeX: read the compiled PDF, point at a passage, and a coding agent edits the source and rebuilds it."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,6 +49,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/texai/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/texai"]

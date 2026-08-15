@@ -458,6 +458,31 @@ absent.
   project, or they would turn up in the agent's own Glob and Grep results. No
   git history is written.
 
+## Releasing
+
+The version lives in one place, `src/texai/__init__.py`; `pyproject.toml` reads
+it from there, so the two cannot drift.
+
+```bash
+# bump __version__, commit, then:
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+That runs `.github/workflows/release.yml`: tests on the oldest and newest
+supported Python, a check that the tag matches `__version__`, a build, a check
+that the wheel really contains the viewer and its vendored assets, `twine
+check`, and then the upload. Any of those failing stops the release — which
+matters, because a version once on PyPI can never be replaced.
+
+Authentication is [PyPI Trusted
+Publishing](https://docs.pypi.org/trusted-publishers/), so there is no API token
+in the repository to leak or rotate. It needs one-time setup on PyPI: **your
+project → Publishing → Add a new pending publisher**, with workflow
+`release.yml` and environment `pypi`.
+
+`workflow_dispatch` runs everything except the upload, which is the way to prove
+the pipeline before committing to a version number.
+
 ## Third-party code
 
 `src/texai/static/vendor/` holds pinned copies of two libraries, vendored so

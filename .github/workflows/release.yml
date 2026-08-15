@@ -1,0 +1,131 @@
+# Publish texai to PyPI when a version tag is pushed.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Authentication is PyPI Trusted Publishing (OIDC), so there is no API token in
+# this repository's secrets to leak or rotate. It needs one-time setup on PyPI:
+#
+#   pypi.org -> your project -> Publishing -> Add a new pending publisher
+#     Owner:            tlamadon
+#     Repository:       texai
+#     Workflow name:    release.yml
+#     Environment name: pypi
+#
+# A version already on PyPI can never be replaced, so the tag is checked against
+# src/texai/__init__.py (the single source of the version) and the tests must
+# pass before anything is uploaded.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Build and check without publishing, to prove the workflow before tagging.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check and test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The oldest version the package claims to support, and a current one.
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install
+        run: uv sync --all-extras --dev --python ${{ matrix.python-version }}
+
+      - name: Run tests
+        run: uv run --python ${{ matrix.python-version }} pytest -q
+
+      # A version on PyPI can never be replaced, so a tag that disagrees with
+      # the package must stop the release rather than publish the wrong number.
+      - name: Tag must match the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(uv run python -c "import texai; print(texai.__version__)")
+          echo "tag=$tag  package=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match __version__ = $version."
+            echo "::error::Bump src/texai/__init__.py, or retag."
+            exit 1
+          fi
+
+  build:
+    name: Build distributions
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      # The viewer is useless without its vendored assets, and a packaging
+      # mistake there would only show up as a blank page after install.
+      - name: The wheel must carry the front end
+        run: |
+          python3 - <<'PY'
+          import pathlib, zipfile, sys
+          wheel = sorted(pathlib.Path("dist").glob("*.whl"))[-1]
+          names = set(zipfile.ZipFile(wheel).namelist())
+          required = [
+              "texai/static/index.html",
+              "texai/static/app.js",
+              "texai/static/viewer.js",
+              "texai/static/editor.js",
+              "texai/static/git.js",
+              "texai/static/vendor/pdfjs/pdf.mjs",
+              "texai/static/vendor/pdfjs/pdf.worker.mjs",
+              "texai/static/vendor/codemirror/codemirror.js",
+          ]
+          missing = [name for name in required if name not in names]
+          if missing:
+              sys.exit("wheel is missing: " + ", ".join(missing))
+          print(f"{wheel.name}: {len(names)} files, front end present")
+          PY
+
+      - name: Check the metadata renders on PyPI
+        run: uvx twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    # Only a tag publishes; a manual run stops after building.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/texai
+    permissions:
+      id-token: write # the OIDC token that stands in for an API token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
