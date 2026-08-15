@@ -36,7 +36,14 @@ When you are done, say briefly what you changed and where, one line per passage.
 
 
 def _format_selection(index: int, selection: SelectionRef) -> str:
-    lines = [f"[{index}] {selection.file}:{selection.line}"]
+    # The column is only worth stating when it points at a word we actually
+    # found in the source; otherwise it is a meaningless 1.
+    where = f"{selection.file}:{selection.line}"
+    if selection.word:
+        where += f":{selection.column}"
+    lines = [f"[{index}] {where}"]
+    if selection.word:
+        lines.append(f'    At the word: "{selection.word}"')
     if selection.selectedText:
         lines.append(f'    Rendered text: "{selection.selectedText}"')
     if selection.page is not None:

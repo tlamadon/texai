@@ -834,6 +834,225 @@ console.log('outside git:', noRepo);
 check('a project outside git shows no pill', noRepo.hidden);
 check('and the pill returns for one inside git', noRepo.backAgain);
 
+/* ---------------- the word under the cursor ---------------- */
+
+// SyncTeX only ever answers with a line; the column comes from matching the
+// word the text layer reports. These check the browser half of that, which is
+// free: no agent, no build.
+
+const wordProbe = await cdp.json(`(async () => {
+  const spans = [...document.querySelectorAll('#viewer .textLayer span')];
+  const span = spans.find(s => /\\bunremarkable\\b/.test(s.textContent));
+  if (!span) return { error: 'the example no longer renders "unremarkable"' };
+  span.scrollIntoView({ block: 'center' });
+  await new Promise(r => setTimeout(r, 600));
+
+  const at = span.textContent.indexOf('unremarkable');
+  const range = document.createRange();
+  range.setStart(span.firstChild, at);
+  range.setEnd(span.firstChild, at + 'unremarkable'.length);
+  const r = range.getBoundingClientRect();
+
+  const middle = window.__texai.viewer.wordAtClientPoint(
+    r.left + r.width / 2, r.top + r.height / 2);
+  const firstLetter = window.__texai.viewer.wordAtClientPoint(r.left + 1, r.top + r.height / 2);
+  const lastLetter = window.__texai.viewer.wordAtClientPoint(r.right - 1, r.top + r.height / 2);
+
+  const page = document.querySelector('#viewer .page').getBoundingClientRect();
+  const outside = window.__texai.viewer.wordAtClientPoint(page.left - 30, page.top + 40);
+
+  return { middle, firstLetter, lastLetter, outside };
+})()`);
+console.log('word under the cursor:', JSON.stringify(wordProbe));
+
+check('the word under the cursor is found', wordProbe.middle?.word === 'unremarkable',
+  JSON.stringify(wordProbe.middle?.word));
+check('its first letter resolves to the same word', wordProbe.firstLetter?.word === 'unremarkable',
+  JSON.stringify(wordProbe.firstLetter?.word));
+check('its last letter resolves to the same word', wordProbe.lastLetter?.word === 'unremarkable',
+  JSON.stringify(wordProbe.lastLetter?.word));
+check('it comes with context on both sides',
+  wordProbe.middle?.before?.length > 0 && wordProbe.middle?.after?.length > 0,
+  JSON.stringify({ before: wordProbe.middle?.before, after: wordProbe.middle?.after }));
+check('the context words are real words',
+  (wordProbe.middle?.before || []).every(w => /^[\w'-]+$/.test(w)),
+  JSON.stringify(wordProbe.middle?.before));
+check('a point off the page yields no word', wordProbe.outside === null,
+  JSON.stringify(wordProbe.outside));
+
+// Punctuation and markup must not leak into the word sent to the server.
+const cleanliness = await cdp.json(`(() => {
+  const spans = [...document.querySelectorAll('#viewer .textLayer span')];
+  const out = [];
+  for (const span of spans.slice(0, 40)) {
+    const text = span.textContent;
+    const m = /[A-Za-z]{5,}[.,;:]/.exec(text);   // a word followed by punctuation
+    if (!m) continue;
+    const at = m.index;
+    const range = document.createRange();
+    range.setStart(span.firstChild, at);
+    range.setEnd(span.firstChild, at + m[0].length - 1);
+    const r = range.getBoundingClientRect();
+    if (!r.width || r.top < 0) continue;
+    const got = window.__texai.viewer.wordAtClientPoint(r.left + r.width / 2, r.top + r.height / 2);
+    out.push({ rendered: m[0], got: got?.word });
+    if (out.length >= 3) break;
+  }
+  return out;
+})()`);
+console.log('punctuation:', JSON.stringify(cleanliness));
+check('trailing punctuation is not part of the word',
+  cleanliness.length === 0 || cleanliness.every(c => c.got && !/[.,;:]/.test(c.got)),
+  JSON.stringify(cleanliness));
+
+/* ---------------- clicking in the source moves the PDF ---------------- */
+
+// The reverse of Cmd-click. Needs a real synctex binary, so it steps aside
+// rather than failing when the example was never compiled with one.
+const canLocate = await cdp.eval(
+  `fetch('/api/locate?file=' + encodeURIComponent('sections/model.tex') + '&line=4')
+     .then(r => r.ok).catch(() => false)`
+);
+
+if (!canLocate) {
+  console.log('reverse sync: skipped (synctex could not answer)');
+} else {
+  await cdp.eval(`(async () => {
+    window.__texai.chat.setView('source');
+    await window.__texai.editor.open('sections/model.tex');
+    await new Promise(r => setTimeout(r, 700));
+    return true;
+  })()`);
+
+  const reverse = await cdp.json(`(async () => {
+    const viewer = window.__texai.viewer;
+    const ed = window.__texai.editor;
+    viewer.container.scrollTop = 0;
+    await new Promise(r => setTimeout(r, 400));
+    const before = Math.round(viewer.container.scrollTop);
+
+    // Click line 40 the way a person would, through a real mouse event.
+    ed.cm.scrollIntoView({ line: 39, ch: 0 }, 120);
+    await new Promise(r => setTimeout(r, 350));
+    const c = ed.cm.charCoords({ line: 39, ch: 2 }, 'window');
+    const x = Math.round(c.left + 2), y = Math.round((c.top + c.bottom) / 2);
+    const target = document.elementFromPoint(x, y);
+    for (const type of ['mousedown', 'mouseup']) {
+      target.dispatchEvent(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }));
+    }
+
+    let flashes = 0, after = before;
+    for (let i = 0; i < 30; i += 1) {
+      await new Promise(r => setTimeout(r, 200));
+      flashes = Math.max(flashes, document.querySelectorAll('.flash').length);
+      after = Math.round(viewer.container.scrollTop);
+      if (flashes && after !== before) break;
+    }
+
+    const flash = document.querySelector('.flash');
+    const fr = flash ? flash.getBoundingClientRect() : null;
+    const vr = viewer.container.getBoundingClientRect();
+    return {
+      before, after, flashes,
+      offCentre: fr ? Math.round(Math.abs((fr.top + fr.height / 2) - (vr.top + vr.height / 2))) : null,
+      flashW: fr ? Math.round(fr.width) : 0,
+      flashH: fr ? Math.round(fr.height) : 0,
+      insideView: fr ? fr.top >= vr.top - 2 && fr.bottom <= vr.bottom + 2 : false,
+    };
+  })()`);
+  console.log('reverse sync:', JSON.stringify(reverse));
+
+  check('clicking in the source scrolls the PDF', reverse.after !== reverse.before,
+    `${reverse.before} -> ${reverse.after}`);
+  check('the zone is highlighted', reverse.flashes > 0, `${reverse.flashes} boxes`);
+  check('the highlight has real size', reverse.flashW > 4 && reverse.flashH > 3,
+    `${reverse.flashW}x${reverse.flashH}`);
+  check('the target is centred, not merely on screen', reverse.offCentre !== null && reverse.offCentre < 80,
+    `${reverse.offCentre}px off centre`);
+  check('the highlight is inside the visible area', reverse.insideView);
+
+  // Typing must never yank the page around.
+  const whileTyping = await cdp.json(`(async () => {
+    const viewer = window.__texai.viewer;
+    const ed = window.__texai.editor;
+    const before = Math.round(viewer.container.scrollTop);
+    ed.cm.setCursor({ line: 3, ch: 0 });
+    ed.cm.replaceRange('% scratch\\n', { line: 3, ch: 0 });
+    for (let i = 0; i < 5; i += 1) ed.cm.execCommand('goLineDown');
+    await new Promise(r => setTimeout(r, 1200));
+    const after = Math.round(viewer.container.scrollTop);
+    ed.cm.undo();
+    ed._setDirty(false);
+    return { before, after };
+  })()`);
+  check('typing and arrow keys leave the PDF where it was',
+    whileTyping.before === whileTyping.after, `${whileTyping.before} -> ${whileTyping.after}`);
+
+  await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
+}
+
+/* ---------------- the first alt-click must keep its cursor ---------------- */
+
+// Opening the Source tab kicks off a default open of the root file. That used
+// to race the click's own open and reset the cursor to the top of the buffer —
+// invisible on a small project, reliable on a real one. Runs last, because it
+// reloads the page.
+
+if (canLocate) {
+  await cdp.send('Page.reload', { ignoreCache: true });
+  await sleep(3000);
+  for (let i = 0; i < 60; i += 1) {
+    if (await cdp.eval(`document.querySelectorAll('#viewer canvas').length > 0`)) break;
+    await sleep(500);
+  }
+
+  // Stand in for a bigger project: make the file list the slow part.
+  await cdp.eval(`(() => {
+    const real = window.fetch;
+    window.fetch = (u, o) => String(u).includes('/api/source/files')
+      ? new Promise(r => setTimeout(() => r(real(u, o)), 1200))
+      : real(u, o);
+    return true;
+  })()`);
+  await sleep(400);
+
+  const spot = await cdp.json(`(async () => {
+    const span = [...document.querySelectorAll('#viewer .textLayer span')]
+      .find(s => /\\bunremarkable\\b/.test(s.textContent));
+    if (!span) return null;
+    span.scrollIntoView({ block: 'center' });
+    await new Promise(r => setTimeout(r, 700));
+    const at = span.textContent.indexOf('unremarkable');
+    const rg = document.createRange();
+    rg.setStart(span.firstChild, at);
+    rg.setEnd(span.firstChild, at + 'unremarkable'.length);
+    const r = rg.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  })()`);
+
+  if (!spot) {
+    console.log('first-click race: skipped (the example no longer renders "unremarkable")');
+  } else {
+    await cdp.send('Input.dispatchMouseEvent',
+      { type: 'mousePressed', x: spot.x, y: spot.y, button: 'left', clickCount: 1, modifiers: 1 });
+    await cdp.send('Input.dispatchMouseEvent',
+      { type: 'mouseReleased', x: spot.x, y: spot.y, button: 'left', clickCount: 1, modifiers: 1 });
+    await sleep(4500);   // past the delayed default open, where a clobber would land
+
+    const after = await cdp.json(`(() => {
+      const ed = window.__texai.editor;
+      if (!ed.cm) return null;
+      const c = ed.cm.getCursor();
+      return { file: ed.file, selected: ed.cm.getSelection(), line: c.line + 1, ch: c.ch };
+    })()`);
+    console.log('first alt-click, slow file list:', JSON.stringify(after));
+    check('the first alt-click keeps its word', after?.selected === 'unremarkable',
+      JSON.stringify(after));
+    check('and is not reset to the top of the buffer', (after?.line ?? 1) > 1 || (after?.ch ?? 0) > 0,
+      JSON.stringify(after));
+  }
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

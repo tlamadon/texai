@@ -18,6 +18,10 @@ const ZOOM_STEPS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 
 const clamp = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
 
+// Letters and digits, with internal hyphens and apostrophes: "well-being",
+// "don't", "R^2" splits, which is what we want for matching.
+const WORD_RE = /[\p{L}\p{N}][\p{L}\p{N}'\u2019-]*/gu;
+
 export class PdfViewer {
   constructor({ container, viewerEl, onPageChange = () => {}, onRender = () => {} }) {
     this.container = container;
@@ -370,6 +374,101 @@ export class PdfViewer {
     node.style.height = `${Math.max(rect.height, 6)}px`;
     entry.el.append(node);
     setTimeout(() => node.remove(), 2400);
+  }
+
+  /**
+   * The word under a point, with the rendered words either side of it.
+   *
+   * SyncTeX only ever answers with a line, so this is where the extra precision
+   * comes from: the text layer knows which word was clicked, and the server
+   * matches it back into the source. The neighbours are what tell one "the"
+   * from the next.
+   */
+  wordAtClientPoint(clientX, clientY) {
+    const caret = this._caretAt(clientX, clientY);
+    if (!caret) return null;
+    const { node, offset } = caret;
+    if (node.nodeType !== Node.TEXT_NODE) return null;
+    const span = node.parentElement;
+    if (!span || !span.closest('.textLayer')) return null;
+
+    const text = node.textContent || '';
+    const words = [...text.matchAll(WORD_RE)];
+    // The caret can land in the space between words; the one just before it is
+    // what the user was pointing at.
+    let index = words.findIndex((m) => offset >= m.index && offset <= m.index + m[0].length);
+    if (index === -1) index = words.findIndex((m) => m.index > offset) - 1;
+    if (index < 0) index = words.length - 1;
+    const match = words[index];
+    if (!match) return null;
+
+    const line = this._renderedLine(span);
+    const inLine = line ? [...line.matchAll(WORD_RE)].map((m) => m[0]) : [];
+    // Locate the word within the whole rendered line so the context spans
+    // whatever the text layer happened to split into separate elements.
+    const before = words.slice(Math.max(0, index - 3), index).map((m) => m[0]);
+    const after = words.slice(index + 1, index + 4).map((m) => m[0]);
+
+    if ((!before.length || !after.length) && inLine.length) {
+      const at = this._indexInLine(inLine, match[0], before, after);
+      if (at !== -1) {
+        return {
+          word: match[0],
+          before: inLine.slice(Math.max(0, at - 3), at),
+          after: inLine.slice(at + 1, at + 4),
+        };
+      }
+    }
+    return { word: match[0], before, after };
+  }
+
+  /** Where a word sits among the words of its rendered line. */
+  _indexInLine(words, word, before, after) {
+    const spots = [];
+    words.forEach((w, i) => w === word && spots.push(i));
+    if (spots.length <= 1) return spots[0] ?? -1;
+    // Several of the same word on the line: pick the one whose neighbours agree.
+    let best = spots[0];
+    let bestScore = -1;
+    for (const spot of spots) {
+      let score = 0;
+      before.forEach((w, i) => words[spot - before.length + i] === w && (score += 1));
+      after.forEach((w, i) => words[spot + 1 + i] === w && (score += 1));
+      if (score > bestScore) {
+        bestScore = score;
+        best = spot;
+      }
+    }
+    return best;
+  }
+
+  /** The text of every span sharing a visual line with this one, left to right. */
+  _renderedLine(span) {
+    const layer = span.closest('.textLayer');
+    if (!layer) return '';
+    const rect = span.getBoundingClientRect();
+    if (!rect.height) return '';
+    const middle = rect.top + rect.height / 2;
+
+    const row = [...layer.querySelectorAll('span')]
+      .map((el) => ({ el, r: el.getBoundingClientRect() }))
+      .filter(({ r }) => r.height > 0 && Math.abs(r.top + r.height / 2 - middle) < rect.height * 0.6)
+      .sort((a, b) => a.r.left - b.r.left);
+
+    return row.map(({ el }) => el.textContent).join(' ');
+  }
+
+  /** One caret API or the other, depending on the browser. */
+  _caretAt(clientX, clientY) {
+    if (document.caretRangeFromPoint) {
+      const range = document.caretRangeFromPoint(clientX, clientY);
+      return range ? { node: range.startContainer, offset: range.startOffset } : null;
+    }
+    if (document.caretPositionFromPoint) {
+      const position = document.caretPositionFromPoint(clientX, clientY);
+      return position ? { node: position.offsetNode, offset: position.offset } : null;
+    }
+    return null;
   }
 
   /**

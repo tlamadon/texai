@@ -62,6 +62,7 @@ export class ChatPanel {
     this.onTurnFinished = null;
     this.onChangesUpdated = null;
     this.onGoTo = null;      // click a file:line reference
+    this.onEdit = null;      // open a marked passage in the editor
     this.onNavigate = null;  // the agent moved the view itself
     this.onViewChange = null; // chat / transcript / source
 
@@ -133,14 +134,18 @@ export class ChatPanel {
       file: source.file,
       line: source.line,
       column: source.column ?? 1,
+      word: source.word ?? null,
       page: selection.page ?? null,
       selectedText: selection.selectedText ?? null,
       instruction: '',
     };
     if (!chip.file || !chip.line) return;
 
-    // Re-clicking the same line replaces rather than duplicates.
-    const existing = this.chips.findIndex((c) => c.file === chip.file && c.line === chip.line);
+    // Re-clicking the same spot replaces rather than duplicates. Two words on
+    // one line are two different spots now, so the column is part of identity.
+    const existing = this.chips.findIndex(
+      (c) => c.file === chip.file && c.line === chip.line && c.column === chip.column
+    );
     if (existing >= 0) {
       chip.instruction = this.chips[existing].instruction;
       this.chips[existing] = chip;
@@ -163,13 +168,26 @@ export class ChatPanel {
       const node = el('div', 'chip');
 
       const head = el('div', 'chip-head');
-      const ref = el('span', 'chip-ref ref', `${chip.file}:${chip.line}`);
-      ref.title = 'Show this passage in the PDF';
+      // The column only earns its place when it points at a known word.
+      const label = chip.word ? `${chip.file}:${chip.line}:${chip.column}` : `${chip.file}:${chip.line}`;
+      const ref = el('span', 'chip-ref ref', label);
+      ref.title = chip.word
+        ? `Show this passage in the PDF — the word “${chip.word}”`
+        : 'Show this passage in the PDF';
       ref.addEventListener('click', () => this.onGoTo?.(chip.file, chip.line));
       head.append(ref);
       head.append(
         el('span', 'chip-text', chip.selectedText ? `“${truncate(chip.selectedText, MAX_CHIP_TEXT)}”` : '')
       );
+      // Marking a spot and then editing it by hand is the obvious next move,
+      // so it gets its own button rather than only living on Alt-click.
+      const edit = el('button', 'chip-edit', '\u270e');
+      edit.title = chip.word
+        ? `Open the source at “${chip.word}”`
+        : `Open ${chip.file}:${chip.line} in the editor`;
+      edit.addEventListener('click', () => this.onEdit?.(chip.file, chip.line, chip.column, chip.word));
+      head.append(edit);
+
       const remove = el('button', 'chip-remove', '×');
       remove.title = 'Remove this passage';
       remove.addEventListener('click', () => {
@@ -220,6 +238,7 @@ export class ChatPanel {
     const selections = this.chips.map((chip) => ({
       file: chip.file,
       line: chip.line,
+      word: chip.word ?? null,
       column: chip.column,
       page: chip.page,
       selectedText: chip.selectedText,

@@ -38,6 +38,7 @@ def build_selection(
     source_file: str,
     line: int,
     column: int,
+    word: str | None = None,
     selected_text: str | None = None,
     updated_at: datetime | None = None,
 ) -> dict[str, Any]:
@@ -53,7 +54,7 @@ def build_selection(
         "pdf": pdf,
         "page": page,
         "pdfPosition": {"x": round(float(x), 1), "y": round(float(y), 1)},
-        "source": {"file": source_file, "line": line, "column": column},
+        "source": {"file": source_file, "line": line, "column": column, "word": word},
         "selectedText": selected_text,
     }
 

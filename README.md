@@ -8,7 +8,9 @@ saving recompiles. When you like where it has got to, commit it without leaving
 the page.
 
 The bridge that makes it work is SyncTeX — a pixel on page 7 becomes
-`sections/model.tex:143`, which is what the agent actually needs.
+`sections/model.tex:143`, which is what the agent actually needs. SyncTeX stops
+at the line; matching the clicked word against the source gets it to
+`sections/model.tex:143:15`.
 
 ## Install
 
@@ -255,6 +257,63 @@ Run that in your project directory and Claude Code picks up the *same*
 conversation — full TUI, slash commands, everything. Drive one at a time: the
 browser panel and a terminal both writing to one session will confuse both.
 
+### Down to the word
+
+SyncTeX only resolves a point to a *line* — it reports `Column:-1` for every
+engine in practice. But the browser knows which word was under the cursor,
+because PDF.js draws a text layer over the page, so texai sends that word (and
+the words either side of it) and the server matches it back into the source:
+
+```
+Cmd-click "elasticity"  →  sections/model.tex:41:15
+```
+
+Matching has to cross the gap between what TeX renders and what the source says,
+so each source line is projected into roughly what it renders as — dropping
+comments and markup, collapsing `\emph{elasticity}` to `elasticity`, `caf\'e` to
+`café`, `---` to a dash — while remembering which source column every character
+came from. The words either side of the click are what tell the third "the" on a
+line from the first, and the search reaches a few lines past the one SyncTeX
+named, since a wrapped paragraph puts the word after the line its box started
+on.
+
+Not everything renders near where it is written. `\maketitle` typesets a title
+pages away from the `\title` line, and a float caption lands wherever the float
+lands, so SyncTeX points at the command rather than the words. When nothing
+turns up nearby, the search widens to the whole file and accepts only an answer
+that cannot be wrong: exactly one occurrence in it. Near the click, proximity
+decides; far from it, uniqueness has to.
+
+It also knows when it has lost. A word it cannot find, a word that is only a
+substring of a longer one, two equally plausible spots on *different* lines, or
+several distant candidates with nothing to choose between them all give no
+column at all, and the reference falls back to the line exactly as before. A
+wrong line is worse than a missing column.
+
+The precision shows up in four places: the chip reads `file:line:column`, the
+agent is told *At the word: "elasticity"* rather than just a line number,
+Alt-click opens the editor with that word selected, and the pencil on any chip
+does the same for a passage you marked earlier.
+
+### Both directions
+
+Cmd-click goes from the page to the source. Clicking in the **Source** tab goes
+back: the PDF scrolls to centre on whatever that line produced and flashes the
+zone, so you can see where you are without reading page numbers.
+
+```
+click sections/model.tex:40  →  page 2 centres, the paragraph flashes
+```
+
+That is `synctex view` rather than `synctex edit`, and it answers with the boxes
+a line produced — so a paragraph that wraps flashes every rendered line of it,
+and a line that produces nothing (a comment, `\begin{document}`, a macro
+definition) does nothing at all rather than complaining.
+
+It is bound to the click, not to the cursor, so typing and arrow keys never yank
+the page around while you are writing. Rapid clicks only ever honour the newest,
+so a slow answer cannot scroll you back to where you were two clicks ago.
+
 ### Editing it yourself
 
 Not everything is worth a prompt. The **Source** tab is a LaTeX editor over the
@@ -347,14 +406,18 @@ running anywhere else can read it:
   "pdf": "build/main.pdf",
   "page": 7,
   "pdfPosition": {"x": 241.3, "y": 418.2},
-  "source": {"file": "sections/model.tex", "line": 143, "column": 1},
+  "source": {"file": "sections/model.tex", "line": 143, "column": 15, "word": "elasticity"},
   "selectedText": null
 }
 ```
 
 `pdfPosition` is in PDF points from the **top-left** corner of the page, the
 convention SyncTeX uses. Paths are POSIX and relative to the project root.
-`column` is `1` when SyncTeX reports none, which is usually.
+
+`word` is the word the click landed on, and `column` points at it. When the word
+could not be matched in the source with confidence, `word` is `null` and
+`column` is `1` — read the line and ignore the column in that case. See
+[Down to the word](#down-to-the-word).
 
 There is also a **Copy reference** button:
 
@@ -442,6 +505,7 @@ src/texai/
   navigate.py    locating a source line in the rendered PDF
   turns.py       snapshot -> agent -> build -> diff, and the review session
   source.py      reading and writing source files for the editor
+  words.py       matching a rendered word back to its source column
   git.py         root-scoped status, commit, pull --rebase, push
   commitmsg.py   the agent's one-shot commit message, with a fallback
   server.py      FastAPI routes

@@ -30,6 +30,10 @@ export class SourceEditor {
     this.filesLoaded = false;
     this.onSaved = onSaved || null;
     this.onActivate = null; // app.js hides the composer while editing
+    this.onReveal = null;   // show this source line in the PDF
+    this._revealTimer = null;
+    // Opens are async and can overlap; only the newest may touch the buffer.
+    this._openToken = 0;
 
     this._wire();
   }
@@ -70,6 +74,19 @@ export class SourceEditor {
       if (this._loading) return;
       this._setDirty(true);
     });
+
+    // Clicking in the source shows that spot in the PDF — the same trip as
+    // Cmd-click, in the other direction. Bound to the click rather than to
+    // cursor movement, so typing and arrow keys never yank the page around.
+    this.cm.on('mousedown', (cm, event) => {
+      if (event.button !== 0 || !this.onReveal) return;
+      const where = cm.coordsChar({ left: event.clientX, top: event.clientY }, 'window');
+      if (!where) return;
+      // A double-click is two mousedowns; coalesce them into one lookup.
+      clearTimeout(this._revealTimer);
+      this._revealTimer = setTimeout(() => this.onReveal(this.file, where.line + 1), 120);
+    });
+
     return this.cm;
   }
 
@@ -95,8 +112,8 @@ export class SourceEditor {
 
   /* ---------------- opening ---------------- */
 
-  /** Show the source behind a spot in the document, at a line if given. */
-  async open(file, line = null) {
+  /** Show the source behind a spot in the document, at a line and column if given. */
+  async open(file, line = null, column = null) {
     this._mount();
     if (!this.cm) return;
 
@@ -107,13 +124,19 @@ export class SourceEditor {
       if (keep) return;
     }
 
+    const token = ++this._openToken;
     if (!this.filesLoaded) await this._loadFileList(file);
+    if (token !== this._openToken) return;
 
     if (file !== this.file || !this.dirty) {
       try {
         const data = await getJSON(`/api/source?file=${encodeURIComponent(file)}`);
+        // A newer open started while this one was in flight — that one owns the
+        // buffer now, and writing this document would throw away its cursor.
+        if (token !== this._openToken) return;
         this._setDoc(data);
       } catch (err) {
+        if (token !== this._openToken) return;
         this._setStatus(err.message || String(err), 'err');
         return;
       }
@@ -121,7 +144,7 @@ export class SourceEditor {
 
     if (this.files && !this.files.includes(this.file)) await this._loadFileList(this.file);
     this.els.picker.value = this.file;
-    if (line != null) this.goToLine(line);
+    if (line != null) this.goToLine(line, column);
   }
 
   _setDoc({ file, text, sha }) {
@@ -135,10 +158,21 @@ export class SourceEditor {
     this._setStatus(`${file} — ${this.cm.lineCount()} lines`);
   }
 
-  goToLine(line) {
+  goToLine(line, column = null) {
     if (!this.cm) return;
     const index = Math.max(0, Math.min(this.cm.lineCount() - 1, Number(line) - 1));
-    this.cm.setCursor({ line: index, ch: 0 });
+    const text = this.cm.getLine(index) || '';
+    const ch = column == null ? 0 : Math.max(0, Math.min(text.length, Number(column) - 1));
+    this.cm.setCursor({ line: index, ch });
+
+    // Given a column, select the word there — the cursor alone is easy to lose
+    // in the middle of a long line.
+    if (column != null) {
+      const match = /^[\p{L}\p{N}][\p{L}\p{N}'-]*/u.exec(text.slice(ch));
+      if (match) {
+        this.cm.setSelection({ line: index, ch }, { line: index, ch: ch + match[0].length });
+      }
+    }
     // Put the line a third of the way down rather than at the very top, so
     // there is context above it.
     const top = this.cm.charCoords({ line: index, ch: 0 }, 'local').top;
@@ -272,6 +306,9 @@ export class SourceEditor {
   }
 
   _openDefault() {
+    // Deferred behind a file-list fetch, so by now an explicit open may have
+    // been asked for — opening the root file over it would drop its cursor.
+    if (this._openToken > 0) return;
     const first = this.rootTex || this.files?.[0];
     if (first) this.open(first);
   }

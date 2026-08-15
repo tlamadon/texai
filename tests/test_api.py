@@ -112,14 +112,24 @@ def test_select_writes_selection_file(config: AppConfig):
     assert response.status_code == 200
     body = response.json()
     assert body["message"] == "Selected sections/model.tex:143"
-    assert body["source"] == {"file": "sections/model.tex", "line": 143, "column": 1}
+    assert body["source"] == {
+        "file": "sections/model.tex",
+        "line": 143,
+        "column": 1,
+        "word": None,
+    }
 
     written = json.loads(config.selection_file.read_text())
     assert written["version"] == 1
     assert written["pdf"] == "build/main.pdf"
     assert written["page"] == 7
     assert written["pdfPosition"] == {"x": 241.3, "y": 418.2}
-    assert written["source"] == {"file": "sections/model.tex", "line": 143, "column": 1}
+    assert written["source"] == {
+        "file": "sections/model.tex",
+        "line": 143,
+        "column": 1,
+        "word": None,
+    }
     assert written["selectedText"] is None
     assert written["updatedAt"].startswith("20")
 
@@ -372,7 +382,10 @@ def test_resolve_maps_a_point_without_recording_it(config: AppConfig):
     response = client.post("/api/resolve", json={"page": 1, "x": 100.0, "y": 200.0})
 
     assert response.status_code == 200
-    assert response.json() == {"file": "sections/model.tex", "line": 143, "column": 1}
+    body = response.json()
+    assert body["file"] == "sections/model.tex"
+    assert (body["line"], body["column"], body["word"]) == (143, 1, None)
+    assert "not on any text" in body["why"]  # nothing was clicked to match
     # Unlike /api/select, it leaves no trace on disk.
     assert not config.selection_file.exists()
 
@@ -499,3 +512,124 @@ def test_git_pull_and_push_report_their_failures(config: AppConfig, project: Pat
         response = client.post(route, json={})
         assert response.status_code == 409, route
         assert response.json()["detail"]["error"] == "git_failed"
+
+
+# ---------------------------------------------------------------- precision
+
+
+WORDY_LINE_2 = "Let the \\emph{elasticity} of substitution be one."
+WORDY_LINE_3 = "The elasticity governs the response of output."
+
+
+def column_of(line: str, text: str) -> int:
+    """The 1-based column a word sits at, so the tests never count by eye."""
+    return line.index(text) + 1
+
+
+@pytest.fixture()
+def wordy(project: Path) -> Path:
+    """A source file with a word worth pinpointing, and a repeat to confuse it."""
+    (project / "sections" / "model.tex").write_text(
+        f"\\section{{Model}}\n{WORDY_LINE_2}\n{WORDY_LINE_3}\n"
+    )
+    return project
+
+
+def test_a_click_on_a_word_resolves_to_its_column(config: AppConfig, wordy: Path):
+    client = make_client(config, fake_runner(line=2))
+    body = client.post(
+        "/api/select",
+        json={"page": 1, "x": 100.0, "y": 200.0, "word": "elasticity"},
+    ).json()
+
+    assert body["source"]["line"] == 2
+    expected = column_of(WORDY_LINE_2, "elasticity")  # inside \emph{...}
+    assert body["source"]["column"] == expected
+    assert body["source"]["word"] == "elasticity"
+    assert body["message"] == f"Selected sections/model.tex:2:{expected}"
+
+
+def test_context_decides_between_repeats(config: AppConfig, wordy: Path):
+    client = make_client(config, fake_runner(line=2))
+    body = client.post(
+        "/api/select",
+        json={
+            "page": 1,
+            "x": 100.0,
+            "y": 200.0,
+            "word": "elasticity",
+            "contextBefore": ["The"],
+            "contextAfter": ["governs", "the", "response"],
+        },
+    ).json()
+
+    # The one on the next line, not the one SyncTeX pointed at.
+    assert body["source"]["line"] == 3
+    assert body["source"]["column"] == column_of(WORDY_LINE_3, "elasticity")
+
+
+def test_a_word_that_is_not_there_leaves_the_line_alone(config: AppConfig, wordy: Path):
+    client = make_client(config, fake_runner(line=2))
+    body = client.post(
+        "/api/select",
+        json={"page": 1, "x": 100.0, "y": 200.0, "word": "chartreuse"},
+    ).json()
+
+    assert body["source"]["line"] == 2
+    assert body["source"]["column"] == 1
+    assert body["source"]["word"] is None
+    assert body["message"] == "Selected sections/model.tex:2"
+    # The reason travels in the payload, for the caller that needs to explain
+    # itself — opening the editor at column 1 without a word, say.
+    assert "chartreuse" in body["why"]
+
+
+def test_a_selection_pinpoints_its_opening_words(config: AppConfig, wordy: Path):
+    client = make_client(config, fake_runner(line=2))
+    body = client.post(
+        "/api/select",
+        json={"page": 1, "x": 100.0, "y": 200.0, "selectedText": "of substitution be one"},
+    ).json()
+
+    assert body["source"]["line"] == 2
+    assert body["source"]["column"] == column_of(WORDY_LINE_2, "of substitution")
+
+
+def test_resolve_pinpoints_too(config: AppConfig, wordy: Path):
+    """Alt-click opens the editor, and should land on the word, not the line."""
+    client = make_client(config, fake_runner(line=2))
+    body = client.post(
+        "/api/resolve",
+        json={"page": 1, "x": 100.0, "y": 200.0, "word": "substitution"},
+    ).json()
+
+    assert (body["line"], body["column"]) == (2, column_of(WORDY_LINE_2, "substitution"))
+    assert body["word"] == "substitution"
+
+
+def test_the_word_is_recorded_in_the_selection_file(config: AppConfig, wordy: Path):
+    client = make_client(config, fake_runner(line=2))
+    client.post("/api/select", json={"page": 1, "x": 1.0, "y": 2.0, "word": "elasticity"})
+
+    written = json.loads(config.selection_file.read_text())
+    assert written["source"] == {
+        "file": "sections/model.tex",
+        "line": 2,
+        "column": column_of(WORDY_LINE_2, "elasticity"),
+        "word": "elasticity",
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"word": "x" * 500},
+        {"contextBefore": ["w"] * 20},
+        {"contextAfter": ["x" * 500]},
+        {"contextBefore": "not a list"},
+    ],
+)
+def test_word_context_is_bounded(config: AppConfig, payload: dict):
+    client = make_client(config, fake_runner())
+    response = client.post("/api/select", json={"page": 1, "x": 1.0, "y": 2.0, **payload})
+    assert response.status_code == 422

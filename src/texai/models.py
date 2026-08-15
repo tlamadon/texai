@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -21,6 +21,14 @@ __all__ = [
 # rest so a malformed client cannot push nonsense into the synctex argv.
 MAX_PDF_POINT = 20_000.0
 MAX_SELECTED_TEXT = 20_000
+MAX_WORD_TEXT = 200
+MAX_CONTEXT_WORDS = 8
+
+# Rendered words either side of a click, used to tell repeats apart.
+ContextWords = Annotated[
+    list[Annotated[str, Field(max_length=MAX_WORD_TEXT)]],
+    Field(max_length=MAX_CONTEXT_WORDS),
+]
 MAX_INSTRUCTION = 8_000
 MAX_MESSAGE = 20_000
 MAX_SELECTIONS = 25
@@ -49,6 +57,17 @@ class SelectRequest(BaseModel):
         max_length=MAX_SELECTED_TEXT,
         description="Rendered text the user had selected, if any",
     )
+    word: str | None = Field(
+        default=None,
+        max_length=MAX_WORD_TEXT,
+        description="The rendered word under the cursor, for resolving past the line",
+    )
+    contextBefore: ContextWords | None = Field(
+        default=None, description="Rendered words just before the clicked one"
+    )
+    contextAfter: ContextWords | None = Field(
+        default=None, description="Rendered words just after the clicked one"
+    )
 
 
 class SelectionRef(BaseModel):
@@ -65,6 +84,7 @@ class SelectionRef(BaseModel):
     column: int = Field(default=1, ge=1, le=10_000)
     page: int | None = Field(default=None, ge=1, le=100_000)
     selectedText: str | None = Field(default=None, max_length=MAX_SELECTED_TEXT)
+    word: str | None = Field(default=None, max_length=MAX_WORD_TEXT)
     instruction: str | None = Field(default=None, max_length=MAX_INSTRUCTION)
 
     @field_validator("file")
@@ -95,6 +115,7 @@ class SourceLocation(BaseModel):
     file: str
     line: int
     column: int
+    word: str | None = None
 
 
 class SelectResponse(BaseModel):
@@ -102,6 +123,7 @@ class SelectResponse(BaseModel):
     message: str
     source: SourceLocation
     selection: dict[str, Any]
+    why: str = ""  # why no column, when there is none
 
 
 MAX_SOURCE_TEXT = 5_000_000

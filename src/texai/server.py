@@ -46,6 +46,7 @@ from .synctex import (
     run_synctex_edit,
 )
 from .turns import TurnBusy, TurnController
+from .words import locate as locate_word_detail
 
 __all__ = ["create_app", "normalize_selected_text", "pdf_version_tag"]
 
@@ -114,7 +115,24 @@ def create_app(
     app.state.bus = bus
     app.state.agent = agent_session
     app.state.turns = controller
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    class RevalidatingStatic(StaticFiles):
+        """Static files the browser must check before reusing.
+
+        Without an explicit Cache-Control, browsers fall back to heuristic
+        caching and can serve a stale script without asking. That produces the
+        worst possible failure for a tool that updates in place: half the page
+        running new code and half running old, with errors like
+        "viewer.wordAtClientPoint is not a function". `no-cache` still lets the
+        browser keep a copy — it just has to revalidate, and the ETag makes that
+        a 304 costing nothing.
+        """
+
+        def file_response(self, *args: Any, **kwargs: Any) -> Response:
+            response = super().file_response(*args, **kwargs)
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return response
+
+    app.mount("/static", RevalidatingStatic(directory=str(STATIC_DIR)), name="static")
 
     @app.middleware("http")
     async def loopback_only(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -198,6 +216,38 @@ def create_app(
         except (OSError, json.JSONDecodeError) as exc:
             raise _error(500, "selection_unreadable", f"Cannot read {path}: {exc}") from exc
 
+    def _pinpoint(
+        payload: SelectRequest, source_path: Path, line: int, relative: str
+    ) -> tuple[int, int, str | None, str]:
+        """Sharpen SyncTeX's line to a column, when the clicked word can be found.
+
+        SyncTeX reports Column:-1 for every engine in practice, so the precision
+        comes from the browser: it knows which word was under the cursor. If the
+        word cannot be found in the source with confidence, the line stands on
+        its own exactly as before.
+        """
+        phrase = normalize_selected_text(payload.selectedText) or payload.word
+        if not phrase:
+            return line, 1, None, "the click was not on any text"
+        # A long selection is a poor needle; its opening words are enough.
+        phrase = " ".join(phrase.split()[:6])
+
+        try:
+            text = source_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            return line, 1, None, f"could not read {relative}: {exc}"
+
+        found = locate_word_detail(
+            text.splitlines(),
+            line,
+            phrase,
+            payload.contextBefore or [],
+            payload.contextAfter or [],
+        )
+        if found.hit is None:
+            return line, 1, None, found.explain(phrase, relative, line)
+        return found.hit.line, found.hit.column, found.hit.text, ""
+
     def _synctex_source(payload: SelectRequest) -> dict[str, Any]:
         """Map a click to a source location, with no side effects."""
         if not config.pdf_path.is_file():
@@ -232,7 +282,10 @@ def create_app(
         except ValueError as exc:
             raise _error(422, "source_unresolvable", str(exc)) from exc
 
-        return {"file": source_rel, "line": location.line, "column": location.column}
+        line, column, word, why = _pinpoint(payload, source_path, location.line, source_rel)
+        # `why` is empty on success; it exists so a fallback to the line can say
+        # what stopped it, instead of looking like the feature is not running.
+        return {"file": source_rel, "line": line, "column": column, "word": word, "why": why}
 
     @app.post("/api/resolve")
     async def resolve(payload: SelectRequest) -> dict[str, Any]:
@@ -245,47 +298,17 @@ def create_app(
 
     @app.post("/api/select", response_model=SelectResponse)
     async def select(payload: SelectRequest) -> SelectResponse:
-        if not config.pdf_path.is_file():
-            raise _error(404, "pdf_missing", f"PDF not found: {config.pdf_rel}")
-
-        try:
-            location = synctex_runner(
-                config.pdf_path,
-                payload.page,
-                payload.x,
-                payload.y,
-                executable=config.synctex_executable,
-            )
-        except SyncTexExecutableMissing as exc:
-            raise _error(503, "synctex_missing", str(exc)) from exc
-        except SyncTexDataMissing as exc:
-            raise _error(409, "synctex_data_missing", str(exc)) from exc
-        except SyncTexNoResult as exc:
-            raise _error(404, "synctex_no_result", str(exc)) from exc
-        except SyncTexError as exc:
-            raise _error(500, "synctex_failed", str(exc)) from exc
-
-        try:
-            source_path = resolve_source_path(location.input, config.root, config.search_dirs)
-            source_rel = to_project_relative(source_path, config.root)
-        except PathOutsideRootError as exc:
-            raise _error(
-                422,
-                "source_outside_root",
-                f"SyncTeX resolved to {exc.path}, which is outside the project root "
-                f"{config.root}.",
-            ) from exc
-        except ValueError as exc:
-            raise _error(422, "source_unresolvable", str(exc)) from exc
+        where = _synctex_source(payload)
 
         selection = build_selection(
             pdf=config.pdf_rel,
             page=payload.page,
             x=payload.x,
             y=payload.y,
-            source_file=source_rel,
-            line=location.line,
-            column=location.column,
+            source_file=where["file"],
+            line=where["line"],
+            column=where["column"],
+            word=where["word"],
             selected_text=normalize_selected_text(payload.selectedText),
         )
         try:
@@ -297,14 +320,16 @@ def create_app(
                 f"Could not write {config.selection_file}: {exc}",
             ) from exc
 
+        where_text = f"{where['file']}:{where['line']}"
+        if where["word"]:
+            where_text += f":{where['column']}"
         return SelectResponse(
             ok=True,
-            message=f"Selected {source_rel}:{location.line}",
+            message=f"Selected {where_text}",
             source=selection["source"],
             selection=selection,
+            why=where["why"],
         )
-
-    # ------------------------------------------------------------------ agent
 
     @app.get("/api/events")
     async def events(since: int = 0) -> StreamingResponse:

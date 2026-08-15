@@ -36,7 +36,7 @@ def test_build_selection_matches_documented_shape():
         "pdf": "build/main.pdf",
         "page": 7,
         "pdfPosition": {"x": 241.3, "y": 418.2},
-        "source": {"file": "sections/model.tex", "line": 143, "column": 1},
+        "source": {"file": "sections/model.tex", "line": 143, "column": 1, "word": None},
         "selectedText": None,
     }
 
@@ -123,3 +123,24 @@ def test_written_file_is_readable_by_other_tools(tmp_path: Path):
     atomic_write_json(target, {"n": 1})
     assert os.access(target, os.R_OK)
     assert target.stat().st_mode & 0o777 == 0o644
+
+
+def test_build_selection_records_the_word_when_there_is_one():
+    """The column is only meaningful alongside the word it was matched from."""
+    selection = build_selection(
+        pdf="build/main.pdf",
+        page=7,
+        x=241.25,
+        y=418.19,
+        source_file="sections/model.tex",
+        line=143,
+        column=15,
+        word="elasticity",
+        selected_text="elasticity",
+    )
+    assert selection["source"] == {
+        "file": "sections/model.tex",
+        "line": 143,
+        "column": 15,
+        "word": "elasticity",
+    }

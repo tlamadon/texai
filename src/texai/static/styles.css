@@ -871,3 +871,16 @@ button.toggle.active {
 .git-output.ok { color: var(--ok); }
 .git-output.err { color: var(--err); }
 .git-output.busy { color: var(--warn); }
+
+/* The chip's pencil: open this passage in the editor. */
+.chip-edit {
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chip-edit:hover { color: var(--accent); }

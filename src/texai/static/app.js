@@ -52,6 +52,8 @@ marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.a
 const editor = new SourceEditor();
 const git = new GitPanel();
 editor.onSaved = () => git.refresh();
+// The reverse of Cmd-click: put the cursor in the source, see it in the PDF.
+editor.onReveal = (file, line) => file && goTo(file, line, { quiet: true });
 
 // The composer writes to the agent, so it only belongs to the chat views.
 chat.onViewChange = (view) => {
@@ -60,9 +62,9 @@ chat.onViewChange = (view) => {
 };
 
 /** Open the source behind a spot in the document. */
-async function editAt(file, line) {
+async function editAt(file, line, column = null) {
   chat.setView('source');
-  await editor.open(file, line);
+  await editor.open(file, line, column);
 }
 /* ---------------- moving the view ---------------- */
 
@@ -78,18 +80,32 @@ function showLocation(loc) {
   for (const box of loc.boxes) viewer.flashBox(box.page, box);
 }
 
-async function goTo(file, line) {
+// Rapid clicks in the editor each start a lookup; only the newest may move the
+// view, or an earlier answer would land after a later one and scroll it back.
+let revealToken = 0;
+
+async function goTo(file, line, { quiet = false } = {}) {
+  const token = ++revealToken;
   try {
-    showLocation(
-      await getJSON(`/api/locate?file=${encodeURIComponent(file)}&line=${encodeURIComponent(line)}`)
+    const found = await getJSON(
+      `/api/locate?file=${encodeURIComponent(file)}&line=${encodeURIComponent(line)}`
     );
+    if (token !== revealToken) return;
+    // Plenty of source lines produce no output — comments, \begin{document},
+    // a macro definition. When the user merely clicked in the editor that is
+    // not worth an error; it just means there is nothing to show.
+    if (quiet && !found.found) return;
+    showLocation(found);
   } catch (err) {
+    if (token !== revealToken || quiet) return;
     showToast(err.message || String(err), { type: 'error' });
   }
 }
 
 chat.onGoTo = goTo;
 marks.onEdit = (file, line) => editAt(file, line);
+// A marked passage carries a column when the word was pinned down.
+chat.onEdit = (file, line, column, word) => editAt(file, line, word ? column : null);
 chat.onNavigate = (event) => {
   showLocation(event);
   if (event.why) showToast(event.why);
@@ -163,11 +179,17 @@ async function select(entry, clientX, clientY, selectedText) {
   busy = true;
   try {
     const point = viewer.clientPointToPdf(entry, clientX, clientY);
+    // SyncTeX only answers with a line. The word under the cursor, and the
+    // words either side of it, are what get the server the rest of the way.
+    const word = viewer.wordAtClientPoint(clientX, clientY);
     const result = await postJSON('/api/select', {
       page: entry.num,
       x: Number(point.x.toFixed(3)),
       y: Number(point.y.toFixed(3)),
       selectedText: selectedText || null,
+      word: word?.word ?? null,
+      contextBefore: word?.before ?? null,
+      contextAfter: word?.after ?? null,
     });
     lastSelection = result.selection;
     els.copyRef.disabled = false;
@@ -186,13 +208,23 @@ async function select(entry, clientX, clientY, selectedText) {
 async function openSourceAt(entry, clientX, clientY) {
   try {
     const point = viewer.clientPointToPdf(entry, clientX, clientY);
+    const word = viewer.wordAtClientPoint(clientX, clientY);
     const where = await postJSON('/api/resolve', {
       page: entry.num,
       x: Number(point.x.toFixed(3)),
       y: Number(point.y.toFixed(3)),
       selectedText: null,
+      word: word?.word ?? null,
+      contextBefore: word?.before ?? null,
+      contextAfter: word?.after ?? null,
     });
-    await editAt(where.file, where.line);
+    // Land on the word itself, not the start of its line. When that could not
+    // be worked out, say so — a cursor at column 1 with no explanation reads
+    // like the feature is broken rather than declining to guess.
+    await editAt(where.file, where.line, where.word ? where.column : null);
+    if (!where.word && where.why) {
+      showToast(`Opened ${where.file}:${where.line} — ${where.why}`, { type: 'error' });
+    }
   } catch (err) {
     showToast(err.message || String(err), { type: 'error' });
   }
@@ -223,8 +255,9 @@ function onViewerClick(event) {
 }
 
 function referenceText(selection) {
-  const { file, line } = selection.source;
-  let text = `PDF selection: ${file}:${line}`;
+  const { file, line, column, word } = selection.source;
+  let text = `PDF selection: ${file}:${line}${word ? `:${column}` : ''}`;
+  if (word) text += `\nAt the word: “${word}”`;
   if (selection.selectedText) {
     text += `\nRendered text: “${selection.selectedText}”`;
   }
