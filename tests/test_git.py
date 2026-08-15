@@ -25,6 +25,17 @@ def run(*args: str, cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True, check=False)
 
 
+def init_bare(path: Path, cwd: Path) -> None:
+    """A bare remote whose HEAD is on main, whatever git defaults to here.
+
+    Without this the remote's HEAD names init.defaultBranch — "master" on a
+    stock git, "main" on many developers' machines — and cloning a repo whose
+    HEAD points at a branch that was never pushed checks out nothing at all.
+    """
+    run("git", "init", "-q", "--bare", str(path), cwd=cwd)
+    run("git", "symbolic-ref", "HEAD", "refs/heads/main", cwd=path)
+
+
 def init_repo(path: Path) -> None:
     run("git", "init", "-q", "-b", "main", ".", cwd=path)
     run("git", "config", "user.email", "test@example.com", cwd=path)
@@ -231,7 +242,7 @@ def test_commit_refuses_while_conflicted(config: AppConfig, workspace: Path, mon
 @pytest.fixture()
 def with_remote(config: AppConfig, workspace: Path, tmp_path: Path) -> Path:
     remote = tmp_path / "remote.git"
-    run("git", "init", "-q", "--bare", str(remote), cwd=tmp_path)
+    init_bare(remote, tmp_path)
     run("git", "remote", "add", "origin", str(remote), cwd=workspace)
     run("git", "push", "-q", "-u", "origin", "main", cwd=workspace)
     return remote
@@ -249,7 +260,7 @@ def test_push_publishes_and_clears_the_ahead_count(config: AppConfig, workspace:
 
 def test_push_sets_an_upstream_when_there_is_one_remote(config: AppConfig, workspace: Path, tmp_path: Path):
     remote = tmp_path / "solo.git"
-    run("git", "init", "-q", "--bare", str(remote), cwd=tmp_path)
+    init_bare(remote, tmp_path)
     run("git", "remote", "add", "origin", str(remote), cwd=workspace)
     assert G.probe(config).upstream is None
 
@@ -261,7 +272,7 @@ def test_push_sets_an_upstream_when_there_is_one_remote(config: AppConfig, works
 def test_push_will_not_guess_between_remotes(config: AppConfig, workspace: Path, tmp_path: Path):
     for name in ("origin", "backup"):
         target = tmp_path / f"{name}.git"
-        run("git", "init", "-q", "--bare", str(target), cwd=tmp_path)
+        init_bare(target, tmp_path)
         run("git", "remote", "add", name, str(target), cwd=workspace)
 
     with pytest.raises(G.GitError, match="several remotes"):
