@@ -1,13 +1,27 @@
 # texai
 
-A canvas for LaTeX: read the compiled PDF on the left, talk to a coding agent on
-the right. Cmd/Ctrl-click a passage to attach it to your message; the agent edits
-the source, `texai` rebuilds the document, and the page reloads in place.
-Alt-click instead and you get the LaTeX source at that spot in an editor, where
-saving recompiles. When you like where it has got to, commit it without leaving
-the page.
+Overleaf, but local: your own disk, your own coding agent, and any git remote
+you already use. The compiled PDF on the left, the agent on the right, and the
+`.tex` files stay exactly where they are — no upload, no separate copy of your
+project, no account.
 
-The bridge that makes it work is SyncTeX — a pixel on page 7 becomes
+- **Point at the page and talk about it.** Select a passage or click a word and
+  it becomes a reference in your next message — `sections/model.tex:143:15`,
+  the exact word, not a vague description of where you meant.
+- **See what the agent changed, on the page.** Every edit is marked inline in
+  the PDF with the old text struck through and the new text beside it. Accept or
+  reject each one, across as many turns as you like.
+- **Edit it yourself.** Alt-click opens the LaTeX at that spot in an editor;
+  Cmd/Ctrl-S saves and recompiles, and the page reloads where you were. Clicking
+  in the source scrolls the PDF back to it.
+- **Know how far you have drifted from git.** The toolbar carries the branch,
+  how many files are uncommitted, and how many commits you are ahead or behind
+  the remote — scoped to your project, even when it is a subdirectory of a
+  larger repository.
+- **Commit without leaving the page.** The agent reads the diff and writes the
+  message; you edit it if you like, then commit, pull or push.
+
+The bridge that makes all of it work is SyncTeX — a pixel on page 7 becomes
 `sections/model.tex:143`, which is what the agent actually needs. SyncTeX stops
 at the line; matching the clicked word against the source gets it to
 `sections/model.tex:143:15`.

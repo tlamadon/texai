@@ -3,7 +3,7 @@ name = "texai"
 # Single-sourced from src/texai/__init__.py, so a release cannot ship a
 # package whose reported version disagrees with its metadata.
 dynamic = ["version"]
-description = "A canvas for LaTeX: read the compiled PDF, point at a passage, and a coding agent edits the source and rebuilds it."
+description = "Overleaf, but local: the compiled PDF, your coding agent, your disk, and any git remote."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
