@@ -1,19 +1,33 @@
 # texai
 
-Overleaf, but local: your own disk, your own coding agent, and any git remote
-you already use. The compiled PDF on the left, the agent on the right, and the
-`.tex` files stay exactly where they are — no upload, no separate copy of your
-project, no account.
+**Overleaf, but the collaborator is your coding agent — and none of it leaves
+your machine.** The compiled PDF on the left, the agent on the right, working on
+your actual `.tex` files, on your own disk, syncing to whatever git remote you
+already use. No upload, no second copy of your project, no account.
 
-- **Point at the page and talk about it.** Select a passage or click a word and
-  it becomes a reference in your next message — `sections/model.tex:143:15`,
-  the exact word, not a vague description of where you meant.
-- **See what the agent changed, on the page.** Every edit is marked inline in
-  the PDF with the old text struck through and the new text beside it. Accept or
-  reject each one, across as many turns as you like.
-- **Edit it yourself.** Alt-click opens the LaTeX at that spot in an editor;
-  Cmd/Ctrl-S saves and recompiles, and the page reloads where you were. Clicking
-  in the source scrolls the PDF back to it.
+The whole thing is built around one loop: you point at something on the page,
+the agent edits the source, texai rebuilds the document, and every change comes
+back marked on the page for you to accept or reject.
+
+- **Point at the page and the agent knows exactly where you mean.** Select a
+  passage or click a word and it becomes a reference in your next message —
+  `sections/model.tex:143:15`, the precise word, not a description of roughly
+  where you meant. Attach several, each with its own note.
+- **Review its edits on the page, not in a diff.** Every change is marked inline
+  in the PDF, old text struck through and new text beside it. Accept or reject
+  them one at a time, across as many turns as you like.
+- **The agent drives the view.** It can scroll you to the table it just changed,
+  and you can ask it to — *take me to the summary statistics table*.
+- **Its work is checked before it reaches you.** texai owns the build: after
+  each turn it recompiles, hands any LaTeX errors back to the agent to fix, and
+  reverts the whole turn if the document cannot be made to compile. You are
+  never left with a broken paper.
+- **It only touches your LaTeX.** The agent gets file tools and nothing else —
+  no shell, no network. And `claude --resume` drops the same session into a real
+  terminal when you want the full CLI.
+- **Take over by hand whenever you like.** Alt-click opens the LaTeX at that
+  spot in an editor; Cmd/Ctrl-S saves and recompiles, and the page reloads where
+  you were. Clicking in the source scrolls the PDF back to it.
 - **Know how far you have drifted from git.** The toolbar carries the branch,
   how many files are uncommitted, and how many commits you are ahead or behind
   the remote — scoped to your project, even when it is a subdirectory of a
