@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import shutil
 import socket
 import sys
@@ -11,13 +12,14 @@ from pathlib import Path
 
 from . import __version__
 from .agent import AgentSession, sdk_status
+from .build import BuildError, run_build
 from .config import AppConfig
 from .events import EventBus
 from .paths import PathOutsideRootError
 from .server import create_app
 from .synctex import synctex_data_file
 
-__all__ = ["main", "build_parser"]
+__all__ = ["main", "build_parser", "build_missing_pdf"]
 
 HOST = "127.0.0.1"  # loopback only, never configurable
 DEFAULT_PORT = 8765
@@ -79,6 +81,47 @@ def _find_port(preferred: int) -> int:
     )
 
 
+def build_missing_pdf(config: AppConfig) -> str | None:
+    """Compile the document when its PDF is not there yet.
+
+    A fresh clone, or a `latexmk -C`, used to be a hard error telling you to go
+    and run the build yourself — a build texai already knows how to run. The
+    root .tex is the one named after the PDF (`find_root_tex`), and the command
+    is the same one every turn uses, so the first build is the same build.
+
+    Returns None once the PDF is in place, or the reason it is not.
+    """
+    try:
+        argv = config.build_argv()
+    except BuildError as exc:
+        return f"PDF not found: {config.pdf_path}\n{exc}"
+
+    print(
+        f"texai: {config.pdf_rel} is not there yet — building it first:\n"
+        f"         {' '.join(argv)}\n"
+        f"         in {config.build_dir}",
+        flush=True,
+    )
+    try:
+        result = asyncio.run(
+            run_build(argv, config.build_dir, log_path=config.pdf_path.with_suffix(".log"))
+        )
+    except BuildError as exc:
+        return str(exc)
+
+    if not result.ok:
+        return result.summary()
+    # latexmk can be told to write somewhere else entirely, so a build that
+    # succeeds is not proof that this is the PDF it wrote.
+    if not config.pdf_path.is_file():
+        return (
+            f"the build succeeded but {config.pdf_rel} is still not there — "
+            "check --pdf against the directory the build writes to."
+        )
+    print("texai: built it.", flush=True)
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -101,8 +144,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if not config.pdf_path.is_file():
-        print(f"texai: PDF not found: {config.pdf_path}", file=sys.stderr)
-        return 2
+        problem = build_missing_pdf(config)
+        if problem is not None:
+            print(f"texai: {problem}", file=sys.stderr)
+            return 2
 
     if shutil.which(args.synctex) is None and not Path(args.synctex).is_file():
         print(
