@@ -1,15 +1,11 @@
 // Go to anything: a section in this file, a section in another one, or a file.
 //
-// The list is built from the same outline the column beside the editor shows.
-// For the file being edited it comes from the buffer, so it is right even with
-// unsaved edits; for the rest of the project the files are read once and cached
-// until something writes to them — you or the agent.
-
-import { getJSON } from './api.js';
-import { parseOutline } from './outline.js';
+// The list is built from the same outline the columns show. For the file being
+// edited it comes from the buffer, so it is right even with unsaved edits; the
+// rest of the project comes from ProjectSources, which the outline beside the
+// PDF reads too.
 
 const MAX_RESULTS = 60;
-const MAX_SCANNED_FILES = 80;
 
 /**
  * Score `text` against a typed query, subsequence-style.
@@ -54,12 +50,15 @@ export function fuzzy(query, text) {
 export class QuickJump {
   /**
    * @param {object} sources
-   *  - files(): Promise<string[]> — every editable file in the project
+   *  - project: ProjectSources — the rest of the project's outlines
    *  - current(): {file, entries} — the buffer's own outline, live
-   *  - onPick(file, line): jump there (line null just opens the file)
+   *  - onPick(file, line, phrase): go there; line null just opens the file, and
+   *    the phrase is what to look for on the page once it is on screen
+   *  - onDismiss(): closed without picking anything
    */
   constructor(sources) {
     this.sources = sources;
+    this.project = sources.project;
     this.els = {
       root: document.getElementById('jump'),
       input: document.getElementById('jump-input'),
@@ -110,33 +109,20 @@ export class QuickJump {
 
   /** Something wrote to the project — the cached outlines may be stale. */
   invalidate() {
-    this.outlines.clear();
+    this.outlines = new Map();
     this.scanned = false;
   }
 
   async _scanProject() {
     if (this.scanned) return;
     this.scanned = true;
-    let files = [];
     try {
-      files = await this.sources.files();
+      const { files } = await this.project.files();
+      this.outlines = await this.project.everything();
+      this.files = files;
     } catch {
       this.scanned = false; // the buffer's own outline still works; try again later
-      return;
     }
-    const tex = files.filter((file) => file.endsWith('.tex')).slice(0, MAX_SCANNED_FILES);
-    await Promise.all(
-      tex.map(async (file) => {
-        if (this.outlines.has(file)) return;
-        try {
-          const data = await getJSON(`/api/source?file=${encodeURIComponent(file)}`);
-          this.outlines.set(file, parseOutline(data.text));
-        } catch {
-          this.outlines.set(file, []);
-        }
-      })
-    );
-    this.files = files;
   }
 
   /** Everything that can be jumped to, as `{label, detail, file, line, boost}`. */
@@ -152,6 +138,7 @@ export class QuickJump {
         file: openFile,
         line: entry.line,
         kind: entry.kind,
+        phrase: entry.phrase,
         boost: 30, // where you already are is usually where you meant
       });
     }
@@ -165,12 +152,21 @@ export class QuickJump {
           file,
           line: entry.line,
           kind: entry.kind,
+          phrase: entry.phrase,
           boost: 0,
         });
       }
     }
     for (const file of this.files || []) {
-      items.push({ label: file, detail: 'file', file, line: null, kind: 'file', boost: -10 });
+      items.push({
+        label: file,
+        detail: 'file',
+        file,
+        line: null,
+        kind: 'file',
+        phrase: null,
+        boost: -10,
+      });
     }
     return items;
   }
@@ -243,7 +239,7 @@ export class QuickJump {
     // Close first: the jump puts the cursor in the editor, and the palette
     // would otherwise take the focus straight back.
     this.close(false);
-    this.sources.onPick(item.file, item.line);
+    this.sources.onPick(item.file, item.line, item.phrase);
   }
 
   _onKey(event) {

@@ -27,9 +27,11 @@ back marked on the page for you to accept or reject.
   terminal when you want the full CLI.
 - **Take over by hand whenever you like.** Alt-click opens the LaTeX at that
   spot in an editor; Cmd/Ctrl-S saves and recompiles, and the page reloads where
-  you were. Clicking in the source scrolls the PDF back to it. An outline of the
-  document sits beside the editor, and Cmd/Ctrl-P jumps to any section in the
-  project by name.
+  you were. Clicking in the source scrolls the PDF back to it.
+- **Find your way around a long paper.** A contents column beside the page lists
+  the whole document — every file it pulls in, its figures and tables by caption,
+  its theorems by title — and clicking one scrolls the PDF there. Cmd/Ctrl-P
+  jumps to any of them by name.
 - **Know how far you have drifted from git.** The toolbar carries the branch,
   how many files are uncommitted, and how many commits you are ahead or behind
   the remote — scoped to your project, even when it is a subdirectory of a
@@ -42,58 +44,45 @@ The bridge that makes all of it work is SyncTeX — a pixel on page 7 becomes
 at the line; matching the clicked word against the source gets it to
 `sections/model.tex:143:15`.
 
-## Install
-
-```bash
-pip install texai
-```
-
-That is everything, agent included. The one piece it cannot install for you is
-the **`claude` CLI**, which the agent SDK drives and which supplies the
-credentials — see [Turning on the agent](#turning-on-the-agent). Without it the
-viewer, the SyncTeX bridge and the selection file all still work, and the chat
-panel says what is missing.
-
-(`pip install "texai[agent]"` still works. The extra is empty now that the SDK
-is a plain dependency, and is kept only so the 0.1.0 install line does not
-break.)
-
 ## Quick start
 
-From a checkout of this repo:
+One command on a paper you already have — nothing to install:
 
 ```bash
-uv sync
-uv run texai --root ./example --pdf ./example/main.pdf
+uvx texai --root /path/to/paper --pdf main.pdf --open
 ```
 
-Then open <http://127.0.0.1:8765/>.
+`--root` is the directory the paper lives in and `--pdf` is the PDF it builds,
+wherever that lands — `main.pdf`, `build/main.pdf`, `out/paper.pdf`. It does not
+have to exist yet: texai looks for the `.tex` named after it, compiles it, and
+then opens the viewer on <http://127.0.0.1:8765/>. All it needs is a TeX
+installation with `latexmk` and `synctex`.
 
-The example is not compiled yet; build it first (needs a TeX installation):
+Nothing to hand? This repository's `example/` is a short paper split across four
+files, and ships uncompiled on purpose:
 
 ```bash
-cd example && latexmk -pdf -synctex=1 -interaction=nonstopmode main.tex && cd ..
-uv run texai --root ./example --pdf ./example/main.pdf --open
+git clone https://github.com/tlamadon/texai && cd texai
+uvx texai --root ./example --pdf ./example/main.pdf --open
 ```
 
-On a real project:
-
-```bash
-uv run texai --root /path/to/paper --pdf build/main.pdf --open
-```
+`uvx` is `uv tool run`: it fetches texai into a throwaway environment, runs it,
+and leaves nothing behind. `uv run texai` is the other one — it runs texai from
+the project you are standing in, which is what you want in a checkout of *this*
+repo (`uv sync` first) and not what you want anywhere else.
 
 ### Turning on the agent
 
-The Claude Agent SDK installs with texai. The remaining requirement is the
-**`claude` CLI**, which the SDK drives:
+The Claude Agent SDK comes with texai, whichever way you run it. The one thing
+it cannot bring along is the **`claude` CLI** that the SDK drives — if
 
 ```bash
-uv sync                    # the agent SDK comes with it
-uv run texai --root . --pdf build/main.pdf --open
+claude --version
 ```
 
-Without the CLI the viewer, the SyncTeX bridge and the selection file all still
-work, and the panel names the missing piece rather than failing vaguely.
+answers, the chat panel works. Without it the viewer, the SyncTeX bridge and the
+selection file all still work, and the panel names the missing piece rather than
+failing vaguely.
 
 The agent runs as a normal local Claude Code session and uses whatever
 credentials `claude` is already logged in with — your subscription, if that is
@@ -104,6 +93,22 @@ account exactly as they would in the terminal.
 this to other people who sign in with their own Claude accounts needs approval
 from Anthropic, and API-key auth otherwise. That is about distribution, not
 about running it yourself.)
+
+### Keeping it around
+
+`uvx` re-resolves every so often. Once texai has earned a place on your PATH:
+
+```bash
+uv tool install texai        # then just: texai --root . --pdf main.pdf
+pip install texai            # or the pip equivalent
+```
+
+Either way the agent SDK comes with it. The one piece neither can install is the
+`claude` CLI above.
+
+(`pip install "texai[agent]"` still works. The extra is empty now that the SDK
+is a plain dependency, and is kept only so the 0.1.0 install line does not
+break.)
 
 ## The loop
 
@@ -328,17 +333,30 @@ does the same for a passage you marked earlier.
 ### Both directions
 
 Cmd-click goes from the page to the source. Clicking in the **Source** tab goes
-back: the PDF scrolls to centre on whatever that line produced and flashes the
-zone, so you can see where you are without reading page numbers.
+back: the PDF scrolls to centre on the words you clicked and flashes them, so
+you can see where you are without reading page numbers.
 
 ```
-click sections/model.tex:40  →  page 2 centres, the paragraph flashes
+click sections/model.tex:40  →  page 2 centres, the phrase there flashes
 ```
 
-That is `synctex view` rather than `synctex edit`, and it answers with the boxes
-a line produced — so a paragraph that wraps flashes every rendered line of it,
-and a line that produces nothing (a comment, `\begin{document}`, a macro
-definition) does nothing at all rather than complaining.
+That is `synctex view` rather than `synctex edit`. SyncTeX answers with the
+whole rendered line, which is a wide thing to light up when you pointed at one
+word in it, so the words around the click are matched against the rendered text
+and the highlight narrows to the phrase itself:
+
+```
+click sections/model.tex:40 on "objective"
+  →  "objective, and differentiating" lights up — 251px of an 851px line
+```
+
+Candidates are tried longest first, because a run of words is unmistakable when
+it is there and simply absent when a line break, a ligature or a hyphenation ate
+it — and then a shorter one still lands. Clicking on markup (`$\alpha$`, a macro
+name) narrows to nothing, since none of those characters are on the page, and a
+line that produces nothing at all (a comment, `\begin{document}`) does nothing
+rather than complaining. Whenever the words cannot be found the whole line is
+still highlighted, which is the honest answer rather than no answer.
 
 It is bound to the click, not to the cursor, so typing and arrow keys never yank
 the page around while you are writing. Rapid clicks only ever honour the newest,
@@ -387,8 +405,34 @@ It is read from the buffer rather than from the file on disk, so a heading you
 typed a second ago is already in the list, at the line it is really on. `≡` in
 the editor bar folds the column away when the pane is narrow.
 
-**Cmd/Ctrl-P** opens *go to*: type a few letters of any heading in the project,
-or of a file name, and jump.
+### Contents, beside the page
+
+`≡` in the toolbar opens the same outline for the document you are *reading*:
+the root `.tex` with every `\input` expanded where it appears, so a paper split
+across four files reads as one. Clicking a heading scrolls the PDF to it —
+nothing about the panel on the right changes, because you asked to read
+something, not to edit it. **Alt-click** opens its source instead, the same
+modifier that goes from page to source everywhere else.
+
+```
+Introduction
+Model                       ← main.tex \input sections/model.tex
+  Households
+  Steady state
+Robustness
+Data
+  Table: Summary statistics for the estim…
+```
+
+This one is read from the files on disk rather than from the buffer, and
+deliberately: it is a map of the PDF, and the PDF was built from disk. Depth is
+worked out across the whole document, so a chapter file that starts at
+`\section` still sits under the `\chapter` that pulled it in.
+
+### Go to anything
+
+**Cmd/Ctrl-P** searches every heading in the project, and every file, from
+wherever you are:
 
 ```
 Cmd-P, "housh"  →  Households                              sections/model.tex:17
@@ -396,9 +440,16 @@ Cmd-P, "summ"   →  Table: Summary statistics for the esti… sections/data.tex
 Cmd-P, "robu"   →  sections/robustness.tex
 ```
 
+Picking a heading **moves the PDF**. The editor follows into the same place only
+if the Source tab is already showing, so a jump never changes which tab you are
+looking at. Picking a *file* opens it in the editor, since a file is a place in
+the source and nowhere in particular in the PDF; so does picking a line that
+produced no output in the PDF at all, which says so as it happens.
+
 The match is fuzzy — the letters need only appear in order — and headings in the
-file you are editing come first. Headings elsewhere are read from disk the first
-time you open the palette, and re-read whenever you or the agent writes.
+file you are editing come first. The rest of the project is read from disk the
+first time you ask, shared with the contents panel, and re-read whenever you or
+the agent writes.
 
 Two writers on one tree needs a rule, so every save carries a hash of the text it
 was based on. If the agent rewrote the file while it sat open, the save is
@@ -505,7 +556,8 @@ that flow.
 
 - `uv` and Python ≥ 3.10.
 - A TeX installation providing `synctex` and `latexmk`.
-- A PDF compiled with SyncTeX enabled — a `.synctex.gz` next to it.
+- A PDF compiled with SyncTeX enabled — a `.synctex.gz` next to it. texai builds
+  one at startup if it is not there.
 - The `claude` CLI, for the chat panel. The agent SDK itself installs with
   texai.
 
@@ -586,7 +638,7 @@ turns, so they cost nothing to run.
 
 ```
 src/texai/
-  cli.py         argparse + uvicorn on 127.0.0.1
+  cli.py         argparse, the first build, and uvicorn on 127.0.0.1
   config.py      validated, root-confined paths and build settings
   paths.py       containment and project-relative normalization
   synctex.py     `synctex edit` invocation + output parsing
@@ -608,8 +660,10 @@ src/texai/
   server.py      FastAPI routes
   static/        vanilla two-panel UI + vendored PDF.js and CodeMirror
                  (marks.js draws the inline change markers,
-                  editor.js is the Source tab, outline.js its table of
-                  contents, jump.js the go-to palette, git.js the git panel)
+                  editor.js is the Source tab, outline.js parses and draws
+                  both tables of contents, project.js assembles the document
+                  from its \input tree, jump.js is the go-to palette, and
+                  git.js the git panel)
 ```
 
 ## Not built yet

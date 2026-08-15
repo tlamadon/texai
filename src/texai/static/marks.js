@@ -81,6 +81,45 @@ export function changedPhrases(parts) {
   return phrases.filter((p) => p.replace(/[^\p{L}\p{N}]/gu, '').length >= 3);
 }
 
+/**
+ * What to look for on the page, for a spot a click landed on in the source.
+ *
+ * Returned longest-first, because one word is often too little to be precise —
+ * "the" occurs three times in a rendered line — and too much is easy to miss:
+ * a five-word run that straddles a line break, a ligature or a hyphenation is
+ * not on the page as written. The caller tries them in order and takes the
+ * first that lands. Markup breaks a run for the same reason as above: `$\alpha$`
+ * is a glyph, not those characters.
+ */
+export function phraseAt(text, column, { span = 2 } = {}) {
+  const tokens = [];
+  for (const match of String(text || '').matchAll(/\S+/g)) {
+    tokens.push({ text: match[0], start: match.index, end: match.index + match[0].length });
+  }
+  if (!tokens.length) return [];
+
+  let index = tokens.findIndex((t) => column >= t.start && column <= t.end);
+  if (index === -1) index = tokens.findIndex((t) => t.start > column);
+  if (index === -1) index = tokens.length - 1;
+
+  const plain = (token) => !/[\\${}~^_&%#]/.test(token.text) && /[\p{L}\p{N}]/u.test(token.text);
+  if (!plain(tokens[index])) return []; // the click is on markup: nothing to find
+
+  const candidates = [];
+  for (let reach = span; reach >= 0; reach -= 1) {
+    let from = index;
+    let to = index;
+    while (from > index - reach && from > 0 && plain(tokens[from - 1])) from -= 1;
+    while (to < index + reach && to < tokens.length - 1 && plain(tokens[to + 1])) to += 1;
+    const phrase = tokens
+      .slice(from, to + 1)
+      .map((t) => t.text)
+      .join(' ');
+    if (!candidates.includes(phrase)) candidates.push(phrase);
+  }
+  return candidates.filter((p) => p.replace(/[^\p{L}\p{N}]/gu, '').length >= 3);
+}
+
 /** Text-layer spans whose vertical extent overlaps a band, in reading order. */
 function spansInBand(entry, bandRect) {
   const pageRect = entry.el.getBoundingClientRect();
@@ -99,7 +138,7 @@ function spansInBand(entry, bandRect) {
  * anything the source spells differently from the render — and the caller then
  * keeps the whole-line band rather than highlighting nothing.
  */
-function narrowRects(entry, bandRect, phrases) {
+export function narrowRects(entry, bandRect, phrases) {
   const spans = spansInBand(entry, bandRect);
   if (!spans.length || !phrases.length) return [];
 

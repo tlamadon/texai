@@ -14,6 +14,8 @@
     <section class="canvas-pane">
       <header class="toolbar">
         <span class="brand">texai</span>
+        <button id="contents-toggle" type="button" class="ghost icon" aria-pressed="false"
+                title="Contents of the document">&#9776;</button>
         <span id="pdf-name" class="pdf-name" title="PDF being reviewed">&mdash;</span>
 
         <div class="group">
@@ -73,10 +75,27 @@
         <div id="git-output" class="git-output" hidden></div>
       </section>
 
-      <main id="viewer-container" class="viewer-container">
-        <div id="viewer" class="viewer"></div>
-        <div id="empty" class="empty">Loading PDF&hellip;</div>
-      </main>
+      <div class="canvas-body">
+        <nav id="contents" class="outline contents" aria-label="Contents" hidden>
+          <div class="outline-head">
+            <span>Contents</span>
+            <div class="spacer"></div>
+            <button id="contents-search" type="button" class="ghost icon"
+                    title="Go to a section or a file">
+              <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+                <path fill="none" stroke="currentColor" stroke-width="1.6"
+                      d="M7 1.8a5.2 5.2 0 1 0 0 10.4A5.2 5.2 0 0 0 7 1.8Zm3.9 8.9 3.3 3.3"/>
+              </svg>
+            </button>
+          </div>
+          <div id="contents-list" class="outline-list"></div>
+        </nav>
+
+        <main id="viewer-container" class="viewer-container">
+          <div id="viewer" class="viewer"></div>
+          <div id="empty" class="empty">Loading PDF&hellip;</div>
+        </main>
+      </div>
 
       <footer class="hintbar">
         <kbd id="mod-key">Cmd</kbd>-click a passage to attach it to your next message.

@@ -731,7 +731,7 @@ const outline = await cdp.json(`(async () => {
   await new Promise(r => setTimeout(r, 300));
   const panel = document.getElementById('outline');
   const host = document.getElementById('editor-host');
-  const rows = [...document.querySelectorAll('.outline-row')];
+  const rows = [...document.querySelectorAll('#outline-list .outline-row')];
   const p = panel.getBoundingClientRect();
   const h = host.getBoundingClientRect();
   const list = document.getElementById('outline-list');
@@ -763,14 +763,14 @@ check('the outline does not make the page scroll',
 
 // A heading is a place in the source: clicking it goes there.
 const outlinePick = await cdp.json(`(async () => {
-  [...document.querySelectorAll('.outline-row')].find(r => r.textContent === 'Conclusion').click();
+  [...document.querySelectorAll('#outline-list .outline-row')].find(r => r.textContent === 'Conclusion').click();
   await new Promise(r => setTimeout(r, 400));
   const ed = window.__texai.editor;
   const scroller = document.querySelector('#editor-host .CodeMirror-scroll');
   return {
     line: ed.cm.getCursor().line + 1,
     text: ed.cm.getLine(ed.cm.getCursor().line),
-    active: document.querySelector('.outline-row.active')?.textContent,
+    active: document.querySelector('#outline-list .outline-row.active')?.textContent,
     scrolled: scroller.scrollTop > 0,
     rootScrollTop: document.documentElement.scrollTop,
   };
@@ -784,12 +784,12 @@ check('and the outline marks where the cursor is', outlinePick.active === 'Concl
 
 // An \input is a link to the file it pulls in.
 const outlineInput = await cdp.json(`(async () => {
-  document.querySelector('.outline-row.kind-input').click();
+  document.querySelector('#outline-list .outline-row.kind-input').click();
   await new Promise(r => setTimeout(r, 600));
   return {
     file: window.__texai.editor.file,
-    first: document.querySelector('.outline-row')?.textContent,
-    titles: [...document.querySelectorAll('.outline-row')].map(r => r.textContent),
+    first: document.querySelector('#outline-list .outline-row')?.textContent,
+    titles: [...document.querySelectorAll('#outline-list .outline-row')].map(r => r.textContent),
   };
 })()`);
 console.log('outline input:', outlineInput);
@@ -804,11 +804,11 @@ const outlineLive = await cdp.json(`(async () => {
   const ed = window.__texai.editor;
   ed.cm.replaceRange('\\\\section{Scratch}\\n', { line: 0, ch: 0 });
   await new Promise(r => setTimeout(r, 500));
-  const typed = [...document.querySelectorAll('.outline-row')].map(r => r.textContent);
+  const typed = [...document.querySelectorAll('#outline-list .outline-row')].map(r => r.textContent);
   ed.cm.undo();
   ed._setDirty(false);
   await new Promise(r => setTimeout(r, 500));
-  return { typed, after: [...document.querySelectorAll('.outline-row')].map(r => r.textContent) };
+  return { typed, after: [...document.querySelectorAll('#outline-list .outline-row')].map(r => r.textContent) };
 })()`);
 console.log('outline while typing:', outlineLive);
 check('a heading typed just now is in the outline', outlineLive.typed[0] === 'Scratch',
@@ -823,7 +823,7 @@ const outlineLong = await cdp.json(`(async () => {
   await new Promise(r => setTimeout(r, 500));
   const panel = document.getElementById('outline');
   const host = document.getElementById('editor-host');
-  const row = document.querySelector('.outline-row.active');
+  const row = document.querySelector('#outline-list .outline-row.active');
   const pane = document.getElementById('editor-pane').getBoundingClientRect();
   return {
     panelW: Math.round(panel.getBoundingClientRect().width),
@@ -959,28 +959,78 @@ check('a table is findable by its caption, across files',
   `${paletteFloat.top} — ${paletteFloat.detail}`);
 
 const paletteEnter = await cdp.json(`(async () => {
+  const container = document.getElementById('viewer-container');
+  container.scrollTop = 0;
   const input = document.getElementById('jump-input');
   input.value = 'househ';
   input.dispatchEvent(new Event('input'));
   await new Promise(r => setTimeout(r, 150));
   document.getElementById('jump-input').dispatchEvent(
     new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-  await new Promise(r => setTimeout(r, 800));
+  await new Promise(r => setTimeout(r, 1200));
   const ed = window.__texai.editor;
   return {
     hidden: document.getElementById('jump').hidden,
     file: ed.file,
     text: ed.cm.getLine(ed.cm.getCursor().line),
-    active: document.querySelector('.outline-row.active')?.textContent,
+    active: document.querySelector('#outline-list .outline-row.active')?.textContent,
+    scrolled: Math.round(container.scrollTop),
+    flashes: document.querySelectorAll('#viewer .flash').length,
   };
 })()`);
 console.log('palette pick:', paletteEnter);
-check('Enter jumps to the heading, in its own file',
+check('Enter moves the PDF to the heading', paletteEnter.scrolled > 0 && paletteEnter.flashes > 0,
+  `scrollTop ${paletteEnter.scrolled}, ${paletteEnter.flashes} flashes`);
+check('and the open editor follows it into its own file',
   paletteEnter.file === 'sections/model.tex' && paletteEnter.text === '\\subsection{Households}',
   JSON.stringify(paletteEnter));
 check('the palette closes behind it', paletteEnter.hidden);
 check('and the outline lands on the same heading', paletteEnter.active === 'Households',
   String(paletteEnter.active));
+
+// Reading rather than editing: a jump must move the page and leave the panel
+// showing whatever it was showing.
+const paletteFromChat = await cdp.json(`(async () => {
+  window.__texai.chat.setView('chat');
+  const container = document.getElementById('viewer-container');
+  container.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 400));
+  const openFile = window.__texai.editor.file;
+
+  window.__texai.jump.show();
+  await new Promise(r => setTimeout(r, 500));
+  const input = document.getElementById('jump-input');
+  input.value = 'transiti';
+  input.dispatchEvent(new Event('input'));
+  await new Promise(r => setTimeout(r, 150));
+  const top = document.querySelector('.jump-row .jump-label')?.textContent;
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await new Promise(r => setTimeout(r, 1200));
+
+  return {
+    top,
+    openFile,
+    view: window.__texai.chat.view,
+    file: window.__texai.editor.file,
+    page: window.__texai.viewer.currentPage,
+    scrolled: Math.round(container.scrollTop),
+    flashes: document.querySelectorAll('#viewer .flash').length,
+    editorVisible: document.getElementById('editor-pane').getBoundingClientRect().height > 0,
+  };
+})()`);
+console.log('palette from the chat:', paletteFromChat);
+check('a heading in another file is reachable from the chat', paletteFromChat.top === 'Transition dynamics',
+  String(paletteFromChat.top));
+check('picking it scrolls the PDF', paletteFromChat.scrolled > 0 && paletteFromChat.flashes > 0,
+  `scrollTop ${paletteFromChat.scrolled}, ${paletteFromChat.flashes} flashes`);
+check('and does not throw you into the editor',
+  paletteFromChat.view === 'chat' && !paletteFromChat.editorVisible,
+  `${paletteFromChat.view}, editor visible: ${paletteFromChat.editorVisible}`);
+check('the editor is left on the file it had', paletteFromChat.file === paletteFromChat.openFile,
+  `${paletteFromChat.file} vs ${paletteFromChat.openFile}`);
+
+await cdp.eval(`(() => { window.__texai.chat.setView('source'); return true; })()`);
+await sleep(300);
 
 // The shortcut itself, dispatched as a real key event: Cmd-P on a Mac,
 // Ctrl-P elsewhere. It has to win against CodeMirror, which has the focus.
@@ -1016,6 +1066,129 @@ await sleep(250);
 check('Esc closes it again', await cdp.eval(`document.getElementById('jump').hidden`));
 
 await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
+
+/* ---------------- the contents beside the PDF ---------------- */
+
+// One document, not four files: main.tex with every \input spliced in where it
+// appears, and no \input rows left over.
+const contents = await cdp.json(`(async () => {
+  window.__texai.chat.setView('chat');
+  const panel = document.getElementById('contents');
+  if (panel.hidden) document.getElementById('contents-toggle').click();
+  await new Promise(r => setTimeout(r, 1200));
+  const rows = [...document.querySelectorAll('#contents-list .outline-row')];
+  const viewer = document.getElementById('viewer-container').getBoundingClientRect();
+  const box = panel.getBoundingClientRect();
+  return {
+    titles: rows.map(r => r.textContent),
+    levels: rows.map(r => r.className.match(/lvl-(\\d)/)?.[1]),
+    files: rows.map(r => r.title.split(':')[0]),
+    inputs: rows.filter(r => r.classList.contains('kind-input')).length,
+    panelW: Math.round(box.width),
+    viewerW: Math.round(viewer.width),
+    sideBySide: Math.abs(box.top - viewer.top) <= 1 && box.right <= viewer.left + 1,
+    insidePane: box.bottom <= document.querySelector('.canvas-pane').getBoundingClientRect().bottom + 1,
+    rootScrollH: document.documentElement.scrollHeight,
+    rootClientH: document.documentElement.clientHeight,
+    canvasScrolledSideways: document.querySelector('.canvas-pane').scrollLeft,
+  };
+})()`);
+console.log('contents:', contents);
+
+check('the contents run in document order, across files',
+  contents.titles.join('|').startsWith('Introduction|Model|Households|Steady state|Robustness'),
+  contents.titles.join(' | '));
+check('the files pulled in are expanded, not listed', contents.inputs === 0,
+  String(contents.inputs));
+check('a section from another file sits under the one that pulled it in',
+  contents.files.includes('sections/model.tex') && contents.files.includes('main.tex'),
+  [...new Set(contents.files)].join(', '));
+check('depth is measured across the whole document, not per file',
+  contents.levels[contents.titles.indexOf('Households')] >
+    contents.levels[contents.titles.indexOf('Model')],
+  contents.levels.join(''));
+check('the contents sit beside the page', contents.sideBySide && contents.insidePane);
+check('the page keeps its width', contents.viewerW > 300, `${contents.viewerW}px`);
+check('the contents do not widen the column past its clamp', contents.panelW <= 280,
+  `${contents.panelW}px`);
+check('nor make the page scroll', contents.rootScrollH <= contents.rootClientH + 1
+  && contents.canvasScrolledSideways === 0);
+
+// Clicking a heading is a request to read it, not to edit it.
+const contentsClick = await cdp.json(`(async () => {
+  const container = document.getElementById('viewer-container');
+  container.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 300));
+  const row = [...document.querySelectorAll('#contents-list .outline-row')]
+    .find(r => r.textContent === 'Conclusion');
+  row.click();
+  await new Promise(r => setTimeout(r, 1200));
+  return {
+    scrolled: Math.round(container.scrollTop),
+    page: window.__texai.viewer.currentPage,
+    flashes: document.querySelectorAll('#viewer .flash').length,
+    view: window.__texai.chat.view,
+  };
+})()`);
+console.log('contents click:', contentsClick);
+check('clicking the contents scrolls the PDF there',
+  contentsClick.scrolled > 0 && contentsClick.flashes > 0,
+  `scrollTop ${contentsClick.scrolled}, page ${contentsClick.page}`);
+check('and leaves the panel alone', contentsClick.view === 'chat', contentsClick.view);
+
+// Alt-click is the same modifier as on the page itself: take me to the source.
+const contentsAltClick = await cdp.json(`(async () => {
+  const row = [...document.querySelectorAll('#contents-list .outline-row')]
+    .find(r => r.textContent === 'Households');
+  row.dispatchEvent(new MouseEvent('click', { altKey: true, bubbles: true, cancelable: true }));
+  await new Promise(r => setTimeout(r, 900));
+  const ed = window.__texai.editor;
+  return { view: window.__texai.chat.view, file: ed.file, text: ed.cm.getLine(ed.cm.getCursor().line) };
+})()`);
+console.log('contents alt-click:', contentsAltClick);
+check('alt-clicking the contents opens the source instead',
+  contentsAltClick.view === 'source' && contentsAltClick.file === 'sections/model.tex'
+    && contentsAltClick.text === '\\subsection{Households}',
+  JSON.stringify(contentsAltClick));
+
+const contentsFold = await cdp.json(`(async () => {
+  const container = document.getElementById('viewer-container');
+  const button = document.getElementById('contents-toggle');
+  window.__texai.viewer.setFitWidth();
+  await new Promise(r => setTimeout(r, 400));
+  const open = {
+    viewerW: Math.round(container.getBoundingClientRect().width),
+    sideways: container.scrollWidth > container.clientWidth + 1,
+  };
+  button.click();
+  await new Promise(r => setTimeout(r, 600));
+  const folded = {
+    panelW: document.getElementById('contents').getBoundingClientRect().width,
+    viewerW: Math.round(container.getBoundingClientRect().width),
+    sideways: container.scrollWidth > container.clientWidth + 1,
+  };
+  return { open, folded, stored: localStorage.getItem('texai.contents') };
+})()`);
+console.log('contents fold:', contentsFold);
+check('the contents fold away and give the page the room', contentsFold.folded.panelW === 0
+  && contentsFold.folded.viewerW > contentsFold.open.viewerW,
+  `${contentsFold.folded.viewerW} vs ${contentsFold.open.viewerW}`);
+check('a fitted page is refitted on both sides of the toggle',
+  !contentsFold.open.sideways && !contentsFold.folded.sideways,
+  JSON.stringify({ open: contentsFold.open.sideways, folded: contentsFold.folded.sideways }));
+check('and the choice is remembered', contentsFold.stored === '0', String(contentsFold.stored));
+
+// These jumps left the view on the last page. Put it back on page 1 for what
+// follows, which matches against a text layer the viewer only keeps for pages
+// near the screen.
+await cdp.eval(`(() => { document.getElementById('viewer-container').scrollTop = 0; return true; })()`);
+for (let i = 0; i < 20; i += 1) {
+  const spans = await cdp.eval(
+    `window.__texai.viewer.pageEntry(1).el.querySelectorAll('.textLayer span').length`
+  );
+  if (spans > 20) break;
+  await sleep(300);
+}
 
 /* ---------------- the git pill and panel ---------------- */
 
@@ -1243,11 +1416,26 @@ if (!canLocate) {
     const flash = document.querySelector('.flash');
     const fr = flash ? flash.getBoundingClientRect() : null;
     const vr = viewer.container.getBoundingClientRect();
+    // What the highlight actually covers, and how wide the rendered line under
+    // it is: precision is the ratio of the two.
+    const under = fr ? viewer.wordAtClientPoint(fr.left + 4, fr.top + fr.height / 2) : null;
+    const lineWidth = fr
+      ? Math.round(Math.max(...[...document.querySelectorAll('#viewer .textLayer span')]
+          .map(s => s.getBoundingClientRect())
+          .filter(r => Math.abs((r.top + r.bottom) / 2 - (fr.top + fr.height / 2)) < 6)
+          .map(r => r.right) .concat([0]))
+        - Math.min(...[...document.querySelectorAll('#viewer .textLayer span')]
+          .map(s => s.getBoundingClientRect())
+          .filter(r => Math.abs((r.top + r.bottom) / 2 - (fr.top + fr.height / 2)) < 6)
+          .map(r => r.left).concat([1e6])))
+      : 0;
     return {
       before, after, flashes,
       offCentre: fr ? Math.round(Math.abs((fr.top + fr.height / 2) - (vr.top + vr.height / 2))) : null,
       flashW: fr ? Math.round(fr.width) : 0,
       flashH: fr ? Math.round(fr.height) : 0,
+      lineWidth,
+      wordUnder: under?.word ?? null,
       insideView: fr ? fr.top >= vr.top - 2 && fr.bottom <= vr.bottom + 2 : false,
     };
   })()`);
@@ -1261,6 +1449,15 @@ if (!canLocate) {
   check('the target is centred, not merely on screen', reverse.offCentre !== null && reverse.offCentre < 80,
     `${reverse.offCentre}px off centre`);
   check('the highlight is inside the visible area', reverse.insideView);
+
+  // Line 40 starts "objective, and differentiating with respect to…", and the
+  // click landed on its first word — so that is what should be lit up, not the
+  // whole rendered line it happens to sit in.
+  check('the highlight is the phrase, not the whole line',
+    reverse.lineWidth > 0 && reverse.flashW < reverse.lineWidth * 0.6,
+    `${reverse.flashW}px of a ${reverse.lineWidth}px line`);
+  check('and it starts on the word that was clicked', reverse.wordUnder === 'objective',
+    String(reverse.wordUnder));
 
   // Typing must never yank the page around.
   const whileTyping = await cdp.json(`(async () => {

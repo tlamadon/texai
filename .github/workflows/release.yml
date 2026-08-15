@@ -92,6 +92,7 @@ jobs:
               "texai/static/viewer.js",
               "texai/static/editor.js",
               "texai/static/outline.js",
+              "texai/static/project.js",
               "texai/static/jump.js",
               "texai/static/git.js",
               "texai/static/vendor/pdfjs/pdf.mjs",

@@ -6,7 +6,9 @@ import { ChatPanel } from './chat.js';
 import { GitPanel } from './git.js';
 import { SourceEditor } from './editor.js';
 import { QuickJump } from './jump.js';
-import { MarksLayer } from './marks.js';
+import { MarksLayer, narrowRects } from './marks.js';
+import { OutlinePanel } from './outline.js';
+import { ProjectSources } from './project.js';
 import { showToast } from './toast.js';
 import { PdfViewer } from './viewer.js';
 
@@ -52,24 +54,55 @@ marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.a
 // reloads the page, so there is nothing to do here but let it happen.
 const editor = new SourceEditor();
 const git = new GitPanel();
+const project = new ProjectSources();
+
+// The document's contents beside the page: the root .tex with every \input
+// spliced in, so it reads as one paper rather than as a pile of files. Clicking
+// moves the PDF — this outline belongs to the thing being read. Alt-click opens
+// the source instead, the same modifier as on the page itself.
+const contents = new OutlinePanel({
+  panel: 'contents',
+  list: 'contents-list',
+  toggle: 'contents-toggle',
+  storageKey: 'texai.contents',
+  empty: 'No sections found in the source.',
+  // Off until asked for: the page should own the width of its pane.
+  defaultVisible: false,
+  onPick: (entry, event) =>
+    event?.altKey
+      ? editAt(entry.file, entry.line)
+      : goTo(entry.file, entry.line, { phrases: entry.phrase ? [entry.phrase] : [] }),
+});
+// Opening the column narrows the page's half of the window, so a page that was
+// fitted to the width has to be fitted again — the same thing dragging the
+// splitter does.
+contents.onToggle = (visible) => {
+  if (visible) refreshContents();
+  if (viewer.fitWidth) {
+    viewer.setFitWidth();
+    updateZoomReadout();
+  }
+};
+document.getElementById('contents-search').addEventListener('click', () => jump.toggle());
 
 // Go to a heading anywhere in the project, or to a file, without leaving the
 // keyboard. The open buffer answers for itself so the line numbers are right
 // even mid-edit; the rest of the project is read from disk and cached.
 const jump = new QuickJump({
-  files: () => editor.ensureFiles(),
+  project,
   current: () => ({ file: editor.file, entries: editor.entries }),
-  onPick: (file, line) => jumpToSource(file, line),
+  onPick: (file, line, phrase) => goToPlace(file, line, phrase),
   onDismiss: () => editor.focus(),
 });
 editor.onJump = () => jump.toggle();
 
 editor.onSaved = () => {
   git.refresh();
-  jump.invalidate();
+  invalidateOutlines();
 };
 // The reverse of Cmd-click: put the cursor in the source, see it in the PDF.
-editor.onReveal = (file, line) => file && goTo(file, line, { quiet: true });
+editor.onReveal = (file, line, phrases = []) =>
+  file && goTo(file, line, { quiet: true, phrases });
 
 // The composer writes to the agent, so it only belongs to the chat views.
 chat.onViewChange = (view) => {
@@ -83,14 +116,93 @@ async function editAt(file, line, column = null) {
   await editor.open(file, line, column);
 }
 
-/** Jumping from the outline or the palette moves both panes to the same place. */
-async function jumpToSource(file, line) {
+/**
+ * Go to a place the palette named.
+ *
+ * A heading is a place in the document, so the page moves — that is what you
+ * are reading, and being thrown into the editor to reach it is backwards. The
+ * editor follows only when it is the visible tab, so a jump never changes what
+ * the right-hand pane is showing. A file is a place in the source alone, and a
+ * line that produced no output in the PDF has nowhere else to go.
+ */
+async function goToPlace(file, line, phrase = null) {
+  if (line == null) {
+    await editAt(file);
+    return;
+  }
+  const found = await goTo(file, line, { quiet: true, phrases: phrase ? [phrase] : [] });
+  if (found?.found) {
+    if (chat.view === 'source') editor.open(file, line);
+    return;
+  }
   await editAt(file, line);
-  if (line != null) goTo(file, line, { quiet: true });
+  // `null` means the lookup itself failed or was superseded; only an answered
+  // "nothing there" is worth explaining.
+  if (found) showToast(`${file}:${line} produces no output in the PDF — opened the source.`);
+}
+
+/** The document's contents, rebuilt from the source on disk. */
+let contentsToken = 0;
+async function refreshContents() {
+  if (!contents.visible) return;
+  const token = ++contentsToken;
+  try {
+    const entries = await project.document();
+    if (token === contentsToken) contents.setEntries(entries);
+  } catch {
+    /* the source may be unreadable; the panel keeps what it had */
+  }
+}
+
+/** Someone wrote to the project: every cached outline is now a guess. */
+function invalidateOutlines() {
+  project.invalidate();
+  jump.invalidate();
+  refreshContents();
 }
 /* ---------------- moving the view ---------------- */
 
-function showLocation(loc) {
+/** Wait for a page's text layer, which word-narrowing reads. */
+function textLayerReady(page, timeout = 800) {
+  return new Promise((resolve) => {
+    const deadline = performance.now() + timeout;
+    const tick = () => {
+      if (viewer.hasTextLayer(page) || performance.now() > deadline) resolve();
+      else requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
+
+/**
+ * The rectangles for a phrase inside the line SyncTeX reported.
+ *
+ * Candidates are tried longest first: a five-word run is unmistakable when it
+ * is there, and gone entirely when the line broke or a ligature swallowed it,
+ * in which case a shorter one still lands somewhere sensible.
+ */
+async function preciseRects(loc, phrases) {
+  // One wait, for the page just scrolled to. Other pages are only worth trying
+  // if they happen to be rendered already — a line's boxes rarely straddle two.
+  await textLayerReady(loc.page);
+  for (const box of loc.boxes) {
+    const entry = viewer.pageEntry(box.page);
+    if (!entry?.viewport || !viewer.hasTextLayer(box.page)) continue;
+    const band = viewer.pdfRectToPageRect(entry, box);
+    for (const phrase of phrases) {
+      const rects = narrowRects(entry, band, [phrase]);
+      if (rects.length) return { entry, rects };
+    }
+  }
+  return null;
+}
+
+// Only the newest reveal may flash; narrowing waits on a render, and a stale
+// answer landing afterwards would highlight where you were, not where you are.
+let showToken = 0;
+
+async function showLocation(loc, { phrases = [] } = {}) {
+  const token = ++showToken;
   if (!loc || !loc.found) {
     showToast(
       `${loc?.file ?? 'That line'}:${loc?.line ?? ''} produces no output in the PDF.`,
@@ -98,7 +210,22 @@ function showLocation(loc) {
     );
     return;
   }
+  // Scroll first: narrowing reads the text layer, which only exists for pages
+  // near the view, so the page has to be brought there before it can be read.
   viewer.scrollToBox(loc.page, loc.boxes[0]);
+
+  const precise = phrases.length ? await preciseRects(loc, phrases) : null;
+  if (token !== showToken) return;
+
+  if (precise) {
+    // Centre on the words themselves — they may be on the second rendered line
+    // of a source line that wrapped.
+    viewer.scrollToRect(precise.entry, precise.rects[0]);
+    for (const rect of precise.rects) viewer.flashRect(precise.entry, rect);
+    return;
+  }
+  // Nothing to narrow to, or the words are not on the page as written: the
+  // whole line is still the honest answer.
   for (const box of loc.boxes) viewer.flashBox(box.page, box);
 }
 
@@ -106,21 +233,23 @@ function showLocation(loc) {
 // view, or an earlier answer would land after a later one and scroll it back.
 let revealToken = 0;
 
-async function goTo(file, line, { quiet = false } = {}) {
+async function goTo(file, line, { quiet = false, phrases = [] } = {}) {
   const token = ++revealToken;
   try {
     const found = await getJSON(
       `/api/locate?file=${encodeURIComponent(file)}&line=${encodeURIComponent(line)}`
     );
-    if (token !== revealToken) return;
+    if (token !== revealToken) return null;
     // Plenty of source lines produce no output — comments, \begin{document},
     // a macro definition. When the user merely clicked in the editor that is
     // not worth an error; it just means there is nothing to show.
-    if (quiet && !found.found) return;
-    showLocation(found);
+    if (quiet && !found.found) return found;
+    showLocation(found, { phrases });
+    return found;
   } catch (err) {
-    if (token !== revealToken || quiet) return;
+    if (token !== revealToken || quiet) return null;
     showToast(err.message || String(err), { type: 'error' });
+    return null;
   }
 }
 
@@ -139,7 +268,7 @@ chat.onChangesUpdated = () => {
   marks.refresh();
   git.refresh();
   // The agent's edits move headings around; the cached outlines are stale.
-  jump.invalidate();
+  invalidateOutlines();
   // The agent may have rewritten the file sitting in the editor; take its
   // version unless there is unsaved typing to protect.
   editor.reload();
@@ -186,7 +315,12 @@ async function poll() {
     if (status.pdfVersion !== pdfVersion) {
       const isReload = pdfVersion !== null;
       await loadPdf(status.pdfVersion, { preserveView: isReload });
-      if (isReload) showToast('PDF reloaded');
+      if (isReload) {
+        showToast('PDF reloaded');
+        // A rebuild we did not start — latexmk in a terminal, say. The source
+        // behind this PDF has moved on, and so has its outline.
+        invalidateOutlines();
+      }
     }
   } catch (err) {
     els.conn.textContent = 'disconnected';
@@ -392,8 +526,12 @@ document.addEventListener('keydown', (event) => {
 
 async function boot() {
   els.modKey.textContent = IS_MAC ? 'Cmd' : 'Ctrl';
-  const goTo = document.getElementById('outline-search');
-  goTo.title = `${goTo.title} (${IS_MAC ? 'Cmd' : 'Ctrl'}-P)`;
+  const shortcut = `(${IS_MAC ? 'Cmd' : 'Ctrl'}-P)`;
+  for (const id of ['outline-search', 'contents-search']) {
+    const button = document.getElementById(id);
+    button.title = `${button.title} ${shortcut}`;
+  }
+  refreshContents();
   try {
     const info = await getJSON('/api/info');
     els.pdfName.textContent = info.pdf;
@@ -422,6 +560,6 @@ async function boot() {
 
 // Exposed for the browser layout suite (and handy from the devtools console).
 // Read-only handles; nothing here is part of the page's own control flow.
-window.__texai = { viewer, chat, marks, editor, git, jump };
+window.__texai = { viewer, chat, marks, editor, git, jump, contents, project, refreshContents };
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));

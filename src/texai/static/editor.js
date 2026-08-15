@@ -6,7 +6,9 @@
 // watcher in app.js reloads the page as it would after any other build.
 
 import { getJSON, postJSON } from './api.js';
+import { phraseAt } from './marks.js';
 import { OutlinePanel, parseOutline } from './outline.js';
+import { resolveInput } from './project.js';
 import { showToast } from './toast.js';
 
 export class SourceEditor {
@@ -41,12 +43,16 @@ export class SourceEditor {
     this._openToken = 0;
 
     this.outline = new OutlinePanel({
+      panel: 'outline',
+      list: 'outline-list',
+      toggle: 'outline-toggle',
+      storageKey: 'texai.outline',
       // A heading is a place in both panes, so go to it in both.
-      onPick: (line) => {
-        this.goToLine(line);
-        this.onReveal?.(this.file, line);
+      onPick: (entry) => {
+        this.goToLine(entry.line);
+        this.onReveal?.(this.file, entry.line, entry.phrase ? [entry.phrase] : []);
       },
-      onOpenFile: (target) => this.open(this._resolveInput(target)),
+      onOpenFile: (target) => this.open(resolveInput(target, this.file, this.files || [])),
     });
 
     this._wire();
@@ -63,19 +69,6 @@ export class SourceEditor {
     this.els.save.addEventListener('click', () => this.save());
     this.els.revert.addEventListener('click', () => this.reload({ force: true }));
     this.els.search?.addEventListener('click', () => this.onJump?.());
-  }
-
-  /** Turn an \input argument into a project file, the way latexmk would. */
-  _resolveInput(target) {
-    const cleaned = String(target).replace(/^\.\//, '').trim();
-    const named = /\.[a-z]+$/i.test(cleaned) ? cleaned : `${cleaned}.tex`;
-    const files = this.files || [];
-    if (files.includes(named)) return named;
-    // \input resolves from the compilation directory, but a project that keeps
-    // its chapters together may well mean the file next door.
-    const directory = this.file?.includes('/') ? this.file.replace(/[^/]*$/, '') : '';
-    const sibling = directory + named;
-    return files.includes(sibling) ? sibling : named;
   }
 
   _mount() {
@@ -106,7 +99,7 @@ export class SourceEditor {
       this._outlineTimer = setTimeout(() => this._refreshOutline(), 250);
     });
 
-    this.cm.on('cursorActivity', () => this.outline.setActiveLine(this.cm.getCursor().line + 1));
+    this.cm.on('cursorActivity', () => this._cursorMoved());
 
     // Clicking in the source shows that spot in the PDF — the same trip as
     // Cmd-click, in the other direction. Bound to the click rather than to
@@ -115,9 +108,15 @@ export class SourceEditor {
       if (event.button !== 0 || !this.onReveal) return;
       const where = cm.coordsChar({ left: event.clientX, top: event.clientY }, 'window');
       if (!where) return;
+      // SyncTeX answers with the line; the words around the click are what get
+      // the highlight down to the phrase you actually pointed at.
+      const phrases = phraseAt(cm.getLine(where.line) || '', where.ch);
       // A double-click is two mousedowns; coalesce them into one lookup.
       clearTimeout(this._revealTimer);
-      this._revealTimer = setTimeout(() => this.onReveal(this.file, where.line + 1), 120);
+      this._revealTimer = setTimeout(
+        () => this.onReveal(this.file, where.line + 1, phrases),
+        120
+      );
     });
 
     return this.cm;
@@ -202,7 +201,14 @@ export class SourceEditor {
     if (!this.cm) return;
     this.entries = parseOutline(this.cm.getValue());
     this.outline.setEntries(this.entries);
-    this.outline.setActiveLine(this.cm.getCursor().line + 1);
+    this._cursorMoved();
+  }
+
+  /** One place for everything that follows the cursor: the outline, the page. */
+  _cursorMoved() {
+    if (!this.cm) return;
+    const line = this.cm.getCursor().line + 1;
+    this.outline.setActiveLine(line);
   }
 
   goToLine(line, column = null) {

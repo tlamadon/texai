@@ -112,12 +112,22 @@ button.ghost { background: transparent; }
 
 /* ---------------- viewer ---------------- */
 
-.viewer-container {
+/* The contents column and the page, side by side under the toolbar. */
+.canvas-body {
+  display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+}
+
+.viewer-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
   overflow: auto;
   padding: 16px 0 48px;
 }
+
 
 .viewer {
   display: flex;
@@ -732,6 +742,13 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
   min-height: 0;
   border-right: 1px solid var(--panel-border);
   background: var(--panel-2);
+}
+
+/* The same column beside the page, where there is room for the whole document
+   rather than one file. Must come after .outline to win the flex-basis. */
+.contents {
+  flex: 0 0 clamp(150px, 22%, 280px);
+  background: var(--panel);
 }
 
 .outline-head {

@@ -347,8 +347,15 @@ export class PdfViewer {
   scrollToBox(pageNumber, box) {
     const entry = this.pageEntry(pageNumber);
     if (!entry || !entry.viewport) return false;
+    return this.scrollToRect(
+      entry,
+      box ? this.pdfRectToPageRect(entry, box) : { top: 0, height: 0 }
+    );
+  }
 
-    const rect = box ? this.pdfRectToPageRect(entry, box) : { top: 0, height: 0 };
+  /** The same, for a rectangle already in page pixels (a narrowed word, say). */
+  scrollToRect(entry, rect) {
+    if (!entry || !entry.viewport) return false;
     const pageRect = entry.el.getBoundingClientRect();
     const bounds = this.container.getBoundingClientRect();
     const delta =
@@ -364,8 +371,11 @@ export class PdfViewer {
   flashBox(pageNumber, box) {
     const entry = this.pageEntry(pageNumber);
     if (!entry || !entry.viewport) return;
+    this.flashRect(entry, this.pdfRectToPageRect(entry, box));
+  }
 
-    const rect = this.pdfRectToPageRect(entry, box);
+  flashRect(entry, rect) {
+    if (!entry) return;
     const node = document.createElement('div');
     node.className = 'flash';
     node.style.left = `${rect.left}px`;
@@ -374,6 +384,12 @@ export class PdfViewer {
     node.style.height = `${Math.max(rect.height, 6)}px`;
     entry.el.append(node);
     setTimeout(() => node.remove(), 2400);
+  }
+
+  /** Whether a page has its text layer up, which word-narrowing needs. */
+  hasTextLayer(pageNumber) {
+    const entry = this.pageEntry(pageNumber);
+    return !!entry?.el.querySelector('.textLayer span');
   }
 
   /**

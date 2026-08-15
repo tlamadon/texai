@@ -174,9 +174,11 @@ export function learnTheorems(text) {
  *
  * Each entry is `{ line, level, kind, title, target }`, where `target` is set
  * only for \input and \include. Levels are normalised so that a paper whose
- * deepest command is \section starts flush against the left edge.
+ * deepest command is \section starts flush against the left edge — pass
+ * `normalize: false` when the result is to be spliced into a larger document,
+ * which has to do its own normalising across all the files at once.
  */
-export function parseOutline(text) {
+export function parseOutline(text, { normalize = true } = {}) {
   if (!text) return [];
   learnTheorems(text);
   const skip = verbatimRanges(text);
@@ -231,6 +233,9 @@ export function parseOutline(text) {
           level: under + 1,
           kind: theorem ? 'theorem' : 'float',
           title: named ? `${printed}: ${named}` : printed,
+          // What to look for on the page is the caption itself; "Table:" is our
+          // word for it, and "Table 1:" is LaTeX's.
+          phrase: named || null,
           target: null,
         });
         continue;
@@ -242,16 +247,31 @@ export function parseOutline(text) {
     if (command === 'input' || command === 'include') {
       const target = group.body.trim();
       if (!target) continue;
-      entries.push({ line, level: LEVELS.section, kind: 'input', title: target, target });
+      entries.push({
+        line,
+        level: LEVELS.section,
+        kind: 'input',
+        title: target,
+        phrase: null,
+        target,
+      });
       continue;
     }
 
     const title = cleanTitle(group.body);
     const kind = command === 'frametitle' ? 'frame' : command;
     under = LEVELS[kind];
-    entries.push({ line, level: under, kind, title: title || '(untitled)', target: null });
+    entries.push({
+      line,
+      level: under,
+      kind,
+      title: title || '(untitled)',
+      phrase: title || null,
+      target: null,
+    });
   }
 
+  if (!normalize) return entries;
   const headings = entries.filter((entry) => entry.kind !== 'input');
   const shallowest = headings.length ? Math.min(...headings.map((e) => e.level)) : 0;
   for (const entry of entries) entry.level = Math.max(0, entry.level - shallowest);
@@ -268,7 +288,7 @@ export function entryAt(entries, line) {
   return found;
 }
 
-/* ---------------- the column beside the editor ---------------- */
+/* ---------------- the column ---------------- */
 
 const KIND_LABEL = {
   input: 'file',
@@ -277,13 +297,32 @@ const KIND_LABEL = {
   theorem: 'statement',
 };
 
+/**
+ * A clickable outline in a column.
+ *
+ * Two of these exist: one beside the editor, listing the file being edited and
+ * moving the cursor, and one beside the PDF, listing the whole document and
+ * moving the page. Same list, different destination, so the element ids and the
+ * pick handler are passed in.
+ */
 export class OutlinePanel {
-  constructor({ onPick, onOpenFile } = {}) {
+  constructor({
+    panel,
+    list,
+    toggle,
+    storageKey,
+    empty,
+    defaultVisible = true,
+    onPick,
+    onOpenFile,
+  } = {}) {
     this.els = {
-      panel: document.getElementById('outline'),
-      list: document.getElementById('outline-list'),
-      toggle: document.getElementById('outline-toggle'),
+      panel: document.getElementById(panel),
+      list: document.getElementById(list),
+      toggle: toggle ? document.getElementById(toggle) : null,
     };
+    this.storageKey = storageKey;
+    this.emptyText = empty || 'No sections in this file.';
     this.onPick = onPick || null;
     this.onOpenFile = onOpenFile || null;
     this.entries = [];
@@ -291,7 +330,8 @@ export class OutlinePanel {
     this.rows = [];
 
     this.els.toggle?.addEventListener('click', () => this.setVisible(!this.visible));
-    this.setVisible(localStorage.getItem('texai.outline') !== '0');
+    const stored = localStorage.getItem(this.storageKey);
+    this.setVisible(stored === null ? defaultVisible : stored === '1');
   }
 
   setVisible(visible) {
@@ -299,7 +339,8 @@ export class OutlinePanel {
     this.els.panel.hidden = !visible;
     this.els.toggle?.classList.toggle('on', visible);
     this.els.toggle?.setAttribute('aria-pressed', String(visible));
-    localStorage.setItem('texai.outline', visible ? '1' : '0');
+    localStorage.setItem(this.storageKey, visible ? '1' : '0');
+    this.onToggle?.(visible);
   }
 
   setEntries(entries) {
@@ -310,7 +351,7 @@ export class OutlinePanel {
     if (!entries.length) {
       const empty = document.createElement('div');
       empty.className = 'outline-empty';
-      empty.textContent = 'No sections in this file.';
+      empty.textContent = this.emptyText;
       this.els.list.replaceChildren(empty);
       return;
     }
@@ -324,13 +365,12 @@ export class OutlinePanel {
         // The column is narrow, so an \input shows the file it pulls in rather
         // than the directory it lives in; the full path is on the tooltip.
         row.textContent = entry.kind === 'input' ? entry.title.split('/').pop() : entry.title;
-        row.title =
-          entry.kind === 'input'
-            ? `${entry.title} — line ${entry.line}`
-            : `${KIND_LABEL[entry.kind] || entry.kind} — line ${entry.line}`;
-        row.addEventListener('click', () => {
+        row.title = `${entry.file ? `${entry.file}:${entry.line}` : `line ${entry.line}`} — ${
+          KIND_LABEL[entry.kind] || entry.kind
+        }`;
+        row.addEventListener('click', (event) => {
           if (entry.kind === 'input') this.onOpenFile?.(entry.target);
-          else this.onPick?.(entry.line);
+          else this.onPick?.(entry, event);
         });
         this.rows.push(row);
         return row;
