@@ -1067,6 +1067,125 @@ check('Esc closes it again', await cdp.eval(`document.getElementById('jump').hid
 
 await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
 
+/* ---------------- the document's own links ---------------- */
+
+// hyperref turns \ref into a link annotation, and clicking one should go where
+// it points. The example loads hyperref for exactly this.
+const linkLayer = await cdp.json(`(async () => {
+  const viewer = window.__texai.viewer;
+  viewer.container.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 800));
+  const anchors = [...document.querySelectorAll('#viewer .linkLayer a')];
+  const first = anchors[0]?.getBoundingClientRect();
+  const page = anchors[0]?.closest('.page')?.getBoundingClientRect();
+  return {
+    count: anchors.length,
+    hasSize: first ? first.width > 4 && first.height > 4 : false,
+    insidePage: first && page
+      ? first.left >= page.left - 1 && first.right <= page.right + 1
+      : false,
+    external: anchors.filter(a => a.getAttribute('href')).length,
+  };
+})()`);
+console.log('link layer:', linkLayer);
+check("the PDF's own links are laid over the page", linkLayer.count > 0, `${linkLayer.count} links`);
+check('and they have a clickable area', linkLayer.hasSize && linkLayer.insidePage);
+
+// Section~\\ref{sec:robustness} in main.tex points at a later page.
+const followed = await cdp.json(`(async () => {
+  const viewer = window.__texai.viewer;
+  const container = viewer.container;
+  container.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 700));
+
+  // The link over the number in "Section~\\ref{sec:robustness}" on page 1.
+  const anchor = [...document.querySelectorAll('#viewer .linkLayer a')]
+    .filter(a => !a.getAttribute('href'))
+    .find(a => a.closest('.page') === viewer.pageEntry(1).el);
+  if (!anchor) return { error: 'no internal link on page 1' };
+
+  const before = Math.round(container.scrollTop);
+  const beforePage = viewer.currentPage;
+  anchor.click();
+  await new Promise(r => setTimeout(r, 1200));
+  return {
+    before,
+    beforePage,
+    after: Math.round(container.scrollTop),
+    page: viewer.currentPage,
+    flashes: document.querySelectorAll('#viewer .flash').length,
+  };
+})()`);
+console.log('following a link:', followed);
+check('clicking an internal link moves the PDF',
+  !followed.error && followed.after !== followed.before,
+  JSON.stringify(followed));
+check('and it lands on the spot, not just the page', followed.flashes > 0,
+  `${followed.flashes} flashes`);
+
+// A destination on a later page: the page has to be resolved from a reference
+// and scrolled to, which is the half a click cannot prove on page 1.
+const crossPage = await cdp.json(`(async () => {
+  const viewer = window.__texai.viewer;
+  const dests = await viewer.doc.getDestinations();
+  let picked = null;
+  for (const [name, target] of Object.entries(dests)) {
+    if (!Array.isArray(target) || typeof target[0] !== 'object') continue;
+    const index = await viewer.doc.getPageIndex(target[0]);
+    if (index >= 2) { picked = { name, index, target }; break; }
+  }
+  if (!picked) return { error: 'the example has no destination past page 2' };
+
+  viewer.container.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 500));
+  const ok = await viewer.goToDestination(picked.target);
+  await new Promise(r => setTimeout(r, 900));
+  const flash = document.querySelector('#viewer .flash');
+  const fr = flash?.getBoundingClientRect();
+  const bounds = viewer.container.getBoundingClientRect();
+  return {
+    ok,
+    name: picked.name,
+    want: picked.index + 1,
+    page: viewer.currentPage,
+    // Near the top of the view, not centred: you are being taken there to read.
+    fromTop: fr ? Math.round(fr.top - bounds.top) : null,
+    height: Math.round(bounds.height),
+  };
+})()`);
+console.log('cross-page destination:', crossPage);
+check('a destination resolves to its own page', crossPage.ok && crossPage.page === crossPage.want,
+  `${crossPage.name} -> page ${crossPage.page}, wanted ${crossPage.want}`);
+check('and arrives near the top of the view, ready to read on',
+  crossPage.fromTop !== null && crossPage.fromTop > 0 && crossPage.fromTop < crossPage.height * 0.4,
+  `${crossPage.fromTop}px into a ${crossPage.height}px view`);
+
+// A modifier over a link still belongs to texai: attach the passage, open the
+// source. The link must not swallow it and must not navigate.
+const modifierOverLink = await cdp.json(`(async () => {
+  const viewer = window.__texai.viewer;
+  const container = viewer.container;
+  container.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 700));
+  const anchor = [...document.querySelectorAll('#viewer .linkLayer a')]
+    .filter(a => !a.getAttribute('href'))
+    .find(a => a.closest('.page') === viewer.pageEntry(1).el);
+  if (!anchor) return { error: 'no internal link on page 1' };
+  const before = Math.round(container.scrollTop);
+  anchor.dispatchEvent(new MouseEvent('click', {
+    bubbles: true, cancelable: true, altKey: true,
+  }));
+  await new Promise(r => setTimeout(r, 800));
+  return { before, after: Math.round(container.scrollTop) };
+})()`);
+console.log('alt-click over a link:', modifierOverLink);
+check('a modifier over a link does not follow it',
+  !modifierOverLink.error && modifierOverLink.after === modifierOverLink.before,
+  JSON.stringify(modifierOverLink));
+
+await cdp.eval(`(() => { document.getElementById('viewer-container').scrollTop = 0; return true; })()`);
+await sleep(600);
+
 /* ---------------- the contents beside the PDF ---------------- */
 
 // One document, not four files: main.tex with every \input spliced in where it

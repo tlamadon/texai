@@ -145,6 +145,26 @@ button.ghost { background: transparent; }
 .page canvas { display: block; }
 .page .textLayer { z-index: 2; }
 
+/* The document's own links, over the text layer so they can be clicked, but
+   letting every other pointer event through to selection underneath. */
+.page .linkLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.page .linkLayer a {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.page .linkLayer a:hover {
+  background: rgba(76, 141, 255, 0.16);
+  outline: 1px solid rgba(76, 141, 255, 0.55);
+}
+
 .empty {
   text-align: center;
   color: var(--muted);

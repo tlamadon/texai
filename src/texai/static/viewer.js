@@ -198,6 +198,8 @@ export class PdfViewer {
     });
     entry.textLayer = textLayer;
 
+    this._drawLinks(entry).catch(() => {});
+
     // Twice, deliberately. Overlays that only need geometry appear at once;
     // anything that reads the rendered text — matching changed words against
     // the text layer — needs the spans, which do not exist until render()
@@ -207,6 +209,122 @@ export class PdfViewer {
       .render()
       .then(() => this.onRender(entry))
       .catch(() => {});
+  }
+
+  /* ---------------- links ---------------- */
+
+  /**
+   * The document's own links, as `hyperref` wrote them.
+   *
+   * A `\ref` is a link annotation in the PDF, and clicking one should go where
+   * it points — the reason it was typeset as a link. Hand-rolled rather than
+   * PDF.js's AnnotationLayer, which wants a whole link-service implementation
+   * and brings form widgets along with it; a Link annotation is a rectangle and
+   * a destination, and that is all this needs.
+   */
+  async _drawLinks(entry) {
+    if (entry.annotations === undefined) {
+      entry.annotations = null; // do not fetch twice while the first is in flight
+      entry.annotations = (await entry.page.getAnnotations({ intent: 'display' })).filter(
+        (annotation) => annotation.subtype === 'Link' && (annotation.dest || annotation.url)
+      );
+    }
+    // The page can be discarded while the annotations are on their way.
+    if (!entry.annotations?.length || !entry.rendered) return;
+
+    const layer = document.createElement('div');
+    layer.className = 'linkLayer';
+
+    for (const annotation of entry.annotations) {
+      const [x1, y1, x2, y2] = entry.viewport.convertToViewportRectangle(annotation.rect);
+      const node = document.createElement('a');
+      node.style.left = `${Math.min(x1, x2)}px`;
+      node.style.top = `${Math.min(y1, y2)}px`;
+      node.style.width = `${Math.abs(x2 - x1)}px`;
+      node.style.height = `${Math.abs(y2 - y1)}px`;
+
+      if (annotation.url) {
+        // Only the schemes a document has any business linking to. A PDF can
+        // carry javascript: and file: URLs, and this viewer serves the user's
+        // own project over localhost.
+        if (!/^(https?|mailto):/i.test(annotation.url)) continue;
+        node.href = annotation.url;
+        node.target = '_blank';
+        node.rel = 'noopener noreferrer';
+        node.title = annotation.url;
+      } else {
+        node.title = 'Go to where this points';
+      }
+
+      node.addEventListener('click', (event) => {
+        // Cmd/Ctrl-click attaches the passage and Alt-click opens its source;
+        // those belong to texai even when they land on a link.
+        if (event.metaKey || event.ctrlKey || event.altKey) {
+          event.preventDefault();
+          return; // the viewer's own handler sees it bubble
+        }
+        if (annotation.url) return; // a real href: let the browser have it
+        event.preventDefault();
+        this.goToDestination(annotation.dest);
+      });
+      layer.append(node);
+    }
+    entry.el.append(layer);
+  }
+
+  /** Follow an internal destination: the other half of a `\ref`. */
+  async goToDestination(dest) {
+    if (!this.doc || !dest) return false;
+    let target = dest;
+    if (typeof target === 'string') {
+      try {
+        target = await this.doc.getDestination(target);
+      } catch {
+        return false;
+      }
+    }
+    if (!Array.isArray(target) || !target.length) return false;
+
+    let index;
+    try {
+      index =
+        typeof target[0] === 'object' ? await this.doc.getPageIndex(target[0]) : Number(target[0]);
+    } catch {
+      return false;
+    }
+    const entry = this.pages[index];
+    if (!entry?.viewport) return false;
+
+    // Destinations name a point in PDF user space, in one of several shapes;
+    // the ones that carry a vertical position are worth honouring, and the
+    // rest simply mean the top of the page.
+    const kind = target[1]?.name;
+    let x = 0;
+    let y = null;
+    if (kind === 'XYZ') {
+      x = target[2] ?? 0;
+      y = target[3];
+    } else if (kind === 'FitH' || kind === 'FitBH') {
+      y = target[2];
+    }
+
+    const point =
+      y == null ? { top: 0, left: 0 } : this._pointOnPage(entry, x, y);
+    this.scrollToRect(entry, { top: point.top, left: point.left, width: 0, height: 0 }, {
+      // Sitting a destination in the middle of the screen reads as "somewhere
+      // near here"; a reader wants the line they asked for at the top, with
+      // what follows it below.
+      align: 0.22,
+    });
+    if (y != null) {
+      this.flashRect(entry, { left: point.left, top: point.top - 2, width: 240, height: 20 });
+    }
+    return true;
+  }
+
+  _pointOnPage(entry, x, y) {
+    const [left, top] = entry.viewport.convertToViewportPoint(x, y);
+    return { left: Math.max(0, left), top: Math.max(0, top) };
   }
 
   /* ---------------- scroll position ---------------- */
@@ -353,13 +471,19 @@ export class PdfViewer {
     );
   }
 
-  /** The same, for a rectangle already in page pixels (a narrowed word, say). */
-  scrollToRect(entry, rect) {
+  /**
+   * The same, for a rectangle already in page pixels (a narrowed word, say).
+   *
+   * `align` is where in the view it lands: 0.5 centres it, which is right when
+   * you are being shown a spot, and lower puts it near the top, which is right
+   * when you are being taken somewhere to read on.
+   */
+  scrollToRect(entry, rect, { align = 0.5 } = {}) {
     if (!entry || !entry.viewport) return false;
     const pageRect = entry.el.getBoundingClientRect();
     const bounds = this.container.getBoundingClientRect();
     const delta =
-      pageRect.top - bounds.top + rect.top + rect.height / 2 - bounds.height / 2;
+      pageRect.top - bounds.top + rect.top + rect.height / 2 - bounds.height * align;
 
     this.container.scrollTop += delta;
     this._updateCurrentPage();

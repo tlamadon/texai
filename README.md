@@ -31,7 +31,8 @@ back marked on the page for you to accept or reject.
 - **Find your way around a long paper.** A contents column beside the page lists
   the whole document — every file it pulls in, its figures and tables by caption,
   its theorems by title — and clicking one scrolls the PDF there. Cmd/Ctrl-P
-  jumps to any of them by name.
+  jumps to any of them by name, and the paper's own `\ref` links work: click
+  *Equation (1)* and the page goes to equation (1).
 - **Know how far you have drifted from git.** The toolbar carries the branch,
   how many files are uncommitted, and how many commits you are ahead or behind
   the remote — scoped to your project, even when it is a subdirectory of a
@@ -450,6 +451,28 @@ The match is fuzzy — the letters need only appear in order — and headings in
 file you are editing come first. The rest of the project is read from disk the
 first time you ask, shared with the contents panel, and re-read whenever you or
 the agent writes.
+
+### The document's own links
+
+A paper that loads `hyperref` typesets every `\ref`, `\eqref`, `\cite` and
+`\url` as a link, and here they work: clicking one moves the page to what it
+points at, near the top of the view rather than centred, because you are being
+taken there to read on. The spot flashes on arrival, as it does after any other
+jump.
+
+```
+click "Equation (1)"        →  the page moves to equation (1) and flashes it
+click "Section 4"           →  page 4, at the heading
+click a URL                 →  a new tab (http, https and mailto only)
+```
+
+Cmd/Ctrl-click and Alt-click still belong to texai even when they land on a
+link, so attaching a passage and opening its source work over a `\ref` exactly
+as they do over ordinary text.
+
+Without `hyperref` a PDF carries no links at all, and nothing here can invent
+them; `\usepackage[hidelinks]{hyperref}` gets you the links without the coloured
+boxes, which is what the example does.
 
 Two writers on one tree needs a rule, so every save carries a hash of the text it
 was based on. If the agent rewrote the file while it sat open, the save is
