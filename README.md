@@ -668,6 +668,27 @@ src/texai/
 
 ## Not built yet
 
+- **Comments on the page.** Margin notes anchored to a passage — the reviewer's
+  half of the loop, beside the agent's. Most of the machinery is already here: a
+  comment is a `file:line` like any other, and forward-syncs to a box the same
+  way a change marker does. The open question is where it is written. `% texai:`
+  lines in the source travel with the paper, show up in a diff and survive a
+  clone, at the cost of putting review chatter in the document a co-author will
+  read; a sidecar under `.texai/` keeps the `.tex` clean but has to survive the
+  lines moving underneath it — the problem the change markers already solve by
+  re-anchoring on the words rather than trusting the line number.
+- **Plan mode.** For a change worth arguing about before it happens: the agent
+  writes a plan as markdown, you edit it in the same editor as the `.tex`, and
+  only then does it touch the document. Snapshot, build and revert stay exactly
+  as they are; what is new is a turn whose output is a file to read rather than
+  edits to accept, and a way of saying "now do it" against a plan you may have
+  rewritten in the meantime.
+- **A container.** `docker run` with TeX Live inside, so the one real dependency
+  — a TeX installation carrying `latexmk` and `synctex` — stops being something
+  to install first. Two things to work out: the agent needs the `claude` CLI and
+  the credentials it is logged in with, which live on the host; and the whole
+  point is that texai edits *your* files in place, so the project has to be a
+  bind mount whose writes land as you rather than as root.
 - **`latexdiff` view.** The diff is textual (`.tex`). Compiling a marked-up
   "changes" PDF and toggling it in the viewer is the natural next step, with the
   textual diff as the fallback when `latexdiff` chokes on a document.
