@@ -9,10 +9,14 @@ back to the agent as a follow-up turn instead of watching it guess.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import re
 import shlex
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from .console import note
 
 __all__ = [
     "BuildResult",
@@ -21,11 +25,24 @@ __all__ = [
     "find_root_tex",
     "parse_log_errors",
     "run_build",
+    "running_builds",
 ]
 
 BUILD_TIMEOUT_SECONDS = 300.0
 MAX_LOG_ERRORS = 12
 MAX_OUTPUT_CHARS = 20_000
+
+
+# Builds in flight, by an id of their own, so an interrupt can say what it is
+# waiting for rather than appearing to hang.
+_RUNNING: dict[int, float] = {}
+_BUILD_IDS = itertools.count(1)
+
+
+def running_builds() -> list[float]:
+    """How long each build currently running has been going, in seconds."""
+    now = time.monotonic()
+    return sorted((now - started for started in _RUNNING.values()), reverse=True)
 
 
 class BuildError(RuntimeError):
@@ -136,27 +153,48 @@ def resolve_command(command: str | None, root_tex: Path | None) -> list[str]:
     return default_build_command(root_tex)
 
 
-async def run_build(argv: list[str], cwd: Path, log_path: Path | None = None) -> BuildResult:
-    """Run the build, returning its output plus any parsed LaTeX errors."""
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except FileNotFoundError as exc:
-        raise BuildError(f"Build command not found: {argv[0]}") from exc
-    except PermissionError as exc:
-        raise BuildError(f"Build command is not executable: {argv[0]}") from exc
+async def run_build(
+    argv: list[str],
+    cwd: Path,
+    log_path: Path | None = None,
+    reason: str = "the document",
+) -> BuildResult:
+    """Run the build, returning its output plus any parsed LaTeX errors.
 
-    timed_out = False
+    Announces itself on the console. A compile is the slowest thing texai does
+    and the only one that happens without the user asking directly — after a
+    turn, after a save — so the terminal says when one starts, and how it went.
+    ``reason`` is what set it off, in a few words.
+    """
+    note(f"building — {reason}…")
+    build_id = next(_BUILD_IDS)
+    _RUNNING[build_id] = time.monotonic()
+    started = time.monotonic()
+
     try:
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=BUILD_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
-        timed_out = True
-        process.kill()
-        stdout, _ = await process.communicate()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except FileNotFoundError as exc:
+            raise BuildError(f"Build command not found: {argv[0]}") from exc
+        except PermissionError as exc:
+            raise BuildError(f"Build command is not executable: {argv[0]}") from exc
+
+        timed_out = False
+        try:
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(), timeout=BUILD_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            timed_out = True
+            process.kill()
+            stdout, _ = await process.communicate()
+    finally:
+        _RUNNING.pop(build_id, None)
 
     output = (stdout or b"").decode("utf-8", errors="replace")[-MAX_OUTPUT_CHARS:]
     ok = not timed_out and process.returncode == 0
@@ -166,6 +204,15 @@ async def run_build(argv: list[str], cwd: Path, log_path: Path | None = None) ->
         errors = parse_log_errors(output)
         if not errors and log_path is not None and log_path.is_file():
             errors = parse_log_errors(log_path.read_text(encoding="utf-8", errors="replace"))
+
+    elapsed = time.monotonic() - started
+    if ok:
+        note(f"built in {elapsed:.1f}s")
+    elif timed_out:
+        note(f"build timed out after {elapsed:.0f}s")
+    else:
+        first = f" — {errors[0]}" if errors else ""
+        note(f"build failed in {elapsed:.1f}s (exit {process.returncode}){first}")
 
     return BuildResult(
         ok=ok,

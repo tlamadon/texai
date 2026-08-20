@@ -1,14 +1,16 @@
-"""Starting up: the first build, when the PDF is not there yet."""
+"""Starting up: the first build, and what the console says while it runs."""
 
 from __future__ import annotations
 
 import shlex
+import signal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from texai.build import find_root_tex
-from texai.cli import build_missing_pdf, main
+from texai.cli import _announcing_server, build_missing_pdf, main, pending_work
 from texai.config import AppConfig
 
 
@@ -104,7 +106,9 @@ def test_main_builds_and_then_serves(project: Path, monkeypatch):
     import uvicorn
 
     served = []
-    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: served.append(kwargs))
+    # What main() actually calls: a Server subclass of its own, so patching
+    # uvicorn.run would silently let a real server start and hang the suite.
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: served.append(self.config.port))
     fake_build(project, "printf '%%PDF-1.4\\n' > main.pdf")
 
     code = main(
@@ -126,7 +130,7 @@ def test_main_gives_up_when_the_first_build_fails(project: Path, monkeypatch, ca
     import uvicorn
 
     served = []
-    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: served.append(kwargs))
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: served.append(self.config.port))
     fake_build(project, "echo '! Emergency stop.'; exit 1")
 
     code = main(
@@ -142,3 +146,58 @@ def test_main_gives_up_when_the_first_build_fails(project: Path, monkeypatch, ca
     assert code == 2
     assert not served, "a document that will not compile must not start a viewer"
     assert "Build failed" in capsys.readouterr().err
+
+
+def test_the_first_build_announces_itself(project: Path, capsys):
+    """A compile is the slowest thing here; the console should say it started."""
+    build_missing_pdf(config_for(project, fake_build(project, "printf '%%PDF-1.4\\n' > main.pdf")))
+    out = capsys.readouterr().out
+    assert "building — the first build" in out
+    assert "built in" in out
+
+
+def test_a_failed_build_says_so_on_the_console(project: Path, capsys):
+    build_missing_pdf(
+        config_for(project, fake_build(project, "echo '! Undefined control sequence.'; exit 1"))
+    )
+    out = capsys.readouterr().out
+    assert "build failed" in out
+    assert "Undefined control sequence" in out
+
+
+# ---------------- interrupts ----------------
+
+
+def test_nothing_in_flight_is_reported_as_nothing():
+    assert pending_work(SimpleNamespace(state=SimpleNamespace(turns=None))) == ""
+
+
+def test_pending_work_names_what_is_holding_the_exit(monkeypatch):
+    import texai.cli as cli
+
+    monkeypatch.setattr(cli, "running_builds", lambda: [12.4])
+    app = SimpleNamespace(state=SimpleNamespace(turns=SimpleNamespace(busy=True)))
+    pending = pending_work(app)
+    assert "a build has been running for 12s" in pending
+    assert "the agent is mid-turn" in pending
+
+
+def test_the_first_interrupt_is_acknowledged(capsys, monkeypatch):
+    import uvicorn
+
+    import texai.cli as cli
+
+    monkeypatch.setattr(cli, "running_builds", lambda: [3.0])
+    app = SimpleNamespace(state=SimpleNamespace(turns=None))
+    server = _announcing_server(uvicorn, app, 8999)
+
+    server.handle_exit(signal.SIGINT, None)
+    first = capsys.readouterr().out
+    assert "interrupt received" in first
+    assert "a build has been running for 3s" in first
+    assert "again to stop at once" in first
+    assert server.should_exit
+
+    server.handle_exit(signal.SIGINT, None)
+    assert "stopping now" in capsys.readouterr().out
+    assert server.force_exit

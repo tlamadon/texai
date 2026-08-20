@@ -132,6 +132,28 @@ nothing.
 
 Turns that only answer a question — no file changed — skip the build entirely.
 
+### What the console says
+
+The browser has the whole story; the terminal you started texai in gets the
+short version. A compile is the slowest thing here and the only one that starts
+without you asking directly — after a turn, after a save — so each one says when
+it began and how it went. Pressing Ctrl-C answers immediately, and says what is
+holding the exit up rather than appearing to hang; pressing it again stops
+waiting.
+
+```
+texai: building — your save…
+texai: built in 1.8s
+texai: building — the agent's edits…
+texai: build failed in 1.2s (exit 12) — ! Undefined control sequence. (line 3)
+texai: interrupt received — stopping (waiting: a build has been running for 4s). Ctrl-C again to stop at once.
+texai: stopped.
+```
+
+Every line is flushed as it is written, because that output is usually a log
+file: agents start texai with stdout redirected, and a block-buffered pipe would
+hold the lot back until the process ended.
+
 ### Inline changes on the page
 
 Toggle **Show changes** in the toolbar (off by default, remembered). After a

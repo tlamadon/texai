@@ -9,17 +9,19 @@ import socket
 import sys
 import webbrowser
 from pathlib import Path
+from typing import Any
 
 from . import __version__
 from .agent import AgentSession, sdk_status
-from .build import BuildError, run_build
+from .build import BuildError, run_build, running_builds
 from .config import AppConfig
+from .console import note, warn
 from .events import EventBus
 from .paths import PathOutsideRootError
 from .server import create_app
 from .synctex import synctex_data_file
 
-__all__ = ["main", "build_parser", "build_missing_pdf"]
+__all__ = ["main", "build_parser", "build_missing_pdf", "pending_work"]
 
 HOST = "127.0.0.1"  # loopback only, never configurable
 DEFAULT_PORT = 8765
@@ -96,15 +98,15 @@ def build_missing_pdf(config: AppConfig) -> str | None:
     except BuildError as exc:
         return f"PDF not found: {config.pdf_path}\n{exc}"
 
-    print(
-        f"texai: {config.pdf_rel} is not there yet — building it first:\n"
-        f"         {' '.join(argv)}\n"
-        f"         in {config.build_dir}",
-        flush=True,
-    )
+    note(f"{config.pdf_rel} is not there yet, and {config.build_dir} is where it is built")
     try:
         result = asyncio.run(
-            run_build(argv, config.build_dir, log_path=config.pdf_path.with_suffix(".log"))
+            run_build(
+                argv,
+                config.build_dir,
+                log_path=config.pdf_path.with_suffix(".log"),
+                reason="the first build",
+            )
         )
     except BuildError as exc:
         return str(exc)
@@ -118,7 +120,6 @@ def build_missing_pdf(config: AppConfig) -> str | None:
             f"the build succeeded but {config.pdf_rel} is still not there — "
             "check --pdf against the directory the build writes to."
         )
-    print("texai: built it.", flush=True)
     return None
 
 
@@ -150,16 +151,14 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     if shutil.which(args.synctex) is None and not Path(args.synctex).is_file():
-        print(
-            f"texai: warning: `{args.synctex}` not found on PATH; "
-            "clicking in the PDF will report an error until TeX Live/MacTeX is installed.",
-            file=sys.stderr,
+        warn(
+            f"warning: `{args.synctex}` not found on PATH; "
+            "clicking in the PDF will report an error until TeX Live/MacTeX is installed."
         )
     if synctex_data_file(config.pdf_path) is None:
-        print(
-            f"texai: warning: no .synctex.gz next to {config.pdf_path.name}; "
-            "recompile with `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>`.",
-            file=sys.stderr,
+        warn(
+            f"warning: no .synctex.gz next to {config.pdf_path.name}; "
+            "recompile with `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>`."
         )
 
     port = _find_port(args.port)
@@ -189,17 +188,62 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn  # imported late so --help stays fast
 
     agent = AgentSession(config, EventBus(), model=args.model)
-    uvicorn.run(
-        create_app(config, agent=agent),
-        host=HOST,
-        port=port,
-        log_level="warning",
-        # The viewer holds an SSE connection open indefinitely, so a graceful
-        # shutdown never completes on its own. Without a timeout the first
-        # Ctrl-C waits forever; cap it so the stream is cancelled and we exit.
-        timeout_graceful_shutdown=2,
-    )
+    app = create_app(config, agent=agent)
+    server = _announcing_server(uvicorn, app, port)
+    server.run()
+    # Uvicorn cancels whatever request was in flight on the way out, which can
+    # print a traceback of its own. A last line makes it plain that the noise
+    # above was the shutdown finishing rather than something going wrong.
+    note("stopped.")
     return 0
+
+
+def pending_work(app: Any) -> str:
+    """What is in flight, phrased for the line an interrupt prints."""
+    parts: list[str] = []
+    builds = running_builds()
+    if builds:
+        parts.append(f"a build has been running for {builds[0]:.0f}s")
+    controller = getattr(getattr(app, "state", None), "turns", None)
+    if controller is not None and getattr(controller, "busy", False):
+        parts.append("the agent is mid-turn")
+    return ", ".join(parts)
+
+
+def _announcing_server(uvicorn: Any, app: Any, port: int) -> Any:
+    """A server that answers Ctrl-C out loud.
+
+    Interrupting a process that has been quiet for an hour is an act of faith:
+    nothing acknowledges the keystroke, and a compile in flight can hold the
+    exit for a few seconds — long enough to wonder whether it was heard at all.
+    So the first interrupt says it was, and what it is waiting for; the second
+    stops waiting.
+    """
+
+    class AnnouncingServer(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: Any) -> None:
+            if self.should_exit:
+                note("stopping now.")
+            else:
+                pending = pending_work(app)
+                note(
+                    f"interrupt received — stopping{f' (waiting: {pending})' if pending else ''}."
+                    " Ctrl-C again to stop at once."
+                )
+            super().handle_exit(sig, frame)
+
+    return AnnouncingServer(
+        uvicorn.Config(
+            app,
+            host=HOST,
+            port=port,
+            log_level="warning",
+            # The viewer holds an SSE connection open indefinitely, so a graceful
+            # shutdown never completes on its own. Without a timeout the first
+            # Ctrl-C waits forever; cap it so the stream is cancelled and we exit.
+            timeout_graceful_shutdown=2,
+        )
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

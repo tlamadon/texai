@@ -233,6 +233,11 @@ class TurnController:
                     self.config.build_argv(),
                     self.config.build_dir,
                     log_path=self.config.pdf_path.with_suffix(".log"),
+                    reason=(
+                        "the agent's edits"
+                        if attempt == 1
+                        else f"the agent's fix, attempt {attempt}"
+                    ),
                 )
             except BuildError as exc:
                 turn.error = str(exc)
@@ -276,7 +281,9 @@ class TurnController:
     async def _rebuild_quietly(self) -> None:
         """Rebuild after a revert so the viewer shows the restored document."""
         try:
-            await run_build(self.config.build_argv(), self.config.build_dir)
+            await run_build(
+                self.config.build_argv(), self.config.build_dir, reason="a revert"
+            )
         except BuildError:
             pass
 
@@ -420,6 +427,7 @@ class TurnController:
                 self.config.build_argv(),
                 self.config.build_dir,
                 log_path=self.config.pdf_path.with_suffix(".log"),
+                reason="your save",
             )
         except BuildError:
             return None
