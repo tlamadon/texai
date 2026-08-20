@@ -23,11 +23,20 @@ const clamp = (value, lo, hi) => Math.min(hi, Math.max(lo, value));
 const WORD_RE = /[\p{L}\p{N}][\p{L}\p{N}'\u2019-]*/gu;
 
 export class PdfViewer {
-  constructor({ container, viewerEl, onPageChange = () => {}, onRender = () => {} }) {
+  constructor({
+    container,
+    viewerEl,
+    onPageChange = () => {},
+    onRender = () => {},
+    onBeforeJump = () => {},
+  }) {
     this.container = container;
     this.viewerEl = viewerEl;
     this.onPageChange = onPageChange;
     this.onRender = onRender;
+    // Called just before the viewer moves itself, while the old position can
+    // still be read: what the back arrow remembers.
+    this.onBeforeJump = onBeforeJump;
 
     this.doc = null;
     this.pages = [];
@@ -310,6 +319,7 @@ export class PdfViewer {
 
     const point =
       y == null ? { top: 0, left: 0 } : this._pointOnPage(entry, x, y);
+    this.onBeforeJump();
     this.scrollToRect(entry, { top: point.top, left: point.left, width: 0, height: 0 }, {
       // Sitting a destination in the middle of the screen reads as "somewhere
       // near here"; a reader wants the line they asked for at the top, with
@@ -460,14 +470,16 @@ export class PdfViewer {
    *
    * Page elements are always laid out (they carry their size before they
    * render), so this works even for a page whose canvas has not been drawn yet
-   * — rendering follows the scroll.
+   * — rendering follows the scroll. `align` is passed through to `scrollToRect`
+   * for callers that want the box near the top rather than centred.
    */
-  scrollToBox(pageNumber, box) {
+  scrollToBox(pageNumber, box, options = {}) {
     const entry = this.pageEntry(pageNumber);
     if (!entry || !entry.viewport) return false;
     return this.scrollToRect(
       entry,
-      box ? this.pdfRectToPageRect(entry, box) : { top: 0, height: 0 }
+      box ? this.pdfRectToPageRect(entry, box) : { top: 0, height: 0 },
+      options
     );
   }
 

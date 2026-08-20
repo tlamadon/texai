@@ -94,6 +94,8 @@ jobs:
               "texai/static/outline.js",
               "texai/static/project.js",
               "texai/static/jump.js",
+              "texai/static/history.js",
+              "texai/static/sync.js",
               "texai/static/git.js",
               "texai/static/vendor/pdfjs/pdf.mjs",
               "texai/static/vendor/pdfjs/pdf.worker.mjs",

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from texai.config import AppConfig
-from texai.navigate import LocateError, locate
+from texai.navigate import MAX_SCAN_LINES, LocateError, locate, locate_forward
 from texai.synctex import SyncTexBox, SyncTexError
 
 PDF_BYTES = b"%PDF-1.4\n%%EOF\n"
@@ -186,6 +186,78 @@ def test_locate_range_handles_a_single_line(config: AppConfig, monkeypatch: pyte
 def test_locate_range_refuses_paths_outside_the_root(config: AppConfig):
     with pytest.raises(LocateError, match="outside the project root"):
         locate_range(config, "../../etc/passwd", 1, 3)
+
+
+# -------------------------------------------------- scanning forward for output
+
+
+def counting_view(hits: set[int]):
+    """A synctex view that only answers for certain lines, and counts the asks."""
+    asked: list[int] = []
+
+    def runner(pdf_path, source, line, column=1, root=None, executable="synctex", timeout=15.0):
+        asked.append(line)
+        return [SyncTexBox(page=2, x=72.0, y=100.0 + line, width=468.0, height=11.0)] \
+            if line in hits else []
+
+    runner.asked = asked  # type: ignore[attr-defined]
+    return runner
+
+
+def test_forward_scan_stops_on_the_line_it_was_given(
+    config: AppConfig, monkeypatch: pytest.MonkeyPatch
+):
+    view = counting_view({5})
+    monkeypatch.setattr("texai.navigate.run_synctex_view", view)
+
+    found = locate_forward(config, "sections/model.tex", 5, scan=10)
+    assert found["found"] is True
+    assert found["line"] == 5 and found["requested"] == 5
+    assert view.asked == [5]  # a line that maps costs exactly one lookup
+
+
+def test_forward_scan_walks_past_lines_that_render_nothing(
+    config: AppConfig, monkeypatch: pytest.MonkeyPatch
+):
+    """A blank line at the top of the editor should still move the page."""
+    view = counting_view({4})
+    monkeypatch.setattr("texai.navigate.run_synctex_view", view)
+
+    found = locate_forward(config, "sections/model.tex", 1, scan=10)
+    assert found["found"] is True
+    assert found["line"] == 4  # where it landed
+    assert found["requested"] == 1  # where it was asked about
+    assert view.asked == [1, 2, 3, 4]
+
+
+def test_forward_scan_gives_up_after_the_window(
+    config: AppConfig, monkeypatch: pytest.MonkeyPatch
+):
+    view = counting_view(set())
+    monkeypatch.setattr("texai.navigate.run_synctex_view", view)
+
+    found = locate_forward(config, "sections/model.tex", 1, scan=3)
+    assert found["found"] is False
+    assert found["line"] == 4 and found["requested"] == 1
+    assert view.asked == [1, 2, 3, 4]
+
+
+def test_forward_scan_is_bounded(config: AppConfig, monkeypatch: pytest.MonkeyPatch):
+    """However far a caller asks, the subprocess count stays sane."""
+    view = counting_view(set())
+    monkeypatch.setattr("texai.navigate.run_synctex_view", view)
+
+    locate_forward(config, "sections/model.tex", 1, scan=5000)
+    assert len(view.asked) == MAX_SCAN_LINES + 1
+
+
+def test_no_scan_is_a_plain_locate(config: AppConfig, monkeypatch: pytest.MonkeyPatch):
+    view = counting_view(set())
+    monkeypatch.setattr("texai.navigate.run_synctex_view", view)
+
+    found = locate_forward(config, "sections/model.tex", 2)
+    assert found["found"] is False and found["line"] == 2
+    assert view.asked == [2]
 
 
 # -------------------------------------------------- against real synctex output

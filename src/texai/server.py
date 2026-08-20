@@ -26,8 +26,16 @@ from .git import probe as git_probe
 from .git import pull_rebase as git_pull_rebase
 from .git import push as git_push
 from .git import scoped_diff
-from .models import ChatRequest, CommitRequest, SelectRequest, SelectResponse, SourceWrite
-from .navigate import LocateError, locate, locate_range
+from .merge import merge3, normalize_newlines
+from .models import (
+    ChatRequest,
+    CommitRequest,
+    SelectRequest,
+    SelectResponse,
+    SourceMerge,
+    SourceWrite,
+)
+from .navigate import LocateError, locate, locate_forward, locate_range
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .selection import atomic_write_json, build_selection
 from .source import (
@@ -390,13 +398,19 @@ def create_app(
         return turn.as_dict(include_diff=True)
 
     @app.get("/api/locate")
-    async def locate_line(file: str, line: int = 1) -> dict[str, Any]:
+    async def locate_line(file: str, line: int = 1, scan: int = 0) -> dict[str, Any]:
         """Where a source line sits in the PDF.
 
         Backs the clickable `file:line` references in the chat panel: the
         browser asks where a line landed, then scrolls there itself.
+
+        With `scan`, a line that produced nothing yields to the next one that
+        did, up to that many lines further on — what scroll sync asks, since
+        the line at the top of an editor is as likely as not to be blank.
         """
         try:
+            if scan:
+                return await asyncio.to_thread(locate_forward, config, file, line, scan)
             return await asyncio.to_thread(locate, config, file, line)
         except LocateError as exc:
             raise _error(404, "not_locatable", str(exc)) from exc
@@ -476,6 +490,35 @@ def create_app(
             return read_source(config, file)
         except SourceError as exc:
             raise _error(404, "source_unavailable", str(exc)) from exc
+
+    @app.post("/api/source/merge")
+    async def merge_source(payload: SourceMerge) -> dict[str, Any]:
+        """Fold whatever is on disk now into the editor's buffer.
+
+        Read-only, and deliberately allowed while the agent is running: this is
+        exactly when the file underneath the editor is moving. The answer is a
+        list of splices into the buffer the caller sent, so the editor can keep
+        the cursor where it is and colour the lines that arrived.
+        """
+        try:
+            disk = read_source(config, payload.file)
+        except SourceError as exc:
+            raise _error(404, "source_unavailable", str(exc)) from exc
+
+        merged = merge3(payload.baseText, payload.text, disk["text"])
+        # The base handed back is normalised, because that is what the buffer
+        # holds and what the next merge will be measured against. The hash is
+        # of the file as it really is on disk, since that is what a save is
+        # checked against.
+        base = normalize_newlines(disk["text"])
+        return {
+            "file": disk["file"],
+            "sha": disk["sha"],
+            "base": base,
+            "changed": base != normalize_newlines(payload.baseText),
+            "clean": merged.clean,
+            "edits": [edit.as_dict() for edit in merged.edits],
+        }
 
     @app.post("/api/source")
     async def put_source(payload: SourceWrite) -> dict[str, Any]:

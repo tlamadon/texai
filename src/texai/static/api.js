@@ -1,11 +1,13 @@
 // Tiny fetch helpers. Errors from the backend arrive as
-// {detail: {error, message}}; surface `message` so toasts stay readable.
+// {detail: {error, message}}; surface `message` so toasts stay readable, and
+// `error` on the thrown Error as `.code`.
 
 async function unwrap(response) {
   if (response.ok) {
     return response.status === 204 ? null : response.json();
   }
   let message = `${response.status} ${response.statusText}`;
+  let code = '';
   try {
     const body = await response.json();
     const detail = body.detail;
@@ -13,6 +15,7 @@ async function unwrap(response) {
       message = detail;
     } else if (detail && typeof detail.message === 'string') {
       message = detail.message;
+      code = typeof detail.error === 'string' ? detail.error : '';
     } else if (Array.isArray(detail) && detail.length) {
       // FastAPI validation errors
       message = detail.map((d) => `${(d.loc || []).join('.')}: ${d.msg}`).join('; ');
@@ -22,6 +25,9 @@ async function unwrap(response) {
   }
   const error = new Error(message);
   error.status = response.status;
+  // The machine-readable half of the same answer: callers that can recover
+  // from one particular failure should not have to match on its prose.
+  error.code = code;
   throw error;
 }
 

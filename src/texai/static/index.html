@@ -17,6 +17,12 @@
         <button id="contents-toggle" type="button" class="ghost icon" aria-pressed="false"
                 title="Contents of the document">&#9776;</button>
         <span id="pdf-name" class="pdf-name" title="PDF being reviewed">&mdash;</span>
+        <a id="download-pdf" class="icon" download title="Download the PDF">
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+                  stroke-linejoin="round" d="M8 2v7.5M5 7l3 3 3-3M3 13h10"/>
+          </svg>
+        </a>
 
         <div class="group">
           <button id="zoom-out" type="button" title="Zoom out">&minus;</button>
@@ -26,11 +32,26 @@
         </div>
 
         <div class="group">
+          <button id="view-back" type="button" class="icon" disabled>
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                    stroke-linejoin="round" d="M10 3 5 8l5 5"/>
+            </svg>
+          </button>
+          <button id="view-forward" type="button" class="icon" disabled>
+            <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+                    stroke-linejoin="round" d="M6 3l5 5-5 5"/>
+            </svg>
+          </button>
           <span class="readout">Page <span id="page-current">1</span> / <span id="page-count">?</span></span>
         </div>
 
         <div class="spacer"></div>
 
+        <button id="toggle-sync" type="button" class="toggle" aria-pressed="false"
+                title="Keep the source scrolled to whatever the page is showing, and back">
+          Sync scroll</button>
         <button id="toggle-marks" type="button" class="toggle"
                 title="Show what the agent changed, inline on the page">Show changes</button>
         <button id="accept-all" type="button" class="ghost" hidden
@@ -139,9 +160,19 @@
                   title="Show the outline of this file">&#9776;</button>
           <select id="editor-file" class="editor-file" title="File being edited"></select>
           <span id="editor-dirty" class="dot" title="Unsaved changes" hidden>&bull;</span>
+          <button id="editor-merged" type="button" class="merged-chip" hidden></button>
           <div class="spacer"></div>
-          <button id="editor-revert" type="button" class="ghost"
-                  title="Discard your edits and reload from disk">Reload</button>
+          <div class="editor-more">
+            <button id="editor-menu" type="button" class="ghost icon"
+                    aria-haspopup="true" aria-expanded="false"
+                    title="More for this file">&#8942;</button>
+            <div id="editor-menu-pop" class="editor-menu" role="menu" hidden>
+              <button id="editor-revert" type="button" role="menuitem" class="menu-item">
+                Reload from disk
+                <span class="menu-note">Takes the version on disk, discarding unsaved edits</span>
+              </button>
+            </div>
+          </div>
           <button id="editor-save" type="button" class="secondary"
                   title="Save and rebuild the PDF (Cmd/Ctrl-S)">Save</button>
         </div>

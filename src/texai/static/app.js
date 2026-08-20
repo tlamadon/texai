@@ -4,11 +4,13 @@
 import { getJSON, postJSON } from './api.js';
 import { ChatPanel } from './chat.js';
 import { GitPanel } from './git.js';
+import { ViewHistory } from './history.js';
 import { SourceEditor } from './editor.js';
 import { QuickJump } from './jump.js';
 import { MarksLayer, narrowRects } from './marks.js';
 import { OutlinePanel } from './outline.js';
 import { ProjectSources } from './project.js';
+import { ScrollSync } from './sync.js';
 import { showToast } from './toast.js';
 import { PdfViewer } from './viewer.js';
 
@@ -28,13 +30,16 @@ const els = {
   zoomFit: document.getElementById('zoom-fit'),
   copyRef: document.getElementById('copy-reference'),
   toggleMarks: document.getElementById('toggle-marks'),
+  toggleSync: document.getElementById('toggle-sync'),
   acceptAll: document.getElementById('accept-all'),
   conn: document.getElementById('conn'),
+  download: document.getElementById('download-pdf'),
   modKey: document.getElementById('mod-key'),
   composer: document.getElementById('composer'),
 };
 
 let marks = null;
+let viewHistory = null;
 
 const viewer = new PdfViewer({
   container: els.container,
@@ -45,7 +50,12 @@ const viewer = new PdfViewer({
   },
   // Pages re-render on scroll and zoom, wiping anything overlaid on them.
   onRender: () => marks?.draw(),
+  // Following a link moves the page; the arrow back has to know from where.
+  onBeforeJump: () => viewHistory?.mark(),
 });
+
+// Back and forward over the places the document has taken you.
+viewHistory = new ViewHistory({ viewer, back: 'view-back', forward: 'view-forward' });
 
 const chat = new ChatPanel();
 marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.acceptAll });
@@ -104,10 +114,17 @@ editor.onSaved = () => {
 editor.onReveal = (file, line, phrases = []) =>
   file && goTo(file, line, { quiet: true, phrases });
 
+// Scrolling one pane scrolls the other, when asked for. Created after the
+// editor, whose scroll events it listens to.
+const scrollSync = new ScrollSync({ viewer, editor, button: els.toggleSync });
+
 // The composer writes to the agent, so it only belongs to the chat views.
 chat.onViewChange = (view) => {
   els.composer.hidden = view === 'source';
   editor.setActive(view === 'source');
+  // Coming back to a source that has been sitting still while the page moved:
+  // catch it up rather than wait for the next scroll.
+  if (view === 'source') scrollSync.align();
 };
 
 /** Open the source behind a spot in the document. */
@@ -212,6 +229,7 @@ async function showLocation(loc, { phrases = [] } = {}) {
   }
   // Scroll first: narrowing reads the text layer, which only exists for pages
   // near the view, so the page has to be brought there before it can be read.
+  viewHistory.mark();
   viewer.scrollToBox(loc.page, loc.boxes[0]);
 
   const precise = phrases.length ? await preciseRects(loc, phrases) : null;
@@ -269,8 +287,8 @@ chat.onChangesUpdated = () => {
   git.refresh();
   // The agent's edits move headings around; the cached outlines are stale.
   invalidateOutlines();
-  // The agent may have rewritten the file sitting in the editor; take its
-  // version unless there is unsaved typing to protect.
+  // The agent may have rewritten the file sitting in the editor; fold its
+  // version into the buffer, keeping any unsaved typing that is out of its way.
   editor.reload();
 };
 
@@ -293,6 +311,7 @@ async function loadPdf(version, { preserveView = false } = {}) {
   await viewer.load(url);
   if (state) viewer.applyViewState(state);
   pdfVersion = version;
+  els.download.href = url;
   showEmpty('');
   marks?.refresh();
   updateZoomReadout();
@@ -317,9 +336,13 @@ async function poll() {
       await loadPdf(status.pdfVersion, { preserveView: isReload });
       if (isReload) {
         showToast('PDF reloaded');
-        // A rebuild we did not start — latexmk in a terminal, say. The source
-        // behind this PDF has moved on, and so has its outline.
+        // A rebuild we did not start — latexmk in a terminal, say, or an agent
+        // outside this app. The source behind this PDF has moved on, and so
+        // has its outline; the editor takes what it can of the new text.
         invalidateOutlines();
+        editor.reload();
+        // The lines moved under the mapping; ask it again for this spot.
+        scrollSync.align();
       }
     }
   } catch (err) {
@@ -536,6 +559,11 @@ async function boot() {
     const info = await getJSON('/api/info');
     els.pdfName.textContent = info.pdf;
     els.pdfName.title = `${info.root}/${info.pdf}`;
+    els.download.download = info.pdf.split('/').pop();
+    els.download.title = `Download ${els.download.download}`;
+    // Where the editor was last left, remembered per project rather than per
+    // browser: two papers open on the same port are two different places.
+    editor.setPlaceScope(info.root);
     document.title = `${info.pdf} — texai`;
   } catch (err) {
     showEmpty(`Cannot reach the texai server: ${err.message}`, true);
@@ -560,6 +588,9 @@ async function boot() {
 
 // Exposed for the browser layout suite (and handy from the devtools console).
 // Read-only handles; nothing here is part of the page's own control flow.
-window.__texai = { viewer, chat, marks, editor, git, jump, contents, project, refreshContents };
+window.__texai = {
+  viewer, chat, marks, editor, git, jump, contents, project, refreshContents,
+  history: viewHistory, scrollSync,
+};
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));

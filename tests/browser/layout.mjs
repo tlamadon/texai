@@ -724,6 +724,47 @@ const editorDirty = await cdp.json(`(() => {
 })()`);
 check('typing raises the unsaved marker', editorDirty.dirty && editorDirty.dot, JSON.stringify(editorDirty));
 
+/* ---------------- reloading keeps your place ---------------- */
+
+// The agent rewrites the file you have open and the editor picks up its
+// version; that must not throw away where you were reading in it.
+const keptPlace = await cdp.json(`(async () => {
+  const ed = window.__texai.editor;
+  await ed.open('sections/model.tex');
+  await new Promise(r => setTimeout(r, 400));
+  ed.goToLine(40);
+  await new Promise(r => setTimeout(r, 400));
+
+  const before = { line: ed.cm.getCursor().line, top: Math.round(ed.cm.getScrollInfo().top) };
+  await ed.reload({ force: true });
+  await new Promise(r => setTimeout(r, 600));
+
+  return {
+    before,
+    after: { line: ed.cm.getCursor().line, top: Math.round(ed.cm.getScrollInfo().top) },
+    file: ed.file,
+  };
+})()`);
+console.log('reload keeps its place:', keptPlace);
+check('reloading a file keeps the cursor where it was',
+  keptPlace.after.line === keptPlace.before.line && keptPlace.before.line > 0,
+  JSON.stringify(keptPlace));
+check('and does not scroll back to the top',
+  Math.abs(keptPlace.after.top - keptPlace.before.top) <= 4 && keptPlace.before.top > 0,
+  `${keptPlace.after.top} vs ${keptPlace.before.top}`);
+
+// Opening a different file is not a reload: that starts at the top.
+const otherFile = await cdp.json(`(async () => {
+  const ed = window.__texai.editor;
+  await ed.open('sections/results.tex');
+  await new Promise(r => setTimeout(r, 500));
+  return { file: ed.file, line: ed.cm.getCursor().line, top: Math.round(ed.cm.getScrollInfo().top) };
+})()`);
+console.log('opening another file:', otherFile);
+check('opening a different file starts at its top',
+  otherFile.file === 'sections/results.tex' && otherFile.line === 0 && otherFile.top === 0,
+  JSON.stringify(otherFile));
+
 /* ---------------- the outline column ---------------- */
 
 const outline = await cdp.json(`(async () => {
@@ -1186,6 +1227,91 @@ check('a modifier over a link does not follow it',
 await cdp.eval(`(() => { document.getElementById('viewer-container').scrollTop = 0; return true; })()`);
 await sleep(600);
 
+/* ---------------- downloading, and the way back ---------------- */
+
+const download = await cdp.json(`(() => {
+  const a = document.getElementById('download-pdf');
+  const r = a.getBoundingClientRect();
+  const toolbar = document.querySelector('.toolbar').getBoundingClientRect();
+  return {
+    href: a.getAttribute('href'),
+    name: a.getAttribute('download'),
+    sameOrigin: new URL(a.href).origin === location.origin,
+    inToolbar: r.top >= toolbar.top - 1 && r.bottom <= toolbar.bottom + 1 && r.width > 8,
+  };
+})()`);
+console.log('download link:', download);
+check('the download points at the PDF being viewed',
+  (download.href || '').startsWith('/api/pdf?v='), String(download.href));
+check('and saves it under its own name', download.name === 'main.pdf', String(download.name));
+check('it is a same-origin link in the toolbar', download.sameOrigin && download.inToolbar);
+
+// Back and forward walk the places the document has taken you. Scrolling by
+// hand is not one of them; it only moves where "back" leads.
+const historyWalk = await cdp.json(`(async () => {
+  const { viewer, history } = window.__texai;
+  const container = viewer.container;
+  const back = document.getElementById('view-back');
+  const forward = document.getElementById('view-forward');
+
+  history.reset();
+  container.scrollTop = 0;
+  await new Promise(r => setTimeout(r, 500));
+  const atStart = { back: back.disabled, forward: forward.disabled };
+
+  // Reading on by hand: still nothing to go back to.
+  container.scrollTop = 400;
+  await new Promise(r => setTimeout(r, 400));
+  const afterScrolling = { back: back.disabled, forward: forward.disabled };
+  const left = Math.round(container.scrollTop);
+
+  // A jump: this is what the arrows are for.
+  const dests = await viewer.doc.getDestinations();
+  let target = null;
+  for (const [, dest] of Object.entries(dests)) {
+    if (!Array.isArray(dest) || typeof dest[0] !== 'object') continue;
+    if (await viewer.doc.getPageIndex(dest[0]) >= 2) { target = dest; break; }
+  }
+  await viewer.goToDestination(target);
+  await new Promise(r => setTimeout(r, 900));
+  const jumpedTo = Math.round(container.scrollTop);
+  const afterJump = { back: back.disabled, forward: forward.disabled };
+
+  back.click();
+  await new Promise(r => setTimeout(r, 900));
+  const wentBack = Math.round(container.scrollTop);
+  const afterBack = { back: back.disabled, forward: forward.disabled };
+
+  forward.click();
+  await new Promise(r => setTimeout(r, 900));
+  const wentForward = Math.round(container.scrollTop);
+
+  return { atStart, afterScrolling, left, jumpedTo, afterJump, wentBack, afterBack, wentForward };
+})()`);
+console.log('back and forward:', historyWalk);
+
+check('both arrows start with nowhere to go',
+  historyWalk.atStart.back && historyWalk.atStart.forward);
+check('scrolling by hand is not a place in the history',
+  historyWalk.afterScrolling.back && historyWalk.afterScrolling.forward);
+check('a jump moves the page and lights the back arrow',
+  historyWalk.jumpedTo !== historyWalk.left && !historyWalk.afterJump.back,
+  `${historyWalk.left} -> ${historyWalk.jumpedTo}`);
+check('back returns to where you were reading',
+  Math.abs(historyWalk.wentBack - historyWalk.left) <= 8,
+  `${historyWalk.wentBack} vs ${historyWalk.left}`);
+check('and forward lights up once you have gone back', !historyWalk.afterBack.forward);
+check('forward returns to the jump',
+  Math.abs(historyWalk.wentForward - historyWalk.jumpedTo) <= 8,
+  `${historyWalk.wentForward} vs ${historyWalk.jumpedTo}`);
+
+await cdp.eval(`(() => {
+  window.__texai.history.reset();
+  document.getElementById('viewer-container').scrollTop = 0;
+  return true;
+})()`);
+await sleep(600);
+
 /* ---------------- the contents beside the PDF ---------------- */
 
 // One document, not four files: main.tex with every \input spliced in where it
@@ -1597,6 +1723,359 @@ if (!canLocate) {
 
   await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
 }
+
+/* ---------------- an outside edit merges into unsaved typing ---------------- */
+
+// The agent rewrites files while you are typing in them. The buffer, the text
+// it was loaded from and the file on disk are three versions, and the server
+// merges them: edits in different places all survive, edits to the same lines
+// are a real conflict. Nothing here writes to the project — the file on disk
+// plays "theirs", and the base is doctored to describe what it used to say.
+
+await cdp.eval(`(async () => {
+  window.__texai.chat.setView('source');
+  await window.__texai.editor.open('sections/model.tex');
+  await new Promise(r => setTimeout(r, 600));
+  return true;
+})()`);
+
+const merged = await cdp.json(`(async () => {
+  const ed = window.__texai.editor;
+  const disk = ed.cm.getValue();
+  const lines = disk.split('\\n');
+  // A line well away from the top, which the base will claim said something
+  // else — so the disk version of it reads as an incoming change.
+  const at = lines.findIndex((l, i) => i > 3 && l.trim().length > 8);
+  const base = lines.map((l, i) => (i === at ? '% what it used to say' : l)).join('\\n');
+
+  ed.baseText = base;
+  ed._loading = true;
+  ed.cm.setValue('% typing\\n' + base);       // the same base, plus unsaved typing
+  ed._loading = false;
+  ed._setDirty(true);
+  ed.cm.setCursor({ line: at + 4, ch: 0 });   // reading somewhere below the change
+  const cursorLine = ed.cm.getLine(ed.cm.getCursor().line);
+
+  const result = await ed.sync();
+  const marked = [...document.querySelectorAll('.editor-host .cm-merged-line')];
+  const chip = document.getElementById('editor-merged');
+  return {
+    at,
+    clean: result?.clean ?? null,
+    changed: result?.changed ?? null,
+    // The typing survived, and so did the line the agent wrote.
+    tookBoth: ed.cm.getValue() === '% typing\\n' + disk,
+    dirty: ed.dirty,
+    baseIsDisk: ed.baseText === disk,
+    markedLines: marked.length,
+    // The wrapper holds the gutter's line number as well as the text, which is
+    // how the check knows the colour landed on the right line and not another.
+    markedText: marked.map(n => n.parentElement?.textContent ?? '').join('|').slice(0, 70),
+    expected: lines[at].trim().slice(0, 30),
+    chipShown: chip && !chip.hidden,
+    chipText: chip?.textContent ?? '',
+    cursorStillOn: ed.cm.getLine(ed.cm.getCursor().line) === cursorLine,
+    status: document.getElementById('editor-status').textContent,
+  };
+})()`);
+console.log('merge:', JSON.stringify(merged));
+check('an edit elsewhere in the file merges in', merged.clean === true && merged.changed === true,
+  JSON.stringify({ clean: merged.clean, changed: merged.changed }));
+check('both the typing and the incoming change survive', merged.tookBoth === true);
+check('the buffer stays unsaved, on the newer base',
+  merged.dirty === true && merged.baseIsDisk === true, JSON.stringify(merged));
+check('the merged-in line is the one highlighted',
+  merged.markedLines === 1
+    && merged.markedText.startsWith(String(merged.at + 2))
+    && merged.markedText.includes(merged.expected),
+  `${merged.markedLines} line(s): ${merged.markedText}`);
+check('the bar says how much arrived', merged.chipShown === true && /1 merged/.test(merged.chipText),
+  merged.chipText);
+check('the cursor keeps its line', merged.cursorStillOn === true);
+check('and it is reported without an error', /Merged one change/.test(merged.status), merged.status);
+
+// The highlight has to be visible, not merely present in the class list.
+const paint = await cdp.json(`(() => {
+  const node = document.querySelector('.editor-host .cm-merged-line');
+  const line = node?.parentElement;
+  return {
+    background: node ? getComputedStyle(node).backgroundColor : '',
+    plain: line?.nextElementSibling
+      ? getComputedStyle(line.nextElementSibling).backgroundColor : '',
+  };
+})()`);
+console.log('merge highlight:', JSON.stringify(paint));
+check('the merged lines are actually coloured',
+  /rgba?\(/.test(paint.background) && !/rgba\(0, 0, 0, 0\)/.test(paint.background),
+  paint.background);
+
+// Clicking the count visits what came in.
+const visited = await cdp.json(`(() => {
+  const ed = window.__texai.editor;
+  ed.cm.setCursor({ line: 0, ch: 0 });
+  document.getElementById('editor-merged').click();
+  return { line: ed.cm.getCursor().line };
+})()`);
+check('clicking the count goes to the change', visited.line === merged.at + 1,
+  `line ${visited.line}, expected ${merged.at + 1}`);
+
+// The other half of the bargain: edits to the same lines are still refused.
+const clash = await cdp.json(`(async () => {
+  const ed = window.__texai.editor;
+  const disk = ed.baseText;
+  const lines = disk.split('\\n');
+  const at = lines.findIndex((l, i) => i > 3 && l.trim().length > 8);
+  const base = lines.map((l, i) => (i === at ? '% what it used to say' : l)).join('\\n');
+  const mine = lines.map((l, i) => (i === at ? '% my own version of it' : l)).join('\\n');
+
+  ed.baseText = base;
+  ed._loading = true;
+  ed.cm.setValue(mine);
+  ed._loading = false;
+  ed._setDirty(true);
+
+  const result = await ed.sync();
+  const out = {
+    clean: result?.clean ?? null,
+    kept: ed.cm.getValue() === mine,
+    status: document.getElementById('editor-status').textContent,
+  };
+  // Put the editor back on the real file before anything else runs.
+  ed._setDirty(false);
+  await ed.reload({ force: true });
+  out.restored = ed.cm.getValue() === disk && !ed.dirty;
+  return out;
+})()`);
+console.log('merge clash:', JSON.stringify(clash));
+check('two edits to the same line are still a conflict', clash.clean === false, JSON.stringify(clash));
+check('and the buffer is left exactly as it was', clash.kept === true);
+check('with an explanation naming the way out', /Reload/.test(clash.status), clash.status);
+check('reloading takes the version on disk', clash.restored === true);
+
+/* ---------------- and the way out is not next to Save ---------------- */
+
+// Reload is the one control here that can throw unsaved work away, so it lives
+// in a menu instead of a button's width from Save.
+const menu = await cdp.json(`(() => {
+  const revert = document.getElementById('editor-revert');
+  const menu = document.getElementById('editor-menu');
+  const pop = document.getElementById('editor-menu-pop');
+  const save = document.getElementById('editor-save');
+  const reachable = () => !pop.hidden && revert.getBoundingClientRect().width > 0;
+
+  const closed = reachable();
+  menu.click();
+  const opened = reachable();
+  const r = revert.getBoundingClientRect();
+  const s = save.getBoundingClientRect();
+
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  const afterEscape = reachable();
+
+  menu.click();
+  document.getElementById('editor-host').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  const afterClickAway = reachable();
+  return {
+    closed, opened, afterEscape, afterClickAway,
+    belowTheBar: Math.round(r.top - s.bottom),
+    onScreen: r.left >= 0 && r.right <= window.innerWidth + 1,
+    expanded: menu.getAttribute('aria-expanded'),
+  };
+})()`);
+console.log('editor menu:', JSON.stringify(menu));
+check('Reload is not a click away from Save', menu.closed === false);
+check('the menu reveals it', menu.opened === true);
+check('below the bar, not beside Save', menu.belowTheBar > 0, `${menu.belowTheBar}px below`);
+check('and inside the window', menu.onScreen === true);
+check('Escape closes the menu', menu.afterEscape === false);
+check('clicking the buffer closes it', menu.afterClickAway === false);
+check('the toggle reports its state', menu.expanded === 'false', String(menu.expanded));
+
+// And the item still does what the button did.
+const reloaded = await cdp.json(`(async () => {
+  const ed = window.__texai.editor;
+  ed._loading = true;
+  ed.cm.setValue('% nothing like what is on disk\\n');
+  ed._loading = false;
+  ed._setDirty(false);   // no confirm to answer: headless cannot dismiss one
+
+  document.getElementById('editor-menu').click();
+  document.getElementById('editor-revert').click();
+  await new Promise(r => setTimeout(r, 900));
+  return {
+    first: ed.cm.getLine(0),
+    open: !document.getElementById('editor-menu-pop').hidden,
+  };
+})()`);
+console.log('menu reload:', JSON.stringify(reloaded));
+check('choosing it reloads the file', reloaded.first === '\\section{Model}', reloaded.first);
+check('and closes the menu behind it', reloaded.open === false);
+
+await cdp.eval(`(() => { window.__texai.chat.setView('chat'); return true; })()`);
+
+/* ---------------- scrolling the two panes together ---------------- */
+
+// Sync mode: whichever pane you scroll, the other follows, through the same
+// SyncTeX mapping the clicks use. Needs a real synctex, so it steps aside when
+// the example was not compiled with one.
+
+if (!canLocate) {
+  console.log('scroll sync: skipped (synctex could not answer)');
+} else {
+  await cdp.eval(`(async () => {
+    const t = window.__texai;
+    t.chat.setView('source');
+    await t.editor.open('main.tex');
+    t.viewer.container.scrollTop = 0;
+    t.scrollSync.toggle(true);
+    await new Promise(r => setTimeout(r, 1400));
+    return true;
+  })()`);
+
+  // The page leads: scroll it deep into the document, and the source arrives.
+  const followed = await cdp.json(`(async () => {
+    const { viewer, editor } = window.__texai;
+    const before = { file: editor.file, top: Math.round(editor.cm.getScrollInfo().top) };
+    viewer.container.scrollTop = Math.round(viewer.container.scrollHeight * 0.45);
+    await new Promise(r => setTimeout(r, 1800));
+
+    const line = editor._syncedLine ? editor.cm.getLineNumber(editor._syncedLine) + 1 : null;
+    const found = line
+      ? await fetch('/api/locate?file=' + encodeURIComponent(editor.file) + '&line=' + line)
+          .then(r => r.json())
+      : null;
+    return {
+      before,
+      file: editor.file,
+      line,
+      top: Math.round(editor.cm.getScrollInfo().top),
+      marked: document.querySelectorAll('.editor-host .cm-synced-line').length,
+      page: viewer.currentPage,
+      locatedPage: found?.page ?? null,
+      active: document.getElementById('toggle-sync').classList.contains('active'),
+      cursor: editor.cm.getCursor().line,
+    };
+  })()`);
+  console.log('page leads:', JSON.stringify(followed));
+  check('the toggle reads as on', followed.active === true);
+  check('scrolling the page moves the source',
+    followed.file !== followed.before.file || followed.top !== followed.before.top,
+    JSON.stringify({ before: followed.before, after: { file: followed.file, top: followed.top } }));
+  check('the line it landed on is marked', followed.marked === 1, `${followed.marked} marked`);
+  check('and that line really is on the page being shown',
+    followed.locatedPage !== null && Math.abs(followed.locatedPage - followed.page) <= 1,
+    `source line ${followed.line} is on page ${followed.locatedPage}, viewer on ${followed.page}`);
+
+  // The source leads: scroll the buffer, and the page arrives.
+  const led = await cdp.json(`(async () => {
+    const { viewer, editor } = window.__texai;
+    await editor.open('sections/results.tex');
+    await new Promise(r => setTimeout(r, 1800));   // opening it moves the page too
+
+    const beforeTop = Math.round(viewer.container.scrollTop);
+    const target = 20;   // 0-based, well into the file
+    editor.cm.scrollTo(null, editor.cm.charCoords({ line: target, ch: 0 }, 'local').top);
+    await new Promise(r => setTimeout(r, 1800));
+
+    const line = editor.topVisibleLine();
+    const found = await fetch(
+      '/api/locate?file=sections/results.tex&line=' + line + '&scan=25'
+    ).then(r => r.json());
+    return {
+      beforeTop,
+      afterTop: Math.round(viewer.container.scrollTop),
+      line,
+      found: !!found?.found,
+      locatedPage: found?.page ?? null,
+      page: viewer.currentPage,
+    };
+  })()`);
+  console.log('source leads:', JSON.stringify(led));
+  check('scrolling the source moves the page', led.afterTop !== led.beforeTop,
+    `${led.beforeTop} -> ${led.afterTop}`);
+  check('onto the page that line produced',
+    led.found && Math.abs(led.locatedPage - led.page) <= 1,
+    `line ${led.line} is on page ${led.locatedPage}, viewer on ${led.page}`);
+
+  // The failure mode worth guarding: each answer arriving as the next question.
+  const settled = await cdp.json(`(async () => {
+    const { viewer, editor } = window.__texai;
+    const a = {
+      pdf: Math.round(viewer.container.scrollTop),
+      src: Math.round(editor.cm.getScrollInfo().top),
+    };
+    await new Promise(r => setTimeout(r, 2200));
+    return { a, b: {
+      pdf: Math.round(viewer.container.scrollTop),
+      src: Math.round(editor.cm.getScrollInfo().top),
+    } };
+  })()`);
+  console.log('settling:', JSON.stringify(settled));
+  check('the panes settle instead of chasing each other',
+    settled.a.pdf === settled.b.pdf && settled.a.src === settled.b.src,
+    JSON.stringify(settled));
+
+  // And off is off — including after a reload, which is the next test.
+  const off = await cdp.json(`(async () => {
+    const { viewer, editor, scrollSync } = window.__texai;
+    scrollSync.toggle(false);
+    const before = Math.round(editor.cm.getScrollInfo().top);
+    viewer.container.scrollTop = Math.max(0, viewer.container.scrollTop - 900);
+    await new Promise(r => setTimeout(r, 1500));
+    return {
+      before,
+      after: Math.round(editor.cm.getScrollInfo().top),
+      marked: document.querySelectorAll('.editor-host .cm-synced-line').length,
+      stored: localStorage.getItem('texai.sync'),
+      pressed: document.getElementById('toggle-sync').getAttribute('aria-pressed'),
+    };
+  })()`);
+  console.log('switched off:', JSON.stringify(off));
+  check('switching it off stops the following', off.after === off.before,
+    `${off.before} -> ${off.after}`);
+  check('and takes the marker away', off.marked === 0, `${off.marked} marked`);
+  check('the choice is remembered', off.stored === 'off' && off.pressed === 'false',
+    JSON.stringify(off));
+}
+
+/* ---------------- a refresh comes back to the same place ---------------- */
+
+// Reloads the page, so it runs late. The file and the line are remembered per
+// project, and picked up when the Source tab next opens.
+const wanted = await cdp.json(`(async () => {
+  window.__texai.chat.setView('source');
+  await window.__texai.editor.open('sections/robustness.tex');
+  await new Promise(r => setTimeout(r, 400));
+  window.__texai.editor.goToLine(23);
+  await new Promise(r => setTimeout(r, 800));   // past the write's debounce
+  const ed = window.__texai.editor;
+  return { file: ed.file, line: ed.cm.getCursor().line, top: Math.round(ed.cm.getScrollInfo().top) };
+})()`);
+
+await cdp.send('Page.reload', { ignoreCache: true });
+await sleep(3000);
+for (let i = 0; i < 60; i += 1) {
+  if (await cdp.eval(`document.querySelectorAll('#viewer canvas').length > 0`)) break;
+  await sleep(500);
+}
+
+const restored = await cdp.json(`(async () => {
+  window.__texai.chat.setView('source');
+  await new Promise(r => setTimeout(r, 2500));
+  const ed = window.__texai.editor;
+  return {
+    file: ed.file,
+    line: ed.cm?.getCursor().line ?? null,
+    top: Math.round(ed.cm?.getScrollInfo().top ?? -1),
+  };
+})()`);
+console.log('after a refresh:', { wanted, restored });
+check('a refresh comes back to the file you were in', restored.file === wanted.file,
+  `${restored.file} vs ${wanted.file}`);
+check('at the line you were on', restored.line === wanted.line,
+  `${restored.line} vs ${wanted.line}`);
+check('and scrolled where you had it', Math.abs(restored.top - wanted.top) <= 6,
+  `${restored.top} vs ${wanted.top}`);
 
 /* ---------------- the first alt-click must keep its cursor ---------------- */
 

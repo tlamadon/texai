@@ -385,6 +385,37 @@ It is bound to the click, not to the cursor, so typing and arrow keys never yank
 the page around while you are writing. Rapid clicks only ever honour the newest,
 so a slow answer cannot scroll you back to where you were two clicks ago.
 
+### Scrolling together
+
+Clicking is exact but deliberate: you ask, once, per passage. Reading with both
+panes open means asking over and over, so **Sync scroll** in the toolbar ties
+them together instead. Scroll the page and the source arrives at whatever is on
+screen; scroll the source and the page follows. Off by default, and remembered
+between sessions.
+
+```
+Sync scroll on, page scrolled to 45%  →  sections/robustness.tex:27, page 3
+```
+
+Whichever pane you touch leads, and the other stops listening while it is being
+moved — otherwise every answer arrives as the next question and the two chase
+each other down the document. What was matched lands near the top of the view
+rather than centred, in both directions, so a passage stays under the same part
+of the window as you read on.
+
+The mapping is the same `synctex` pair the clicks use, with two allowances for
+the looser question. The line at the top of an editor is as often as not blank,
+a comment or a `\begin`, so the lookup walks forward to the first line that
+rendered something. The top of a page is often a margin or the gap above a
+float, so the probe tries a few depths into the view. When neither finds
+anything — a full-page figure, the preamble — nothing moves, which beats moving
+somewhere wrong.
+
+None of it touches your cursor: the source is scrolled, not typed in, and the
+line the page is showing gets a thin rule in the margin rather than the focus. A
+file with unsaved edits is never swapped out from under you, so a page showing
+some other file simply leaves the buffer where it is.
+
 ### Editing it yourself
 
 Not everything is worth a prompt. The **Source** tab is a LaTeX editor over the
@@ -496,11 +527,48 @@ Without `hyperref` a PDF carries no links at all, and nothing here can invent
 them; `\usepackage[hidelinks]{hyperref}` gets you the links without the coloured
 boxes, which is what the example does.
 
+### Back, forward, and taking the PDF with you
+
+The two arrows beside the page number walk the places the document has taken
+you. Follow a `\ref`, click a heading in the contents, jump from the palette or
+from a click in the source, and **back** returns to where you were reading.
+Scrolling by hand is not a jump and puts nothing in the list — it only changes
+where back will lead, which is what a reader means by it. **Forward** retraces,
+and goes quiet the moment you jump somewhere new, as it does in a browser. Going
+back restores the place and not the magnification: a zoom you chose since is
+yours to keep.
+
+The **⤓** beside the file name downloads the PDF as it currently stands — the
+build on screen, not whatever was on disk when the page was opened. It is an
+ordinary link, so right-click and *Save link as* works as well as clicking it.
+
 Two writers on one tree needs a rule, so every save carries a hash of the text it
-was based on. If the agent rewrote the file while it sat open, the save is
-refused with *"changed since you opened it"* rather than discarding that work;
-**Reload** takes their version. Going the other way, when a turn finishes, an
-open file with no unsaved typing quietly picks up the agent's version.
+was based on — and when the file has moved underneath, the three versions are
+merged rather than one of them being refused: the text the buffer was loaded
+from, the buffer as it stands, and what is on disk now. The other writer is
+nearly always in a different paragraph, and then its version simply arrives,
+your unsaved typing untouched and your cursor where you left it. The lines that
+came in are tinted green and the editor bar shows how many; clicking that count
+walks through them. Both clear at your next save.
+
+Only edits to the *same* lines are a real conflict. Then nothing is applied, the
+buffer is left exactly as it was, and the editor says which file and what to do:
+**Reload from disk**, under the **⋮** beside Save, takes their version. It is the
+one action here that can discard an unsaved edit, which is why it sits behind a
+menu rather than a click away from Save. The merge runs when a turn finishes,
+when the PDF is rebuilt by anything at all — latexmk in a terminal, an agent
+outside this app — and when you come back to the Source tab; a save that loses
+the race merges and tries once more, so the usual case never reaches you as an
+error at all.
+
+Either way you keep your place. A merge splices only the lines that changed, so
+the cursor holds its spot in the text and the line you are reading stays where
+it is on screen. Re-reading a file outright — *Reload from disk* — puts the
+cursor and the scroll back rather than at the top, and a browser refresh comes
+back to the file you had open, at the line you were on, remembered per project.
+That last one is only as good as the file still being roughly what it was: a
+paragraph inserted above has moved everything down, and a remembered line number
+cannot know by how much.
 
 Your own saves are not part of the review. They fold into the baseline, so the
 Changes overlay keeps showing what the *agent* did — your typing never arrives as
@@ -699,15 +767,18 @@ src/texai/
   navigate.py    locating a source line in the rendered PDF
   turns.py       snapshot -> agent -> build -> diff, and the review session
   source.py      reading and writing source files for the editor
+  merge.py       three-way merge, so an outside edit and an unsaved one both live
   words.py       matching a rendered word back to its source column
   git.py         root-scoped status, commit, pull --rebase, push
   commitmsg.py   the agent's one-shot commit message, with a fallback
   server.py      FastAPI routes
   static/        vanilla two-panel UI + vendored PDF.js and CodeMirror
                  (marks.js draws the inline change markers,
+                  history.js is the back/forward list of places,
                   editor.js is the Source tab, outline.js parses and draws
                   both tables of contents, project.js assembles the document
-                  from its \input tree, jump.js is the go-to palette, and
+                  from its \input tree, jump.js is the go-to palette,
+                  sync.js keeps the two panes on the same passage, and
                   git.js the git panel)
 ```
 

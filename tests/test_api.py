@@ -8,6 +8,7 @@ from texai.config import AppConfig
 from texai.paths import PathOutsideRootError
 from texai.server import create_app, normalize_selected_text, pdf_version_tag
 from texai.synctex import (
+    SyncTexBox,
     SyncTexDataMissing,
     SyncTexExecutableMissing,
     SyncTexLocation,
@@ -375,6 +376,109 @@ def test_source_write_refuses_stale_saves(config: AppConfig, project: Path):
     assert response.status_code == 409
     assert response.json()["detail"]["error"] == "source_conflict"
     assert (project / "sections" / "model.tex").read_text() == "someone else got here first\n"
+
+
+def test_locate_can_scan_forward_for_a_line_that_rendered(
+    config: AppConfig, project: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """What scroll sync asks: the top line of the editor is often a blank one."""
+    (project / "sections" / "model.tex").write_text("% a comment\n\nreal text\n")
+
+    def view(pdf_path, source, line, column=1, root=None, executable="synctex", timeout=15.0):
+        return [SyncTexBox(page=3, x=72.0, y=90.0, width=468.0, height=11.0)] if line == 3 else []
+
+    monkeypatch.setattr("texai.navigate.run_synctex_view", view)
+    client = make_client(config, fake_runner())
+
+    plain = client.get("/api/locate", params={"file": "sections/model.tex", "line": 1}).json()
+    assert plain["found"] is False
+
+    scanned = client.get(
+        "/api/locate", params={"file": "sections/model.tex", "line": 1, "scan": 8}
+    ).json()
+    assert scanned["found"] is True
+    assert scanned["page"] == 3
+    assert scanned["line"] == 3  # where it landed
+    assert scanned["requested"] == 1  # where it was asked about
+
+
+def test_source_merge_folds_in_an_outside_edit(config: AppConfig, project: Path):
+    client = make_client(config, fake_runner())
+    base = "\\section{Model}\nWorkers choose hours.\nThe wage is exogenous.\n"
+    (project / "sections" / "model.tex").write_text(base)
+    loaded = client.get("/api/source", params={"file": "sections/model.tex"}).json()
+
+    # The agent rewrites the last line while the editor is typing in the first.
+    (project / "sections" / "model.tex").write_text(
+        base.replace("The wage is exogenous.", "The wage is taken as given.")
+    )
+
+    buffer = base.replace("Workers", "Households")
+    body = client.post(
+        "/api/source/merge",
+        json={"file": "sections/model.tex", "text": buffer, "baseText": loaded["text"]},
+    ).json()
+
+    assert body["changed"] is True
+    assert body["clean"] is True
+    assert body["sha"] != loaded["sha"]
+
+    # One splice, covering the line the agent rewrote and nothing else. The
+    # offsets are into the buffer that was sent, so the editor can apply them
+    # without re-reading anything.
+    (edit,) = body["edits"]
+    assert buffer[edit["start"] : edit["end"]] == "The wage is exogenous.\n"
+    assert edit["text"] == "The wage is taken as given.\n"
+    assert (
+        buffer[: edit["start"]] + edit["text"] + buffer[edit["end"] :]
+        == "\\section{Model}\nHouseholds choose hours.\nThe wage is taken as given.\n"
+    )
+
+
+def test_source_merge_reports_a_real_collision(config: AppConfig, project: Path):
+    client = make_client(config, fake_runner())
+    loaded = client.get("/api/source", params={"file": "sections/model.tex"}).json()
+    (project / "sections" / "model.tex").write_text("\\section{Their model}\n")
+
+    body = client.post(
+        "/api/source/merge",
+        json={
+            "file": "sections/model.tex",
+            "text": "\\section{My model}\n",
+            "baseText": loaded["text"],
+        },
+    ).json()
+
+    assert body["changed"] is True
+    assert body["clean"] is False
+    assert body["edits"] == []
+
+
+def test_source_merge_says_nothing_when_the_file_has_not_moved(config: AppConfig):
+    client = make_client(config, fake_runner())
+    loaded = client.get("/api/source", params={"file": "sections/model.tex"}).json()
+
+    body = client.post(
+        "/api/source/merge",
+        json={
+            "file": "sections/model.tex",
+            "text": loaded["text"] + "typing\n",
+            "baseText": loaded["text"],
+        },
+    ).json()
+
+    assert body["changed"] is False
+    assert body["clean"] is True
+    assert body["edits"] == []
+
+
+@pytest.mark.parametrize("file", ["../escape.tex", "build/main.pdf"])
+def test_source_merge_refuses_paths_it_should_not_read(config: AppConfig, file: str):
+    client = make_client(config, fake_runner())
+    response = client.post(
+        "/api/source/merge", json={"file": file, "text": "x", "baseText": "y"}
+    )
+    assert response.status_code in (404, 422)
 
 
 def test_resolve_maps_a_point_without_recording_it(config: AppConfig):

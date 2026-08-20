@@ -14,11 +14,23 @@ from .config import AppConfig
 from .paths import PathOutsideRootError, ensure_inside_root, to_project_relative
 from .synctex import SyncTexError, run_synctex_view
 
-__all__ = ["LocateError", "locate", "locate_range", "MAX_RANGE_LINES"]
+__all__ = [
+    "LocateError",
+    "locate",
+    "locate_forward",
+    "locate_range",
+    "MAX_RANGE_LINES",
+    "MAX_SCAN_LINES",
+]
 
 # A change bigger than this is highlighted from its first lines only; the
 # mapping costs one subprocess per line and nobody needs 500 bands.
 MAX_RANGE_LINES = 60
+
+# How far past an unmappable line the forward scan may look. Each step is a
+# subprocess, and a run of a dozen lines with no output — a preamble, a long
+# comment block, a table body — is already unusual.
+MAX_SCAN_LINES = 40
 
 
 class LocateError(RuntimeError):
@@ -63,6 +75,29 @@ def locate(config: AppConfig, file: str, line: int) -> dict[str, Any]:
         "page": boxes[0].page,
         "boxes": [box.as_dict() for box in boxes],
     }
+
+
+def locate_forward(config: AppConfig, file: str, line: int, scan: int = 0) -> dict[str, Any]:
+    """The first line at or after ``line`` that landed somewhere in the PDF.
+
+    ``locate`` answers about one line, which is the right answer to "where did
+    this go?". Keeping two panes scrolled together asks something looser —
+    "where does the top of what I am reading correspond to?" — and the line at
+    the top of an editor is very often a blank one, a comment, or a ``\\begin``.
+    Refusing to move on those would leave the sync working every third scroll.
+
+    The scan stops at the first line with output, so the usual cost is the one
+    lookup ``locate`` would have done anyway. With ``scan`` at 0 this *is*
+    ``locate``, plus the line that was asked for.
+    """
+    first = max(1, int(line))
+    steps = max(0, min(int(scan), MAX_SCAN_LINES))
+    answer = locate(config, file, first)
+    for candidate in range(first + 1, first + steps + 1):
+        if answer["found"]:
+            break
+        answer = locate(config, file, candidate)
+    return {**answer, "requested": first}
 
 
 def _dedupe(boxes: list[Any]) -> list[Any]:

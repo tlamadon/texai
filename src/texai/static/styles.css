@@ -724,12 +724,78 @@ button.toggle.active {
 
 .editor-bar .dot { color: var(--warn); font-size: 18px; line-height: 1; }
 
+/* What someone else wrote while you were typing, folded in without asking.
+   Quiet — it reports something that already went well — but clickable, since
+   the one thing you want next is to see where it landed. */
+.merged-chip {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border-color: rgba(63, 185, 80, 0.5);
+  background: rgba(63, 185, 80, 0.12);
+  color: #9ff0ab;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.merged-chip:hover:not(:disabled) { background: rgba(63, 185, 80, 0.22); }
+
+/* Reloading throws away unsaved work, so it does not get to sit a few pixels
+   from Save. Behind a menu it takes two deliberate clicks, and the second one
+   is under a line saying what it costs. */
+.editor-more { position: relative; display: flex; }
+
+.editor-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 10;   /* over CodeMirror's own layers, which stop at 6 */
+  min-width: 216px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.editor-menu .menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+}
+.editor-menu .menu-item:hover:not(:disabled),
+.editor-menu .menu-item:focus-visible { background: #414954; }
+.editor-menu .menu-note {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: normal;
+}
+
 button.icon {
   padding: 2px 7px;
   line-height: 1.2;
   color: var(--muted);
 }
 button.icon svg { display: block; }
+
+/* The download is a real link — right-click and Save works — wearing the same
+   clothes as the icon buttons beside it. */
+a.icon {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+a.icon:hover { background: #414954; color: var(--fg); }
+a.icon svg { display: block; }
 button.icon:hover:not(:disabled) { color: var(--fg); }
 button.icon.on { color: var(--accent); border-color: var(--accent); }
 
@@ -876,6 +942,19 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
 /* Where you landed after a jump, and where LaTeX failed. */
 .editor-host .cm-flash { background: rgba(76, 141, 255, 0.22); }
 .editor-host .cm-error-line { background: rgba(248, 81, 73, 0.16); }
+
+/* The line the page is showing, while the two panes are scrolling together.
+   A rule and no fill: it moves with every scroll, so it has to be readable
+   without being something the eye keeps landing on. */
+.editor-host .cm-synced-line { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* Lines that arrived from the other writer since your last save. The same
+   green as an inserted passage in the margin marks, and a rule down the side
+   so a one-line change is still visible in a wall of text. */
+.editor-host .cm-merged-line {
+  background: rgba(63, 185, 80, 0.13);
+  box-shadow: inset 2px 0 0 var(--ok);
+}
 
 /* The card's location label opens the editor, but should read as a link. */
 .mark-card-head .mark-where {

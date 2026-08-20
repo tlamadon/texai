@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 __all__ = [
     "SelectRequest",
     "SourceWrite",
+    "SourceMerge",
     "CommitRequest",
     "SourceLocation",
     "SelectResponse",
@@ -137,6 +138,28 @@ class SourceWrite(BaseModel):
     file: str = Field(min_length=1, max_length=1024)
     text: str = Field(max_length=MAX_SOURCE_TEXT)
     baseSha: str | None = Field(default=None, max_length=64)
+
+    @field_validator("file")
+    @classmethod
+    def _reject_traversal(cls, value: str) -> str:
+        candidate = PurePosixPath(value)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("file must be a relative path inside the project")
+        return value
+
+
+class SourceMerge(BaseModel):
+    """An editor buffer offered up for a three-way merge with the file on disk.
+
+    ``baseText`` is what the editor loaded (or last saved); ``text`` is what it
+    holds now. The third side is read from disk by the server.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(min_length=1, max_length=1024)
+    text: str = Field(max_length=MAX_SOURCE_TEXT)
+    baseText: str = Field(max_length=MAX_SOURCE_TEXT)
 
     @field_validator("file")
     @classmethod
