@@ -81,4 +81,12 @@ back with the right file and a line within a sentence or two of the text you
 meant, the loop is working as intended; the model reads the surrounding lines
 anyway and finds the passage from the quoted words.
 
+What remains is the other half of the loop: once a passage has been located, it
+has to be rewritten in place without disturbing anything around it. Macros,
+labels and cross-references have to survive, equation numbers should not shift
+because a sentence was reworded, and the line wrapping should look like the rest
+of the file rather than like a machine's idea of a paragraph. A document that is
+easy to click on and painful to edit has solved only the half of the problem
+that is fun to demonstrate.
+
 \end{document}

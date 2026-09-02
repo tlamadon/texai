@@ -38,12 +38,14 @@ Combining the first-order conditions for~\eqref{eq:utility} and~\eqref{eq:budget
 means using the budget constraint to write
 $C_{t} = Y_{t} + (1 - \delta) K_{t} - K_{t+1}$, substituting it into the
 objective, and differentiating with respect to the single remaining choice
-variable $K_{t+1}$. The date-$t$ term contributes $-\beta^{t} u'(C_{t})$, and the
-date-$(t+1)$ term contributes $\beta^{t+1} u'(C_{t+1})$ multiplied by the gross
-return on a unit of capital, $\alpha A_{t+1} K_{t+1}^{\alpha - 1} + 1 - \delta$,
-where the first piece is the marginal product implied
-by~\eqref{eq:production} and the second is the undepreciated stock. Setting the
-sum to zero and using $u'(C) = C^{-\sigma}$ gives the Euler equation
+variable $K_{t+1}$. Saving one more unit of capital costs one unit of consumption
+today, which is worth $\beta^{t} u'(C_{t})$. Tomorrow that unit pays back two
+things: the extra output it produces, $\alpha A_{t+1} K_{t+1}^{\alpha - 1}$,
+which is the marginal product implied by~\eqref{eq:production}, and the
+$1 - \delta$ units of capital left over after depreciation. Its gross return is
+therefore $\alpha A_{t+1} K_{t+1}^{\alpha - 1} + 1 - \delta$, and the payoff is
+worth $\beta^{t+1} u'(C_{t+1})$ times that return. Setting the cost equal to the
+payoff and using $u'(C) = C^{-\sigma}$ gives the Euler equation
 \begin{equation}
   \left( \frac{C_{t+1}}{C_{t}} \right)^{\sigma}
     = \beta \left[ \alpha A_{t+1} K_{t+1}^{\alpha - 1} + 1 - \delta \right],
