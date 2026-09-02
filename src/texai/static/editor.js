@@ -22,6 +22,11 @@ import { showToast } from './toast.js';
 // than two so inserting a paragraph never flips the parity of everything below.
 const PARAGRAPH_PALETTE = 5;
 
+// Ghost-text autocomplete is opt-in and remembered per browser.
+const AUTOCOMPLETE_KEY = 'texai.editor.autocomplete';
+// How long the buffer must sit still before a suggestion is fetched.
+const SUGGEST_DELAY_MS = 350;
+
 export class SourceEditor {
   constructor({ onSaved } = {}) {
     this.els = {
@@ -32,6 +37,7 @@ export class SourceEditor {
       revert: document.getElementById('editor-revert'),
       menu: document.getElementById('editor-menu'),
       menuPop: document.getElementById('editor-menu-pop'),
+      autocomplete: document.getElementById('editor-autocomplete'),
       status: document.getElementById('editor-status'),
       dirty: document.getElementById('editor-dirty'),
       merged: document.getElementById('editor-merged'),
@@ -68,6 +74,14 @@ export class SourceEditor {
     this._placeKey = 'texai.editor.place';
     // Opens are async and can overlap; only the newest may touch the buffer.
     this._openToken = 0;
+
+    // Ghost-text autocomplete. Off until /api/info reports the API is reachable,
+    // and then only when the user has switched it on for this browser.
+    this.autocomplete = this._loadAutocompletePref();
+    this._completionAvailable = false;
+    this._suggestTimer = null;
+    this._completeController = null;
+    this._ghost = null; // { widget, text, line, ch } while a suggestion is shown
 
     this.outline = new OutlinePanel({
       panel: 'outline',
@@ -111,6 +125,10 @@ export class SourceEditor {
       if (event.key === 'Escape' && this.els.menuPop?.hidden === false) this._menu(false);
     });
     this.els.search?.addEventListener('click', () => this.onJump?.());
+    this.els.autocomplete?.addEventListener('click', () => {
+      this.setAutocomplete(!this.autocomplete);
+      this._menu(false);
+    });
   }
 
   _mount() {
@@ -131,6 +149,10 @@ export class SourceEditor {
       extraKeys: {
         'Cmd-S': () => this.save(),
         'Ctrl-S': () => this.save(),
+        // Tab takes the suggestion when one is showing; otherwise it does
+        // whatever Tab did before (browsers move focus), so nothing is stolen.
+        Tab: () => (this._acceptGhost() ? undefined : window.CodeMirror.Pass),
+        Esc: () => (this._clearGhost() ? undefined : window.CodeMirror.Pass),
       },
     });
     this.cm.on('change', () => {
@@ -139,9 +161,19 @@ export class SourceEditor {
       // Re-read the outline from the buffer, but not on every keystroke.
       clearTimeout(this._outlineTimer);
       this._outlineTimer = setTimeout(() => this._refreshOutline(), 250);
+      // The buffer moved, so any showing suggestion is stale; drop it and line
+      // up a fresh one for when typing pauses.
+      this._clearGhost();
+      this._scheduleSuggest();
     });
 
-    this.cm.on('cursorActivity', () => this._cursorMoved());
+    this.cm.on('cursorActivity', () => {
+      // Moving the caret abandons the suggestion at the old spot. Showing one
+      // never moves the caret, so this cannot clear a suggestion as it appears.
+      this._clearGhost();
+      this._cursorMoved();
+    });
+    this.cm.on('blur', () => this._clearGhost());
     this.cm.on('scroll', () => this.onViewMoved?.());
 
     // Clicking in the source shows that spot in the PDF — the same trip as
@@ -234,6 +266,10 @@ export class SourceEditor {
     // reading is still where you want to be, so it survives the swap. A
     // different file starts at the top, as opening a file should.
     const keep = file === this.file ? this._place() : null;
+
+    // A suggestion from the old buffer has nowhere to land in the new one.
+    this._clearGhost();
+    clearTimeout(this._suggestTimer);
 
     this._loading = true;
     this.cm.setValue(text);
@@ -674,6 +710,127 @@ export class SourceEditor {
     }
   }
 
+  /* ---------------- ghost-text autocomplete ---------------- */
+
+  /** Reveal or hide the toggle once the server says whether the API is reachable. */
+  configureCompletion({ available = false, reason = null } = {}) {
+    this._completionAvailable = !!available;
+    const item = this.els.autocomplete;
+    if (item) {
+      item.hidden = !available;
+      if (reason) item.title = reason;
+    }
+    if (available) this._reflectAutocomplete();
+    else this._stopSuggesting();
+  }
+
+  /** Switch suggestions on or off for this browser, and remember the choice. */
+  setAutocomplete(on) {
+    this.autocomplete = !!on;
+    try {
+      localStorage.setItem(AUTOCOMPLETE_KEY, on ? '1' : '0');
+    } catch {
+      /* storage disabled: the preference is a convenience, not state */
+    }
+    this._reflectAutocomplete();
+    if (on) this._scheduleSuggest();
+    else this._stopSuggesting();
+  }
+
+  _reflectAutocomplete() {
+    this.els.autocomplete?.setAttribute('aria-checked', String(this.autocomplete));
+  }
+
+  _loadAutocompletePref() {
+    try {
+      return localStorage.getItem(AUTOCOMPLETE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  _stopSuggesting() {
+    clearTimeout(this._suggestTimer);
+    this._completeController?.abort();
+    this._clearGhost();
+  }
+
+  _scheduleSuggest() {
+    clearTimeout(this._suggestTimer);
+    if (!this.autocomplete || !this._completionAvailable) return;
+    this._suggestTimer = setTimeout(() => this._requestSuggest(), SUGGEST_DELAY_MS);
+  }
+
+  /** Ask the server for a suggestion at the cursor and show it, if it still fits. */
+  async _requestSuggest() {
+    const cm = this.cm;
+    if (!cm || !this.active || !this.autocomplete || !this._completionAvailable) return;
+    if (this._loading || this.saving || cm.somethingSelected()) return;
+
+    const sent = cm.getValue();
+    const cursor = cm.getCursor();
+    const offset = cm.indexFromPos(cursor);
+
+    // A newer keystroke aborts the request this one is waiting on.
+    this._completeController?.abort();
+    const controller = new AbortController();
+    this._completeController = controller;
+
+    let result;
+    try {
+      result = await postJSON(
+        '/api/complete',
+        { file: this.file, text: sent, offset },
+        { signal: controller.signal }
+      );
+    } catch (err) {
+      // A superseded request was aborted on purpose and is not worth a word.
+      // A 503 means the server lost its credentials mid-session, so stop
+      // offering something that will now only fail.
+      if (err.code === 'completion_unavailable') {
+        this.configureCompletion({ available: false, reason: err.message });
+      }
+      return;
+    }
+
+    // The buffer or caret moved during the round trip, so the suggestion would
+    // land in the wrong place — the same raced-request guard sync() uses.
+    if (controller !== this._completeController || !this.cm || this.cm.getValue() !== sent) return;
+    const now = this.cm.getCursor();
+    if (now.line !== cursor.line || now.ch !== cursor.ch) return;
+
+    this._showGhost(result?.text || '');
+  }
+
+  _showGhost(text) {
+    this._clearGhost();
+    if (!text || !this.cm) return;
+    const cursor = this.cm.getCursor();
+    const node = document.createElement('span');
+    node.className = 'cm-ghost';
+    node.textContent = text;
+    const widget = this.cm.setBookmark(cursor, { widget: node, insertLeft: false });
+    this._ghost = { widget, text, line: cursor.line, ch: cursor.ch };
+  }
+
+  /** Accept the showing suggestion, if any. Returns whether it took the key. */
+  _acceptGhost() {
+    if (!this._ghost || !this.cm) return false;
+    const { text } = this._ghost;
+    this._clearGhost();
+    const at = this.cm.getCursor();
+    this.cm.replaceRange(text, at, at, '+complete');
+    return true;
+  }
+
+  /** Remove the showing suggestion. Returns whether there was one to remove. */
+  _clearGhost() {
+    if (!this._ghost) return false;
+    this._ghost.widget.clear();
+    this._ghost = null;
+    return true;
+  }
+
   /* ---------------- state ---------------- */
 
   /** The overflow menu, which is where anything that can lose work lives. */
@@ -748,6 +905,8 @@ export class SourceEditor {
     this.onActivate?.(active);
     if (!active) {
       this._menu(false); // it would otherwise be waiting, open, on the way back
+      this._clearGhost();
+      clearTimeout(this._suggestTimer);
       return;
     }
     this._mount();
