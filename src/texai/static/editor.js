@@ -17,6 +17,11 @@ import { OutlinePanel, parseOutline } from './outline.js';
 import { resolveInput } from './project.js';
 import { showToast } from './toast.js';
 
+// How many distinct gutter colours the paragraph guide rotates through. Kept
+// small so the rhythm reads as "alternating" rather than a rainbow, but larger
+// than two so inserting a paragraph never flips the parity of everything below.
+const PARAGRAPH_PALETTE = 5;
+
 export class SourceEditor {
   constructor({ onSaved } = {}) {
     this.els = {
@@ -234,6 +239,9 @@ export class SourceEditor {
     this.cm.setValue(text);
     this.cm.clearHistory();
     this._loading = false;
+    // setValue drops every line class, so the guide must repaint from scratch
+    // even when the new file's blank-line pattern happens to match the old one.
+    this._paraSignature = null;
     this.file = file;
     this.sha = sha;
     this.baseText = this.cm.getValue();
@@ -301,7 +309,51 @@ export class SourceEditor {
     if (!this.cm) return;
     this.entries = parseOutline(this.cm.getValue());
     this.outline.setEntries(this.entries);
+    this._paintParagraphs();
     this._cursorMoved();
+  }
+
+  /**
+   * Colour a gutter bar down each paragraph, rotating a small palette so no two
+   * neighbours match. Paragraphs are blank-line-separated blocks — the same
+   * boundary LaTeX itself uses — and the index a line lands in is what the PDF
+   * side will key its matching bar on.
+   *
+   * Painting is only worth doing when the boundaries actually moved: typing
+   * inside a paragraph does not change the colouring, so a cheap signature of
+   * which lines are blank gates the repaint and keeps this off the hot path of
+   * every keystroke.
+   */
+  _paintParagraphs() {
+    if (!this.cm || this.paragraphGuide === false) return;
+    const cm = this.cm;
+    const n = cm.lineCount();
+
+    let signature = '';
+    for (let i = 0; i < n; i += 1) {
+      signature += (cm.getLine(i) || '').trim() === '' ? '0' : '1';
+    }
+    if (signature === this._paraSignature) return;
+    this._paraSignature = signature;
+
+    cm.operation(() => {
+      let paragraph = -1;
+      let inside = false;
+      for (let i = 0; i < n; i += 1) {
+        for (let k = 0; k < PARAGRAPH_PALETTE; k += 1) {
+          cm.removeLineClass(i, 'wrap', `cm-para-${k}`);
+        }
+        if (signature[i] === '0') {
+          inside = false;
+          continue;
+        }
+        if (!inside) {
+          paragraph += 1;
+          inside = true;
+        }
+        cm.addLineClass(i, 'wrap', `cm-para-${paragraph % PARAGRAPH_PALETTE}`);
+      }
+    });
   }
 
   /** One place for everything that follows the cursor: the outline, the memory. */

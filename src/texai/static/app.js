@@ -9,6 +9,7 @@ import { SourceEditor } from './editor.js';
 import { QuickJump } from './jump.js';
 import { MarksLayer, narrowRects } from './marks.js';
 import { OutlinePanel } from './outline.js';
+import { ParagraphGuide } from './paraguide.js';
 import { ProjectSources } from './project.js';
 import { ScrollSync } from './sync.js';
 import { showToast } from './toast.js';
@@ -39,6 +40,7 @@ const els = {
 };
 
 let marks = null;
+let paraGuide = null;
 let viewHistory = null;
 
 const viewer = new PdfViewer({
@@ -49,7 +51,10 @@ const viewer = new PdfViewer({
     els.pageCount.textContent = String(count);
   },
   // Pages re-render on scroll and zoom, wiping anything overlaid on them.
-  onRender: () => marks?.draw(),
+  onRender: () => {
+    marks?.draw();
+    paraGuide?.draw();
+  },
   // Following a link moves the page; the arrow back has to know from where.
   onBeforeJump: () => viewHistory?.mark(),
 });
@@ -59,6 +64,9 @@ viewHistory = new ViewHistory({ viewer, back: 'view-back', forward: 'view-forwar
 
 const chat = new ChatPanel();
 marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.acceptAll });
+// The page-side twin of the editor's paragraph gutter. Refreshed whenever the
+// PDF is (re)built; redrawn on every render alongside the change markers.
+paraGuide = new ParagraphGuide({ viewer });
 
 // Saving rebuilds the PDF; the watcher below notices the new version and
 // reloads the page, so there is nothing to do here but let it happen.
@@ -314,6 +322,7 @@ async function loadPdf(version, { preserveView = false } = {}) {
   els.download.href = url;
   showEmpty('');
   marks?.refresh();
+  paraGuide?.refresh();
   updateZoomReadout();
   els.pageCount.textContent = String(viewer.pageCount);
 }
@@ -589,7 +598,7 @@ async function boot() {
 // Exposed for the browser layout suite (and handy from the devtools console).
 // Read-only handles; nothing here is part of the page's own control flow.
 window.__texai = {
-  viewer, chat, marks, editor, git, jump, contents, project, refreshContents,
+  viewer, chat, marks, paraGuide, editor, git, jump, contents, project, refreshContents,
   history: viewHistory, scrollSync,
 };
 

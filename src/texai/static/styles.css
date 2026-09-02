@@ -145,6 +145,27 @@ button.ghost { background: transparent; }
 .page canvas { display: block; }
 .page .textLayer { z-index: 2; }
 
+/* Paragraph rhythm guide: a coloured rule down the margin of each paragraph,
+   the page-side twin of the editor's gutter bars. Above the canvas so it shows,
+   below the text and the change markers, and never in the way of a click. The
+   palette matches .cm-para-* in the editor, keyed by the same paragraph index,
+   so a source block and the block it produced share a colour. */
+.page .para-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.para-bar {
+  position: absolute;
+  border-radius: 2px;
+}
+.para-bar.p0 { background: rgba(56, 139, 253, 0.85); }
+.para-bar.p1 { background: rgba(46, 160, 67, 0.85); }
+.para-bar.p2 { background: rgba(163, 113, 247, 0.85); }
+.para-bar.p3 { background: rgba(219, 109, 40, 0.85); }
+.para-bar.p4 { background: rgba(45, 164, 78, 0.7); }
+
 /* The document's own links, over the text layer so they can be clicked, but
    letting every other pointer event through to selection underneath. */
 .page .linkLayer {
@@ -955,6 +976,17 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
   background: rgba(63, 185, 80, 0.13);
   box-shadow: inset 2px 0 0 var(--ok);
 }
+
+/* Paragraph rhythm guide: a coloured gutter bar down each blank-line-separated
+   paragraph, rotating a small muted palette so neighbouring paragraphs never
+   share a colour. The same index will key the matching bar on the PDF side, so
+   a block of source and its rendered block read as the same colour. A left rule
+   only — nothing behind the text — so it stays quiet under a wall of prose. */
+.editor-host .cm-para-0 { box-shadow: inset 3px 0 0 rgba(88, 166, 255, 0.55); }
+.editor-host .cm-para-1 { box-shadow: inset 3px 0 0 rgba(63, 185, 80, 0.55); }
+.editor-host .cm-para-2 { box-shadow: inset 3px 0 0 rgba(210, 168, 255, 0.55); }
+.editor-host .cm-para-3 { box-shadow: inset 3px 0 0 rgba(255, 166, 87, 0.55); }
+.editor-host .cm-para-4 { box-shadow: inset 3px 0 0 rgba(126, 231, 135, 0.5); }
 
 /* The card's location label opens the editor, but should read as a link. */
 .mark-card-head .mark-where {

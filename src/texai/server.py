@@ -36,6 +36,7 @@ from .models import (
     SourceWrite,
 )
 from .navigate import LocateError, locate, locate_forward, locate_range
+from .paragraphs import paragraph_bars
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .selection import atomic_write_json, build_selection
 from .source import (
@@ -414,6 +415,13 @@ def create_app(
             return await asyncio.to_thread(locate, config, file, line)
         except LocateError as exc:
             raise _error(404, "not_locatable", str(exc)) from exc
+
+    @app.get("/api/paragraphs")
+    async def paragraphs() -> dict[str, Any]:
+        """Paragraph gutter bars for the whole document, keyed to the editor's
+        palette, so the two panes colour the same block the same way. Cached
+        against the build inside; the first request after a rebuild pays for it."""
+        return await asyncio.to_thread(paragraph_bars, config)
 
     # ------------------------------------------------------------------ git
 
