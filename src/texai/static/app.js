@@ -564,6 +564,7 @@ async function boot() {
     // Where the editor was last left, remembered per project rather than per
     // browser: two papers open on the same port are two different places.
     editor.setPlaceScope(info.root);
+    editor.configureCompletion(info.completion || { available: false });
     document.title = `${info.pdf} — texai`;
   } catch (err) {
     showEmpty(`Cannot reach the texai server: ${err.message}`, true);

@@ -11,6 +11,7 @@ __all__ = [
     "SelectRequest",
     "SourceWrite",
     "SourceMerge",
+    "CompleteRequest",
     "CommitRequest",
     "SourceLocation",
     "SelectResponse",
@@ -160,6 +161,29 @@ class SourceMerge(BaseModel):
     file: str = Field(min_length=1, max_length=1024)
     text: str = Field(max_length=MAX_SOURCE_TEXT)
     baseText: str = Field(max_length=MAX_SOURCE_TEXT)
+
+    @field_validator("file")
+    @classmethod
+    def _reject_traversal(cls, value: str) -> str:
+        candidate = PurePosixPath(value)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("file must be a relative path inside the project")
+        return value
+
+
+class CompleteRequest(BaseModel):
+    """A cursor position in the editor's buffer, offered up for a completion.
+
+    ``text`` is the live buffer (unsaved edits and all — completing against what
+    is being typed is the whole point) and ``offset`` is the cursor's character
+    index into it. Read-only: nothing is written, so no base hash is needed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(min_length=1, max_length=1024)
+    text: str = Field(max_length=MAX_SOURCE_TEXT)
+    offset: int = Field(ge=0, le=MAX_SOURCE_TEXT)
 
     @field_validator("file")
     @classmethod

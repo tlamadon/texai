@@ -35,13 +35,16 @@ export async function getJSON(url) {
   return unwrap(await fetch(url, { cache: 'no-store' }));
 }
 
-export async function postJSON(url, body) {
+export async function postJSON(url, body, { signal } = {}) {
   return unwrap(
     await fetch(url, {
       method: 'POST',
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      // Callers that debounce (ghost-text completion) pass a signal so a newer
+      // keystroke can abort the request this one is still waiting on.
+      signal,
     })
   );
 }

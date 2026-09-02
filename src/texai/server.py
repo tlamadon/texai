@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .agent import AgentSession, AgentUnavailable, sdk_status
 from .commitmsg import propose_message
+from .complete import CompletionUnavailable, complete_text, completion_status
 from .config import AppConfig
 from .events import EventBus, sse_stream
 from .git import GitError
@@ -30,6 +31,7 @@ from .merge import merge3, normalize_newlines
 from .models import (
     ChatRequest,
     CommitRequest,
+    CompleteRequest,
     SelectRequest,
     SelectResponse,
     SourceMerge,
@@ -178,6 +180,7 @@ def create_app(
     @app.get("/api/info")
     async def info() -> dict[str, Any]:
         available, reason = sdk_status()
+        complete_available, complete_reason = completion_status()
         return {
             "version": __version__,
             "pdf": config.pdf_rel,
@@ -196,6 +199,10 @@ def create_app(
                 "sessionId": agent_session.session_id,
                 # Lets you attach a real terminal to the very same conversation.
                 "resumeCommand": agent_session.resume_command(),
+            },
+            "completion": {
+                "available": complete_available,
+                "reason": complete_reason,
             },
         }
 
@@ -548,6 +555,21 @@ def create_app(
         bus.publish("build_finished", turnId=None, attempt=1, ok=build["ok"],
                     errors=build["errors"], summary=build["summary"])
         return {"ok": True, **written, "build": build}
+
+    @app.post("/api/complete")
+    async def complete(payload: CompleteRequest) -> dict[str, Any]:
+        """A fill-in-the-middle suggestion for the editor's ghost text.
+
+        Read-only, stateless, and allowed while the agent runs: it neither
+        touches disk nor goes through the turn controller. ``text`` is the live
+        buffer the editor holds, so the suggestion follows what is being typed
+        rather than what was last saved.
+        """
+        try:
+            suggestion = await complete_text(payload.file, payload.text, payload.offset)
+        except CompletionUnavailable as exc:
+            raise _error(503, "completion_unavailable", str(exc)) from exc
+        return {"text": suggestion}
 
     @app.get("/api/changes")
     async def session_changes() -> dict[str, Any]:

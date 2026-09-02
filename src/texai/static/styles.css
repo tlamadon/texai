@@ -769,6 +769,15 @@ button.toggle.active {
 }
 .editor-menu .menu-item:hover:not(:disabled),
 .editor-menu .menu-item:focus-visible { background: #414954; }
+/* A checkable menu item leaves room for a leading tick that only shows when on,
+   so the label does not shift as it toggles. */
+.editor-menu .menu-check { padding-left: 20px; position: relative; }
+.editor-menu .menu-check[aria-checked="true"]::before {
+  content: "\2713";
+  position: absolute;
+  left: 6px;
+  color: var(--accent);
+}
 .editor-menu .menu-note {
   display: block;
   color: var(--muted);
@@ -942,6 +951,16 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
 /* Where you landed after a jump, and where LaTeX failed. */
 .editor-host .cm-flash { background: rgba(76, 141, 255, 0.22); }
 .editor-host .cm-error-line { background: rgba(248, 81, 73, 0.16); }
+
+/* The Copilot-style suggestion: the text that Tab would accept, drawn faded and
+   inert so it reads as a proposal sitting in the buffer rather than as content
+   already there. pre-wrap keeps a rare multi-line suggestion legible. */
+.cm-ghost {
+  color: var(--muted);
+  opacity: 0.55;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
 
 /* The line the page is showing, while the two panes are scrolling together.
    A rule and no fill: it moves with every scroll, so it has to be readable
