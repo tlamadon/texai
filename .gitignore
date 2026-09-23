@@ -1,6 +1,9 @@
 # texai runtime state
 .texai/
 
+# secrets / local environment
+.env
+
 # python
 __pycache__/
 *.py[cod]

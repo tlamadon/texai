@@ -37,6 +37,21 @@ def test_clean_keeps_a_leading_space_but_drops_trailing_blank_lines():
     assert complete.clean(" and then\n\n") == " and then"
 
 
+def test_completion_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("TEXAI_AUTOCOMPLETE", raising=False)
+    ok, reason = complete.completion_status()
+    assert ok is False
+    assert reason == complete.DISABLED_HINT
+
+
+def test_completion_gate_opens_with_the_env_flag(monkeypatch):
+    monkeypatch.setenv("TEXAI_AUTOCOMPLETE", "1")
+    # Past the gate it depends on the SDK and credentials, but it is no longer
+    # the "off by default" refusal.
+    _, reason = complete.completion_status()
+    assert reason != complete.DISABLED_HINT
+
+
 def test_build_window_bounds_around_the_cursor(monkeypatch):
     monkeypatch.setattr(complete, "PREFIX_WINDOW", 3)
     monkeypatch.setattr(complete, "SUFFIX_WINDOW", 2)

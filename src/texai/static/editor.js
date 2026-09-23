@@ -715,6 +715,7 @@ export class SourceEditor {
   /** Reveal or hide the toggle once the server says whether the API is reachable. */
   configureCompletion({ available = false, reason = null } = {}) {
     this._completionAvailable = !!available;
+    this._clog('available', available ? 'yes' : `no — ${reason || 'unknown'}`);
     const item = this.els.autocomplete;
     if (item) {
       item.hidden = !available;
@@ -732,6 +733,7 @@ export class SourceEditor {
     } catch {
       /* storage disabled: the preference is a convenience, not state */
     }
+    this._clog('toggled', on ? 'on' : 'off');
     this._reflectAutocomplete();
     if (on) this._scheduleSuggest();
     else this._stopSuggesting();
@@ -761,6 +763,24 @@ export class SourceEditor {
     this._suggestTimer = setTimeout(() => this._requestSuggest(), SUGGEST_DELAY_MS);
   }
 
+  /**
+   * A running log of the ghost-text lifecycle.
+   *
+   * Ghost text is silent by design, which makes "is it even firing?" hard to
+   * answer. Every stage lands in the browser console under one prefix (filter
+   * devtools by "[autocomplete]"); the user-meaningful ones also flash in the
+   * editor's status bar so you do not need devtools open to see it working.
+   */
+  _clog(stage, detail = '') {
+    console.debug(`[autocomplete] ${stage}${detail ? ` — ${detail}` : ''}`);
+  }
+
+  /** A status-bar cue for the ghost lifecycle, never over a save/merge message. */
+  _completeStatus(text, kind = '') {
+    if (this.saving) return;
+    this._setStatus(text, kind);
+  }
+
   /** Ask the server for a suggestion at the cursor and show it, if it still fits. */
   async _requestSuggest() {
     const cm = this.cm;
@@ -771,10 +791,26 @@ export class SourceEditor {
     const cursor = cm.getCursor();
     const offset = cm.indexFromPos(cursor);
 
+    // Only suggest at a word boundary — after a space, newline, or punctuation.
+    // Firing while the caret sits in or right after a word forces fill-in-the-
+    // middle to guess between finishing that word ("thi" → "s …") and starting
+    // the next with no space ("likelihood" → "estimation"), which is what reads
+    // as stray-fragment suggestions. A boundary means it always proposes forward.
+    const lineText = cm.getLine(cursor.line) || '';
+    const prevChar = cursor.ch > 0 ? lineText[cursor.ch - 1] : '';
+    if (/\w/.test(prevChar)) {
+      this._clog('skipped', 'mid-word — waiting for a boundary');
+      return;
+    }
+
     // A newer keystroke aborts the request this one is waiting on.
     this._completeController?.abort();
     const controller = new AbortController();
     this._completeController = controller;
+
+    const startedAt = performance.now();
+    this._clog('request', `${this.file}:${offset}`);
+    this._completeStatus('Autocomplete: thinking…');
 
     let result;
     try {
@@ -784,22 +820,43 @@ export class SourceEditor {
         { signal: controller.signal }
       );
     } catch (err) {
-      // A superseded request was aborted on purpose and is not worth a word.
-      // A 503 means the server lost its credentials mid-session, so stop
-      // offering something that will now only fail.
-      if (err.code === 'completion_unavailable') {
+      if (err.name === 'AbortError') {
+        // A superseded request, aborted on purpose by a newer keystroke.
+        this._clog('superseded');
+      } else if (err.code === 'completion_unavailable') {
+        // The server lost its credentials mid-session; stop offering something
+        // that will now only fail, and say why.
+        this._clog('unavailable', err.message);
         this.configureCompletion({ available: false, reason: err.message });
+      } else {
+        this._clog('error', err.message || String(err));
+        this._completeStatus(`Autocomplete: ${err.message || err}`, 'err');
       }
       return;
     }
 
     // The buffer or caret moved during the round trip, so the suggestion would
     // land in the wrong place — the same raced-request guard sync() uses.
-    if (controller !== this._completeController || !this.cm || this.cm.getValue() !== sent) return;
+    if (controller !== this._completeController || !this.cm || this.cm.getValue() !== sent) {
+      this._clog('stale', 'buffer changed while waiting');
+      return;
+    }
     const now = this.cm.getCursor();
-    if (now.line !== cursor.line || now.ch !== cursor.ch) return;
+    if (now.line !== cursor.line || now.ch !== cursor.ch) {
+      this._clog('stale', 'caret moved while waiting');
+      return;
+    }
 
-    this._showGhost(result?.text || '');
+    const ms = Math.round(performance.now() - startedAt);
+    const text = result?.text || '';
+    if (text) {
+      this._showGhost(text);
+      this._clog('shown', `${text.length} chars · ${ms}ms`);
+      this._completeStatus(`Autocomplete: ready — Tab to accept · ${text.length} chars · ${ms}ms`);
+    } else {
+      this._clog('empty', `${ms}ms`);
+      this._completeStatus(`Autocomplete: no suggestion · ${ms}ms`);
+    }
   }
 
   _showGhost(text) {
@@ -820,6 +877,8 @@ export class SourceEditor {
     this._clearGhost();
     const at = this.cm.getCursor();
     this.cm.replaceRange(text, at, at, '+complete');
+    this._clog('accepted', `${text.length} chars`);
+    this._completeStatus('Autocomplete: accepted');
     return true;
   }
 

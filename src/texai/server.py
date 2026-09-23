@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
@@ -19,6 +20,7 @@ from .agent import AgentSession, AgentUnavailable, sdk_status
 from .commitmsg import propose_message
 from .complete import CompletionUnavailable, complete_text, completion_status
 from .config import AppConfig
+from .console import note, warn
 from .events import EventBus, sse_stream
 from .git import GitError
 from .git import commit as git_commit
@@ -573,10 +575,25 @@ def create_app(
         buffer the editor holds, so the suggestion follows what is being typed
         rather than what was last saved.
         """
+        started = time.monotonic()
         try:
             suggestion = await complete_text(payload.file, payload.text, payload.offset)
         except CompletionUnavailable as exc:
+            warn(f"complete {payload.file} — {exc}")
             raise _error(503, "completion_unavailable", str(exc)) from exc
+        ms = int((time.monotonic() - started) * 1000)
+        # One human-paced line per suggestion, so the terminal answers "did it
+        # fire, what came back, how slow?" — the questions ghost text hides. The
+        # repr of the caret boundary (text just before it, then the insertion)
+        # makes mid-word completions and stray leading characters obvious.
+        if suggestion:
+            tail = payload.text[max(0, payload.offset - 24) : payload.offset]
+            note(
+                f"complete {payload.file}:{payload.offset} · "
+                f"…{tail!r} → {suggestion[:60]!r} ({len(suggestion)} chars, {ms}ms)"
+            )
+        else:
+            note(f"complete {payload.file}:{payload.offset} → no suggestion in {ms}ms")
         return {"text": suggestion}
 
     @app.get("/api/changes")

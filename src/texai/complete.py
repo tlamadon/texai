@@ -41,18 +41,26 @@ TIMEOUT_S = 8.0
 CURSOR = "<CURSOR/>"
 
 SYSTEM_PROMPT = (
-    "You are an inline autocomplete for LaTeX source files. The document you are "
-    f"given contains a {CURSOR} marker at the cursor. Output the text that should "
-    "be inserted there to continue naturally from what precedes it and lead into "
-    "what follows.\n\n"
+    "You are an inline autocomplete for LaTeX source files, like a code editor's "
+    f"ghost text. The document contains a {CURSOR} marker at the caret. Output only "
+    "the text to insert there so the writing continues naturally.\n\n"
     "Rules:\n"
-    "- Output only the raw text to insert — no explanation, no markdown code "
-    "fences, no repetition of the surrounding text.\n"
-    "- Keep it short: at most one sentence or one line.\n"
-    "- Match the surrounding LaTeX conventions, macros, and line wrapping.\n"
-    "- If there is no useful continuation, output nothing."
+    "- Continue from exactly the characters immediately before the caret. Match "
+    "spacing precisely: if the caret follows a space, do not start with another "
+    "space; if it follows a partial word, finish that word before continuing.\n"
+    "- Return a clean, grammatical continuation — finish the current phrase or "
+    "sentence. Never start with a stray fragment or an unrelated word.\n"
+    "- Keep it short: at most one sentence or clause.\n"
+    "- Match the surrounding LaTeX conventions, macros, and notation.\n"
+    "- Output only the raw insertion — no explanation, no markdown code fences, no "
+    "repetition of the surrounding text.\n"
+    "- If no natural continuation fits, output nothing."
 )
 
+DISABLED_HINT = (
+    "Autocomplete is off by default. Launch texai with TEXAI_AUTOCOMPLETE=1 to "
+    "turn it on."
+)
 INSTALL_HINT = (
     "The `anthropic` package is missing — run `uv sync` (or "
     "`pip install --upgrade texai`) and restart."
@@ -85,8 +93,25 @@ def _has_credentials() -> bool:
     return credentials.is_dir() and any(credentials.iterdir())
 
 
+def _enabled() -> bool:
+    """Whether the operator opted the feature in for this run.
+
+    Off by default: the suggestions did not earn their place yet, so the whole
+    feature stays dark — no menu item, no requests — unless explicitly asked for.
+    The code all remains; this is the one switch that wakes it.
+    """
+    return os.environ.get("TEXAI_AUTOCOMPLETE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def completion_status() -> tuple[bool, str | None]:
     """Whether completions can run here, and why not if they cannot."""
+    if not _enabled():
+        return False, DISABLED_HINT
     try:
         import anthropic  # noqa: F401
     except ImportError:
