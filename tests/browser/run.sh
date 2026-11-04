@@ -43,7 +43,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-uv run texai --root ./example --pdf ./example/main.pdf --port "$PORT" \
+uv run texai ./example/main.tex --port "$PORT" \
   > "$PROFILE/server.log" 2>&1 &
 SERVER_PID=$!
 

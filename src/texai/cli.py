@@ -1,4 +1,4 @@
-"""Command line entry point: ``uv run texai --root DIR --pdf FILE``."""
+"""Command line entry point: ``texai paper.tex`` (or the PDF it builds)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from .agent import AgentSession, sdk_status
 from .build import BuildError, run_build, running_builds
 from .config import AppConfig
 from .console import note, warn
+from .discover import DiscoveryError, discover
 from .events import EventBus
 from .paths import PathOutsideRootError
 from .server import create_app
@@ -36,8 +37,26 @@ def build_parser() -> argparse.ArgumentParser:
             "locations as LaTeX source positions for a coding agent."
         ),
     )
-    parser.add_argument("--root", required=True, help="project root directory")
-    parser.add_argument("--pdf", required=True, help="PDF to review (must be inside --root)")
+    parser.add_argument(
+        "document",
+        nargs="?",
+        default=None,
+        help=(
+            "the .tex to work on, or the .pdf it builds, or a directory holding one "
+            "(default: the document in the current directory). Everything else is "
+            "inferred from it."
+        ),
+    )
+    parser.add_argument(
+        "--root",
+        default=None,
+        help="project root; everything stays inside it (default: the document's directory)",
+    )
+    parser.add_argument(
+        "--pdf",
+        default=None,
+        help="PDF to review (default: where latexmk writes it, next to the .tex)",
+    )
     parser.add_argument(
         "--port", type=int, default=DEFAULT_PORT, help=f"port on {HOST} (default: {DEFAULT_PORT})"
     )
@@ -127,19 +146,22 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
+        layout = discover(args.document, root=args.root, pdf=args.pdf)
         config = AppConfig.create(
-            args.root,
-            args.pdf,
+            layout.root,
+            layout.pdf,
             synctex_executable=args.synctex,
             build_command=args.build_cmd,
             build_dir=args.build_dir,
+            root_tex=layout.tex,
         )
-    except NotADirectoryError as exc:
+    except (DiscoveryError, NotADirectoryError) as exc:
         print(f"texai: {exc}", file=sys.stderr)
         return 2
     except PathOutsideRootError as exc:
         print(
-            f"texai: --pdf {exc.path} is outside --root {exc.root}",
+            f"texai: {exc.path} is outside the project root {exc.root} — pass --root "
+            "a directory that holds both the .tex and the PDF.",
             file=sys.stderr,
         )
         return 2
@@ -172,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         [
             f"texai {__version__}",
             f"  root:      {config.root}",
+            f"  tex:       {_relative(config.root_tex, config.root)}",
             f"  pdf:       {config.pdf_rel}",
             f"  selection: {config.selection_file}",
             f"  build:     {build}",
@@ -196,6 +219,15 @@ def main(argv: list[str] | None = None) -> int:
     # above was the shutdown finishing rather than something going wrong.
     note("stopped.")
     return 0
+
+
+def _relative(path: Path | None, root: Path) -> str:
+    if path is None:
+        return "not found (pass --build-cmd to rebuild)"
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def pending_work(app: Any) -> str:

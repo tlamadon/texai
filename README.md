@@ -54,21 +54,32 @@ at the line; matching the clicked word against the source gets it to
 One command on a paper you already have — nothing to install:
 
 ```bash
-uvx texai --root /path/to/paper --pdf main.pdf --open
+uvx texai /path/to/paper/main.tex --open
 ```
 
-`--root` is the directory the paper lives in and `--pdf` is the PDF it builds,
-wherever that lands — `main.pdf`, `build/main.pdf`, `out/paper.pdf`. It does not
-have to exist yet: texai looks for the `.tex` named after it, compiles it, and
-then opens the viewer on <http://127.0.0.1:8765/>. All it needs is a TeX
-installation with `latexmk` and `synctex`.
+Name the `.tex`, or the PDF it builds, and texai works out the rest:
+
+- **From a `.tex`**, the PDF is wherever `latexmk` will write it: next to the
+  `.tex`, or under the `$out_dir` your `latexmkrc` names, or wherever an existing
+  `main.pdf` with its SyncTeX data already sits below it.
+- **From a PDF**, the source is the `.tex` with the same name, beside it or a few
+  directories up — `build/main.pdf` is built from `../main.tex`.
+- **From a directory, or from nothing at all** in the paper's own directory, it
+  is the one `.tex` there that opens with `\documentclass` (`main.tex` if there
+  are several).
+- **The project root** is the narrowest directory holding both, which is usually
+  the `.tex`'s own. Everything texai and the agent touch stays inside it.
+
+The PDF does not have to exist yet: texai compiles it, then opens the viewer on
+<http://127.0.0.1:8765/>. All it needs is a TeX installation with `latexmk` and
+`synctex`. When a guess is wrong, `--root` and `--pdf` override it.
 
 Nothing to hand? This repository's `example/` is a short paper split across four
 files, and ships uncompiled on purpose:
 
 ```bash
 git clone https://github.com/tlamadon/texai && cd texai
-uvx texai --root ./example --pdf ./example/main.pdf --open
+uvx texai example/main.tex --open
 ```
 
 `uvx` is `uv tool run`: it fetches texai into a throwaway environment, runs it,
@@ -104,7 +115,7 @@ about running it yourself.)
 `uvx` re-resolves every so often. Once texai has earned a place on your PATH:
 
 ```bash
-uv tool install texai        # then just: texai --root . --pdf main.pdf
+uv tool install texai        # then just: texai main.tex
 pip install texai            # or the pip equivalent
 ```
 
@@ -661,8 +672,9 @@ unavailable it falls back to `Update sections/model.tex, ...` and says so.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--root` | required | project root; everything stays inside it |
-| `--pdf` | required | PDF to review, relative to `--root` or to your shell |
+| *document* | the document in the current directory | the `.tex`, its PDF, or a directory holding it |
+| `--root` | the directory holding the `.tex` and the PDF | project root; everything stays inside it |
+| `--pdf` | where `latexmk` writes it | PDF to review, relative to `--root` or to your shell |
 | `--build-cmd` | `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>` | how to rebuild |
 | `--build-dir` | the root `.tex` file's directory | where to run the build |
 | `--model` | the CLI's default | model for the agent |

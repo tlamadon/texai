@@ -52,8 +52,12 @@ before continuing — `texai` needs a PDF.
 Run it in the background and leave it running for the session:
 
 ```bash
-uv run texai --root <project-root> --pdf <path/to/output.pdf>
+uv run texai <path/to/main.tex>
 ```
+
+The PDF and project root are inferred from the `.tex`. If the build wrote the
+PDF somewhere unusual, name the PDF instead (`texai build/main.pdf`), or pass
+`--pdf`/`--root` to override the guess. The banner prints what it settled on.
 
 Tell the user the URL it prints (default <http://127.0.0.1:8765/>) and that
 **Cmd-click** (macOS) or **Ctrl-click** records a location — and that selecting

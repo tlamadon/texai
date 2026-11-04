@@ -36,6 +36,7 @@ class AppConfig:
         synctex_executable: str = "synctex",
         build_command: str | None = None,
         build_dir: str | Path | None = None,
+        root_tex: str | Path | None = None,
     ) -> "AppConfig":
         resolved_root = resolve_root(root)
         pdf_path = resolve_user_path(pdf, resolved_root)
@@ -49,7 +50,13 @@ class AppConfig:
             synctex_executable=synctex_executable,
             build_command=build_command,
             build_dir_override=resolved_build_dir,
-            root_tex=find_root_tex(pdf_path, resolved_root),
+            # Named when the caller already knows it (see discover.py); guessed
+            # from the PDF's name otherwise.
+            root_tex=(
+                resolve_user_path(root_tex, resolved_root)
+                if root_tex is not None
+                else find_root_tex(pdf_path, resolved_root)
+            ),
         )
 
     # ------------------------------------------------------------------ paths
