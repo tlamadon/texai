@@ -97,6 +97,8 @@ jobs:
               "texai/static/history.js",
               "texai/static/sync.js",
               "texai/static/git.js",
+              "texai/static/annotations.js",
+              "texai/static/paraguide.js",
               "texai/static/vendor/pdfjs/pdf.mjs",
               "texai/static/vendor/pdfjs/pdf.worker.mjs",
               "texai/static/vendor/codemirror/codemirror.js",
