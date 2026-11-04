@@ -18,6 +18,9 @@ tagged with its source ``(file, line)`` and carries a position, so one pass over
 the file builds a line-to-position index for the whole document. The result is
 cached against the SyncTeX file (rewritten on every build) and the source
 mtimes, so only the first request after a change pays for the parse.
+
+The same pass places the author's ``%@`` annotations (see :mod:`texai.annotations`):
+an intent beside its paragraph's bar, a note beside the line it precedes.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .annotations import INTENT, parse_annotations
 from .config import AppConfig
 from .paths import to_project_relative
 from .snapshots import iter_source_files
@@ -62,8 +66,10 @@ _GLYPH = re.compile(r"^x(\d+),(\d+):(-?\d+),(-?\d+)")
 # start of a text line — 8pt to the left of the first glyph — so the bar sits in
 # the margin rather than over the first character. Every line repeats the column
 # left, while the page's outer container (h = 0) and centred display math are
-# one-offs, so the most common left on a page is the text margin.
-_HBOX = re.compile(r"^\((\d+),(\d+):(-?\d+),(-?\d+):")
+# one-offs, so the most common left on a page is the text margin. Likewise every
+# full line is the column's width ``W``, so the most common ``h + W`` is its right
+# edge, where the notes hang.
+_HBOX = re.compile(r"^\((\d+),(\d+):(-?\d+),(-?\d+):(-?\d+),")
 # A sheet opens with its page number on its own line.
 _SHEET = re.compile(r"^\{(\d+)")
 
@@ -126,7 +132,7 @@ def _project_file(config: AppConfig, path: str) -> str | None:
 
 def _parse_synctex(
     config: AppConfig,
-) -> tuple[dict[tuple[str, int], dict[int, list[float]]], float]:
+) -> tuple[dict[tuple[str, int], dict[int, list[float]]], float, float]:
     """Where each source line landed, read straight from the ``.synctex.gz``.
 
     Returns two things in PDF points from the top-left of the page — the same
@@ -139,10 +145,11 @@ def _parse_synctex(
       document. Bars hang here rather than at each paragraph's own leftmost
       glyph, so a centred equation or an indented one-liner still gets a bar in
       the margin instead of one floating over the middle of the page.
+    * ``right_margin`` — the right edge of the text column, found the same way.
     """
     data = synctex_data_file(config.pdf_path)
     if data is None:
-        return {}, 0.0
+        return {}, 0.0, 0.0
 
     tag_files: dict[int, str | None] = {}
     unit = 1.0
@@ -151,6 +158,7 @@ def _parse_synctex(
     y_offset_sp = 0.0
     index: dict[tuple[str, int], dict[int, list[float]]] = {}
     left_votes: dict[int, Counter[int]] = {}
+    right_votes: Counter[int] = Counter()
     page = 0
 
     opener = gzip.open if data.suffix == ".gz" else open
@@ -196,6 +204,9 @@ def _parse_synctex(
                 # container cannot win the vote.
                 if left > 1.0:
                     left_votes.setdefault(page, Counter())[round(left)] += 1
+                    width = float(hbox.group(5)) * scale
+                    if width > 1.0:
+                        right_votes[round(left + width)] += 1
                 continue
 
             glyph = _GLYPH.match(raw)
@@ -223,7 +234,8 @@ def _parse_synctex(
     for votes in left_votes.values():
         total.update(votes)
     left_margin = float(total.most_common(1)[0][0]) if total else 0.0
-    return index, left_margin
+    right_margin = float(right_votes.most_common(1)[0][0]) if right_votes else 0.0
+    return index, left_margin, right_margin
 
 
 def _header_number(line: str, default: float) -> float:
@@ -233,19 +245,33 @@ def _header_number(line: str, default: float) -> float:
         return default
 
 
-def _bars_for_file(
-    config: AppConfig,
+def _line_top(
+    positions: dict[int, list[float]] | None,
+) -> tuple[int, float] | None:
+    """The first page a source line typeset on, and the top of it there."""
+    if not positions:
+        return None
+    page = min(positions)
+    return page, positions[page][0] - _ASCENT_PT
+
+
+def _map_file(
     path: Path,
     relative: str,
     line_index: dict[tuple[str, int], dict[int, list[float]]],
     left_margin: float,
-) -> list[dict[str, Any]]:
-    """Every paragraph bar one file contributes, one per page it touches."""
+    right_margin: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Every paragraph bar one file contributes, one per page it touches, and
+    the annotations it carries, each placed beside the paragraph it belongs to."""
     text = path.read_text(encoding="utf-8", errors="replace")
     body_start = _body_start_line(text)
+    ranges = paragraph_ranges(text)
     bars: list[dict[str, Any]] = []
+    # Where each paragraph that typeset anything begins: (page, top).
+    starts: dict[int, tuple[int, float]] = {}
 
-    for index, first, last in paragraph_ranges(text):
+    for index, first, last in ranges:
         if last < body_start:
             continue  # preamble: counted for the index, but nothing to draw
 
@@ -276,7 +302,56 @@ def _bars_for_file(
                     "height": round(height, 2),
                 }
             )
-    return bars
+        # The first line in source order, not the earliest page any line
+        # touched: a page shipped out mid-paragraph tags its footer with
+        # whatever line TeX was reading, which can be a page too early.
+        for line in range(first, last + 1):
+            found = _line_top(line_index.get((relative, line)))
+            if found is not None:
+                starts[index] = found
+                break
+
+    notes: list[dict[str, Any]] = []
+    for note in parse_annotations(text):
+        if note.line < body_start:
+            continue  # the preamble has nothing on the page to hang it beside
+        # Its own paragraph, or — for a block of annotations on their own — the
+        # first one below that typeset something.
+        own = next((r for r in ranges if r[1] <= note.line <= r[2]), None)
+        if own is None:
+            continue
+        target = next((r for r in ranges[own[0] :] if r[0] in starts), None)
+        if target is None:
+            continue
+        index, first, last = target
+
+        spot = starts[index]
+        if note.kind != INTENT:
+            # Beside the line it comments on: the first one after it that put
+            # something on the page, else the last one before it.
+            after = range(max(first, note.line + 1), last + 1)
+            before = range(min(last, note.line - 1), first - 1, -1)
+            for line in (*after, *before):
+                found = _line_top(line_index.get((relative, line)))
+                if found is not None:
+                    spot = found
+                    break
+
+        notes.append(
+            {
+                "file": relative,
+                "line": note.line,
+                "kind": note.kind,
+                "text": note.text,
+                "index": index,
+                "palette": index % PARAGRAPH_PALETTE,
+                "page": spot[0],
+                "x": round(left_margin, 2),
+                "right": round(right_margin, 2),
+                "y": round(spot[1], 2),
+            }
+        )
+    return bars, notes
 
 
 def _signature(config: AppConfig, sources: list[Path]) -> str:
@@ -302,12 +377,14 @@ def _signature(config: AppConfig, sources: list[Path]) -> str:
 def paragraph_bars(config: AppConfig) -> dict[str, Any]:
     """Paragraph bars for the whole document, cached against the build.
 
-    Returns ``{"palette": N, "bars": [...]}`` where each bar carries the source
-    file and paragraph it came from, its palette index, and a rectangle in PDF
-    points from the page's top-left.
+    Returns ``{"palette": N, "bars": [...], "annotations": [...]}`` where each
+    bar carries the source file and paragraph it came from, its palette index,
+    and a rectangle in PDF points from the page's top-left. Each annotation
+    carries its source line, kind and text, the paragraph it belongs to, and
+    where it goes: a page, a top, and the text column's left and right edges.
     """
     if synctex_data_file(config.pdf_path) is None:
-        return {"palette": PARAGRAPH_PALETTE, "bars": []}
+        return {"palette": PARAGRAPH_PALETTE, "bars": [], "annotations": []}
 
     sources = [
         path
@@ -321,17 +398,20 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
     if cached is not None and cached[0] == signature:
         return cached[1]
 
-    line_index, left_margin = _parse_synctex(config)
+    line_index, left_margin, right_margin = _parse_synctex(config)
     # Only files that actually rendered are worth reading back for paragraphs.
     present = {file for file, _line in line_index}
 
     bars: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
     for path in sources:
         relative = to_project_relative(path, config.root)
         if relative not in present:
             continue
-        bars.extend(_bars_for_file(config, path, relative, line_index, left_margin))
+        file_bars, file_notes = _map_file(path, relative, line_index, left_margin, right_margin)
+        bars.extend(file_bars)
+        notes.extend(file_notes)
 
-    answer = {"palette": PARAGRAPH_PALETTE, "bars": bars}
+    answer = {"palette": PARAGRAPH_PALETTE, "bars": bars, "annotations": notes}
     _cache[key] = (signature, answer)
     return answer

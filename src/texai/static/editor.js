@@ -22,6 +22,11 @@ import { showToast } from './toast.js';
 // than two so inserting a paragraph never flips the parity of everything below.
 const PARAGRAPH_PALETTE = 5;
 
+// An author annotation: a comment line opening with `%@`, optionally naming its
+// kind (`%@intent ...`, `%@todo ...`). Must agree with _ANNOTATION in
+// annotations.py, which places the same lines in the PDF's margins.
+const ANNOTATION = /^\s*%@(intent(?![\w-]))?/i;
+
 export class SourceEditor {
   constructor({ onSaved } = {}) {
     this.els = {
@@ -358,7 +363,8 @@ export class SourceEditor {
    * Painting is only worth doing when the boundaries actually moved: typing
    * inside a paragraph does not change the colouring, so a cheap signature of
    * which lines are blank gates the repaint and keeps this off the hot path of
-   * every keystroke.
+   * every keystroke. The same pass tints the `%@` annotation lines, so the
+   * signature notes those too — they are part of their paragraph, not breaks.
    */
   _paintParagraphs() {
     if (!this.cm || this.paragraphGuide === false) return;
@@ -367,7 +373,9 @@ export class SourceEditor {
 
     let signature = '';
     for (let i = 0; i < n; i += 1) {
-      signature += (cm.getLine(i) || '').trim() === '' ? '0' : '1';
+      const text = cm.getLine(i) || '';
+      const note = ANNOTATION.exec(text);
+      signature += text.trim() === '' ? '0' : note ? (note[1] ? 'i' : 'a') : '1';
     }
     if (signature === this._paraSignature) return;
     this._paraSignature = signature;
@@ -379,6 +387,10 @@ export class SourceEditor {
         for (let k = 0; k < PARAGRAPH_PALETTE; k += 1) {
           cm.removeLineClass(i, 'wrap', `cm-para-${k}`);
         }
+        cm.removeLineClass(i, 'background', 'cm-annot');
+        cm.removeLineClass(i, 'background', 'cm-annot-intent');
+        if (signature[i] === 'a') cm.addLineClass(i, 'background', 'cm-annot');
+        if (signature[i] === 'i') cm.addLineClass(i, 'background', 'cm-annot-intent');
         if (signature[i] === '0') {
           inside = false;
           continue;

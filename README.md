@@ -33,6 +33,10 @@ back marked on the page for you to accept or reject.
   its theorems by title — and clicking one scrolls the PDF there. Cmd/Ctrl-P
   jumps to any of them by name, and the paper's own `\ref` links work: click
   *Equation (1)* and the page goes to equation (1).
+- **Annotate the paper in the paper.** `%@intent motivation` names what a
+  paragraph is for; `%@comment`, `%@todo` or a bare `%@` leaves a note. They are
+  ordinary LaTeX comments, so they travel with the source through git, and the
+  preview shows them in the page margins beside the text they describe.
 - **Know how far you have drifted from git.** The toolbar carries the branch,
   how many files are uncommitted, and how many commits you are ahead or behind
   the remote — scoped to your project, even when it is a subdirectory of a
@@ -438,6 +442,38 @@ calls the Anthropic API directly rather than going through the agent, so it
 needs `ANTHROPIC_API_KEY` (or an `ant auth login` profile); without one, the
 ⋮ menu leaves the item out.
 
+### Annotations in the source
+
+Notes about the paper belong in the paper. A comment line that opens with `%@`
+is an annotation: TeX skips it like any other comment, and texai shows it in
+the margins of the page.
+
+```latex
+%@intent motivation, contrast with prior work
+%@comment Is this consistent with Table 2? -- TL
+We estimate the elasticity from the 2008 reform, which ...
+%@todo cite the 2019 replication
+and find a value close to one.
+```
+
+- **`%@intent`** is a few keywords naming what the paragraph is *for*. They
+  appear in the left margin beside the paragraph's colour bar, in its colour,
+  so you can read the paper's argument down the edge of the page.
+- **Any other kind** (`%@comment`, `%@todo`, `%@question`, anything) and a bare
+  `%@ ...` is a note. It goes in the right margin, level with the line that
+  follows it, clamped to three lines until you hover over it.
+
+An annotation belongs to the blank-line-separated paragraph it sits in. A block
+of nothing but annotations, set off by blank lines, belongs to the next
+paragraph down. Clicking one opens the editor on its line, where `%@` lines are
+tinted so they stand out from ordinary comments. **Notes** in the toolbar hides
+and shows them; the button only appears when the paper has annotations.
+
+The agent is told what they mean. It keeps a paragraph's annotations with the
+paragraph when it rewrites it, writes to the stated intent, and leaves them
+alone unless asked. *Add an intent to every paragraph in the model section* or
+*resolve the todos in results.tex* are ordinary requests.
+
 ### Finding your way around the source
 
 Beside the editor is the document's outline: every `\section` and its relatives,
@@ -792,15 +828,6 @@ src/texai/
 
 ## Not built yet
 
-- **Comments on the page.** Margin notes anchored to a passage — the reviewer's
-  half of the loop, beside the agent's. Most of the machinery is already here: a
-  comment is a `file:line` like any other, and forward-syncs to a box the same
-  way a change marker does. The open question is where it is written. `% texai:`
-  lines in the source travel with the paper, show up in a diff and survive a
-  clone, at the cost of putting review chatter in the document a co-author will
-  read; a sidecar under `.texai/` keeps the `.tex` clean but has to survive the
-  lines moving underneath it — the problem the change markers already solve by
-  re-anchoring on the words rather than trusting the line number.
 - **Plan mode.** For a change worth arguing about before it happens: the agent
   writes a plan as markdown, you edit it in the same editor as the `.tex`, and
   only then does it touch the document. Snapshot, build and revert stay exactly
