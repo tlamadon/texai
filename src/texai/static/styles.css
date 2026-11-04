@@ -166,6 +166,88 @@ button.ghost { background: transparent; }
 .para-bar.p3 { background: rgba(219, 109, 40, 0.85); }
 .para-bar.p4 { background: rgba(45, 164, 78, 0.7); }
 
+/* The author's %@ annotations in the page margins. An intent is a label in the
+   left margin, right-aligned against its paragraph's bar and in its colour; a
+   note is a slip in the right margin, clamped to a few lines until hovered. Over
+   the text layer so they can be clicked, but only the items themselves take the
+   pointer — the rest of the page selects as before. */
+.page .note-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.note-layer button,
+.note-layer button:hover:not(:disabled) {
+  position: absolute;
+  pointer-events: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 3px;
+  padding: 0;
+  background: none;
+  font: 10px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.note-layer .note-intent {
+  text-align: right;
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.note-layer .note-intent:hover { text-decoration: underline; }
+.note-intent.p0 { color: rgb(30, 100, 210); }
+.note-intent.p1 { color: rgb(30, 125, 50); }
+.note-intent.p2 { color: rgb(125, 75, 205); }
+.note-intent.p3 { color: rgb(180, 85, 25); }
+.note-intent.p4 { color: rgb(35, 130, 60); }
+
+.note-layer .note-card {
+  padding: 2px 4px 2px 5px;
+  background: #fff6d6;
+  color: #3b3b3b;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  border-left: 3px solid #e0b000;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.note-layer .note-card:hover:not(:disabled) {
+  background: #fff6d6;
+  -webkit-line-clamp: unset;
+  z-index: 1;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+.note-layer .note-card.p0 { border-left-color: rgba(56, 139, 253, 0.85); }
+.note-layer .note-card.p1 { border-left-color: rgba(46, 160, 67, 0.85); }
+.note-layer .note-card.p2 { border-left-color: rgba(163, 113, 247, 0.85); }
+.note-layer .note-card.p3 { border-left-color: rgba(219, 109, 40, 0.85); }
+.note-layer .note-card.p4 { border-left-color: rgba(45, 164, 78, 0.7); }
+.note-card .note-kind {
+  margin-right: 4px;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: #8a6d00;
+}
+/* No room for the slip: a dot that says "something here", text in the tooltip. */
+.note-layer .note-card.dot,
+.note-layer .note-card.dot:hover:not(:disabled) {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #e0b000;
+}
+
 /* The document's own links, over the text layer so they can be clicked, but
    letting every other pointer event through to selection underneath. */
 .page .linkLayer {
@@ -792,13 +874,6 @@ button.toggle.active {
 .editor-menu .menu-item:focus-visible { background: #414954; }
 /* A checkable menu item leaves room for a leading tick that only shows when on,
    so the label does not shift as it toggles. */
-.editor-menu .menu-check { padding-left: 20px; position: relative; }
-.editor-menu .menu-check[aria-checked="true"]::before {
-  content: "\2713";
-  position: absolute;
-  left: 6px;
-  color: var(--accent);
-}
 .editor-menu .menu-note {
   display: block;
   color: var(--muted);
@@ -1006,6 +1081,11 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
 .editor-host .cm-para-2 { box-shadow: inset 3px 0 0 rgba(210, 168, 255, 0.55); }
 .editor-host .cm-para-3 { box-shadow: inset 3px 0 0 rgba(255, 166, 87, 0.55); }
 .editor-host .cm-para-4 { box-shadow: inset 3px 0 0 rgba(126, 231, 135, 0.5); }
+
+/* The author's %@ annotation lines: comments to TeX, but not just any comment,
+   so they get a tint of their own. An intent in the accent blue, a note amber. */
+.editor-host .cm-annot { background: rgba(210, 153, 34, 0.11); }
+.editor-host .cm-annot-intent { background: rgba(76, 141, 255, 0.12); }
 
 /* The card's location label opens the editor, but should read as a link. */
 .mark-card-head .mark-where {

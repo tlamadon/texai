@@ -22,10 +22,10 @@ import { showToast } from './toast.js';
 // than two so inserting a paragraph never flips the parity of everything below.
 const PARAGRAPH_PALETTE = 5;
 
-// Ghost-text autocomplete is opt-in and remembered per browser.
-const AUTOCOMPLETE_KEY = 'texai.editor.autocomplete';
-// How long the buffer must sit still before a suggestion is fetched.
-const SUGGEST_DELAY_MS = 350;
+// An author annotation: a comment line opening with `%@`, optionally naming its
+// kind (`%@intent ...`, `%@todo ...`). Must agree with _ANNOTATION in
+// annotations.py, which places the same lines in the PDF's margins.
+const ANNOTATION = /^\s*%@(intent(?![\w-]))?/i;
 
 export class SourceEditor {
   constructor({ onSaved } = {}) {
@@ -37,7 +37,7 @@ export class SourceEditor {
       revert: document.getElementById('editor-revert'),
       menu: document.getElementById('editor-menu'),
       menuPop: document.getElementById('editor-menu-pop'),
-      autocomplete: document.getElementById('editor-autocomplete'),
+      suggest: document.getElementById('editor-suggest'),
       status: document.getElementById('editor-status'),
       dirty: document.getElementById('editor-dirty'),
       merged: document.getElementById('editor-merged'),
@@ -75,11 +75,9 @@ export class SourceEditor {
     // Opens are async and can overlap; only the newest may touch the buffer.
     this._openToken = 0;
 
-    // Ghost-text autocomplete. Off until /api/info reports the API is reachable,
-    // and then only when the user has switched it on for this browser.
-    this.autocomplete = this._loadAutocompletePref();
+    // Ghost-text suggestions, asked for on demand (Ctrl-Space) and never while
+    // typing. Off until /api/info reports the API is reachable.
     this._completionAvailable = false;
-    this._suggestTimer = null;
     this._completeController = null;
     this._ghost = null; // { widget, text, line, ch } while a suggestion is shown
 
@@ -125,9 +123,9 @@ export class SourceEditor {
       if (event.key === 'Escape' && this.els.menuPop?.hidden === false) this._menu(false);
     });
     this.els.search?.addEventListener('click', () => this.onJump?.());
-    this.els.autocomplete?.addEventListener('click', () => {
-      this.setAutocomplete(!this.autocomplete);
+    this.els.suggest?.addEventListener('click', () => {
       this._menu(false);
+      this.suggest();
     });
   }
 
@@ -149,10 +147,20 @@ export class SourceEditor {
       extraKeys: {
         'Cmd-S': () => this.save(),
         'Ctrl-S': () => this.save(),
+        // Ask for a continuation at the caret. Alt-\ is the same key Copilot
+        // uses, for systems where Ctrl-Space switches the input source.
+        'Ctrl-Space': () => this.suggest(),
+        'Alt-\\': () => this.suggest(),
         // Tab takes the suggestion when one is showing; otherwise it does
         // whatever Tab did before (browsers move focus), so nothing is stolen.
         Tab: () => (this._acceptGhost() ? undefined : window.CodeMirror.Pass),
-        Esc: () => (this._clearGhost() ? undefined : window.CodeMirror.Pass),
+        // Esc dismisses a showing suggestion, or calls off one still on its way.
+        Esc: () => {
+          if (!this._ghost && !this._completeController) return window.CodeMirror.Pass;
+          this._cancelSuggest();
+          this._completeStatus('Suggestion dismissed');
+          return undefined;
+        },
       },
     });
     this.cm.on('change', () => {
@@ -161,10 +169,8 @@ export class SourceEditor {
       // Re-read the outline from the buffer, but not on every keystroke.
       clearTimeout(this._outlineTimer);
       this._outlineTimer = setTimeout(() => this._refreshOutline(), 250);
-      // The buffer moved, so any showing suggestion is stale; drop it and line
-      // up a fresh one for when typing pauses.
-      this._clearGhost();
-      this._scheduleSuggest();
+      // The buffer moved, so any showing or pending suggestion is stale.
+      this._cancelSuggest();
     });
 
     this.cm.on('cursorActivity', () => {
@@ -268,8 +274,7 @@ export class SourceEditor {
     const keep = file === this.file ? this._place() : null;
 
     // A suggestion from the old buffer has nowhere to land in the new one.
-    this._clearGhost();
-    clearTimeout(this._suggestTimer);
+    this._cancelSuggest();
 
     this._loading = true;
     this.cm.setValue(text);
@@ -358,7 +363,8 @@ export class SourceEditor {
    * Painting is only worth doing when the boundaries actually moved: typing
    * inside a paragraph does not change the colouring, so a cheap signature of
    * which lines are blank gates the repaint and keeps this off the hot path of
-   * every keystroke.
+   * every keystroke. The same pass tints the `%@` annotation lines, so the
+   * signature notes those too — they are part of their paragraph, not breaks.
    */
   _paintParagraphs() {
     if (!this.cm || this.paragraphGuide === false) return;
@@ -367,7 +373,9 @@ export class SourceEditor {
 
     let signature = '';
     for (let i = 0; i < n; i += 1) {
-      signature += (cm.getLine(i) || '').trim() === '' ? '0' : '1';
+      const text = cm.getLine(i) || '';
+      const note = ANNOTATION.exec(text);
+      signature += text.trim() === '' ? '0' : note ? (note[1] ? 'i' : 'a') : '1';
     }
     if (signature === this._paraSignature) return;
     this._paraSignature = signature;
@@ -379,6 +387,10 @@ export class SourceEditor {
         for (let k = 0; k < PARAGRAPH_PALETTE; k += 1) {
           cm.removeLineClass(i, 'wrap', `cm-para-${k}`);
         }
+        cm.removeLineClass(i, 'background', 'cm-annot');
+        cm.removeLineClass(i, 'background', 'cm-annot-intent');
+        if (signature[i] === 'a') cm.addLineClass(i, 'background', 'cm-annot');
+        if (signature[i] === 'i') cm.addLineClass(i, 'background', 'cm-annot-intent');
         if (signature[i] === '0') {
           inside = false;
           continue;
@@ -710,107 +722,75 @@ export class SourceEditor {
     }
   }
 
-  /* ---------------- ghost-text autocomplete ---------------- */
+  /* ---------------- ghost-text suggestions, on demand ---------------- */
 
-  /** Reveal or hide the toggle once the server says whether the API is reachable. */
+  /** Reveal or hide the menu item once the server says whether the API is reachable. */
   configureCompletion({ available = false, reason = null } = {}) {
     this._completionAvailable = !!available;
     this._clog('available', available ? 'yes' : `no — ${reason || 'unknown'}`);
-    const item = this.els.autocomplete;
+    const item = this.els.suggest;
     if (item) {
       item.hidden = !available;
       if (reason) item.title = reason;
     }
-    if (available) this._reflectAutocomplete();
-    else this._stopSuggesting();
+    if (!available) this._cancelSuggest();
   }
 
-  /** Switch suggestions on or off for this browser, and remember the choice. */
-  setAutocomplete(on) {
-    this.autocomplete = !!on;
-    try {
-      localStorage.setItem(AUTOCOMPLETE_KEY, on ? '1' : '0');
-    } catch {
-      /* storage disabled: the preference is a convenience, not state */
-    }
-    this._clog('toggled', on ? 'on' : 'off');
-    this._reflectAutocomplete();
-    if (on) this._scheduleSuggest();
-    else this._stopSuggesting();
-  }
-
-  _reflectAutocomplete() {
-    this.els.autocomplete?.setAttribute('aria-checked', String(this.autocomplete));
-  }
-
-  _loadAutocompletePref() {
-    try {
-      return localStorage.getItem(AUTOCOMPLETE_KEY) === '1';
-    } catch {
-      return false;
-    }
-  }
-
-  _stopSuggesting() {
-    clearTimeout(this._suggestTimer);
+  /** Drop the showing suggestion and abandon any request still in flight. */
+  _cancelSuggest() {
     this._completeController?.abort();
+    this._completeController = null;
     this._clearGhost();
   }
 
-  _scheduleSuggest() {
-    clearTimeout(this._suggestTimer);
-    if (!this.autocomplete || !this._completionAvailable) return;
-    this._suggestTimer = setTimeout(() => this._requestSuggest(), SUGGEST_DELAY_MS);
-  }
-
   /**
-   * A running log of the ghost-text lifecycle.
-   *
-   * Ghost text is silent by design, which makes "is it even firing?" hard to
-   * answer. Every stage lands in the browser console under one prefix (filter
-   * devtools by "[autocomplete]"); the user-meaningful ones also flash in the
-   * editor's status bar so you do not need devtools open to see it working.
+   * A running log of the suggestion lifecycle, in the browser console under one
+   * prefix (filter devtools by "[autocomplete]"); the user-meaningful stages
+   * also show in the editor's status bar.
    */
   _clog(stage, detail = '') {
     console.debug(`[autocomplete] ${stage}${detail ? ` — ${detail}` : ''}`);
   }
 
-  /** A status-bar cue for the ghost lifecycle, never over a save/merge message. */
+  /** A status-bar cue for the suggestion, never over a save/merge message. */
   _completeStatus(text, kind = '') {
     if (this.saving) return;
     this._setStatus(text, kind);
   }
 
-  /** Ask the server for a suggestion at the cursor and show it, if it still fits. */
-  async _requestSuggest() {
+  /**
+   * Ask the server for a continuation at the caret and show it as ghost text.
+   *
+   * Only ever called because the user asked (Ctrl-Space, Alt-\, or the menu),
+   * so it says why when it cannot, rather than quietly doing nothing.
+   */
+  async suggest() {
     const cm = this.cm;
-    if (!cm || !this.active || !this.autocomplete || !this._completionAvailable) return;
-    if (this._loading || this.saving || cm.somethingSelected()) return;
+    if (!cm || !this.active || this._loading) return;
+    if (!this._completionAvailable) {
+      this._completeStatus(
+        this.els.suggest?.title || 'Suggestions are unavailable on this server.',
+        'err'
+      );
+      return;
+    }
+    if (cm.somethingSelected()) {
+      this._completeStatus('Suggest: put the caret where the text should go, with nothing selected.');
+      return;
+    }
 
     const sent = cm.getValue();
     const cursor = cm.getCursor();
     const offset = cm.indexFromPos(cursor);
 
-    // Only suggest at a word boundary — after a space, newline, or punctuation.
-    // Firing while the caret sits in or right after a word forces fill-in-the-
-    // middle to guess between finishing that word ("thi" → "s …") and starting
-    // the next with no space ("likelihood" → "estimation"), which is what reads
-    // as stray-fragment suggestions. A boundary means it always proposes forward.
-    const lineText = cm.getLine(cursor.line) || '';
-    const prevChar = cursor.ch > 0 ? lineText[cursor.ch - 1] : '';
-    if (/\w/.test(prevChar)) {
-      this._clog('skipped', 'mid-word — waiting for a boundary');
-      return;
-    }
-
-    // A newer keystroke aborts the request this one is waiting on.
-    this._completeController?.abort();
+    // Asking again replaces whatever was showing or still on its way.
+    this._cancelSuggest();
     const controller = new AbortController();
     this._completeController = controller;
 
     const startedAt = performance.now();
     this._clog('request', `${this.file}:${offset}`);
-    this._completeStatus('Autocomplete: thinking…');
+    this._completeStatus('Suggesting…', 'busy');
 
     let result;
     try {
@@ -821,16 +801,17 @@ export class SourceEditor {
       );
     } catch (err) {
       if (err.name === 'AbortError') {
-        // A superseded request, aborted on purpose by a newer keystroke.
+        // Typing, a caret move or a newer request overtook this one.
         this._clog('superseded');
       } else if (err.code === 'completion_unavailable') {
         // The server lost its credentials mid-session; stop offering something
         // that will now only fail, and say why.
         this._clog('unavailable', err.message);
         this.configureCompletion({ available: false, reason: err.message });
+        this._completeStatus(`Suggest: ${err.message}`, 'err');
       } else {
         this._clog('error', err.message || String(err));
-        this._completeStatus(`Autocomplete: ${err.message || err}`, 'err');
+        this._completeStatus(`Suggest: ${err.message || err}`, 'err');
       }
       return;
     }
@@ -846,16 +827,17 @@ export class SourceEditor {
       this._clog('stale', 'caret moved while waiting');
       return;
     }
+    this._completeController = null;
 
     const ms = Math.round(performance.now() - startedAt);
     const text = result?.text || '';
     if (text) {
       this._showGhost(text);
       this._clog('shown', `${text.length} chars · ${ms}ms`);
-      this._completeStatus(`Autocomplete: ready — Tab to accept · ${text.length} chars · ${ms}ms`);
+      this._completeStatus(`Suggestion ready — Tab to accept, Esc to dismiss · ${ms}ms`);
     } else {
       this._clog('empty', `${ms}ms`);
-      this._completeStatus(`Autocomplete: no suggestion · ${ms}ms`);
+      this._completeStatus(`No suggestion here · ${ms}ms`);
     }
   }
 
@@ -878,7 +860,7 @@ export class SourceEditor {
     const at = this.cm.getCursor();
     this.cm.replaceRange(text, at, at, '+complete');
     this._clog('accepted', `${text.length} chars`);
-    this._completeStatus('Autocomplete: accepted');
+    this._completeStatus('Suggestion accepted');
     return true;
   }
 
@@ -964,8 +946,7 @@ export class SourceEditor {
     this.onActivate?.(active);
     if (!active) {
       this._menu(false); // it would otherwise be waiting, open, on the way back
-      this._clearGhost();
-      clearTimeout(this._suggestTimer);
+      this._cancelSuggest();
       return;
     }
     this._mount();

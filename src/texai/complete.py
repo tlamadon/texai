@@ -1,4 +1,8 @@
-"""Fill-in-the-middle completions for the editor's ghost text.
+"""Fill-in-the-middle completions for the editor's ghost text, on demand.
+
+Nothing fires as you type: the editor asks only when the user does (Ctrl-Space),
+so a suggestion costs a request exactly when one is wanted and never slows the
+keystrokes in between.
 
 Deliberately separate from :mod:`texai.agent`. That session is a long-lived,
 tool-using conversation that *edits* the document across turns; this is a
@@ -21,8 +25,8 @@ from pathlib import Path
 
 __all__ = ["CompletionUnavailable", "completion_status", "complete_text"]
 
-# Haiku is the right tier for keystroke-adjacent latency: a short insertion does
-# not need a frontier model, and the round trip is what the user feels.
+# Haiku is the right tier: the user is waiting with the caret parked, a short
+# insertion does not need a frontier model, and the round trip is what they feel.
 MODEL = os.environ.get("TEXAI_COMPLETION_MODEL", "claude-haiku-4-5")
 
 # How much of the buffer to send either side of the cursor. Local context is
@@ -35,7 +39,7 @@ SUFFIX_WINDOW = 2000
 MAX_TOKENS = 64
 
 # The editor waits on this; well under the SDK's ten-minute default so a slow or
-# wedged request fails fast enough to retry on the next pause instead of hanging.
+# wedged request fails fast enough to just ask again instead of hanging.
 TIMEOUT_S = 8.0
 
 CURSOR = "<CURSOR/>"
@@ -57,16 +61,12 @@ SYSTEM_PROMPT = (
     "- If no natural continuation fits, output nothing."
 )
 
-DISABLED_HINT = (
-    "Autocomplete is off by default. Launch texai with TEXAI_AUTOCOMPLETE=1 to "
-    "turn it on."
-)
 INSTALL_HINT = (
     "The `anthropic` package is missing — run `uv sync` (or "
     "`pip install --upgrade texai`) and restart."
 )
 AUTH_HINT = (
-    "No Anthropic API credentials found. Autocomplete calls the API directly, so "
+    "No Anthropic API credentials found. Editor suggestions call the API directly, so "
     "set ANTHROPIC_API_KEY (or run `ant auth login`). This is separate from the "
     "`claude` CLI the agent uses."
 )
@@ -93,25 +93,8 @@ def _has_credentials() -> bool:
     return credentials.is_dir() and any(credentials.iterdir())
 
 
-def _enabled() -> bool:
-    """Whether the operator opted the feature in for this run.
-
-    Off by default: the suggestions did not earn their place yet, so the whole
-    feature stays dark — no menu item, no requests — unless explicitly asked for.
-    The code all remains; this is the one switch that wakes it.
-    """
-    return os.environ.get("TEXAI_AUTOCOMPLETE", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def completion_status() -> tuple[bool, str | None]:
     """Whether completions can run here, and why not if they cannot."""
-    if not _enabled():
-        return False, DISABLED_HINT
     try:
         import anthropic  # noqa: F401
     except ImportError:
@@ -125,8 +108,8 @@ _client = None
 
 
 def _get_client():
-    """One AsyncAnthropic client, reused: each completion is a fresh keystroke-
-    triggered request, but the connection pool underneath is worth keeping."""
+    """One AsyncAnthropic client, reused: each completion is a fresh request,
+    but the connection pool underneath is worth keeping."""
     global _client
     if _client is None:
         from anthropic import AsyncAnthropic

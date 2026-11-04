@@ -52,6 +52,8 @@
         <button id="toggle-sync" type="button" class="toggle" aria-pressed="false"
                 title="Keep the source scrolled to whatever the page is showing, and back">
           Sync scroll</button>
+        <button id="toggle-notes" type="button" class="toggle" aria-pressed="true" hidden
+                title="Show the %@ annotations from the source in the page margins">Notes</button>
         <button id="toggle-marks" type="button" class="toggle"
                 title="Show what the agent changed, inline on the page">Show changes</button>
         <button id="accept-all" type="button" class="ghost" hidden
@@ -167,10 +169,9 @@
                     aria-haspopup="true" aria-expanded="false"
                     title="More for this file">&#8942;</button>
             <div id="editor-menu-pop" class="editor-menu" role="menu" hidden>
-              <button id="editor-autocomplete" type="button" role="menuitemcheckbox"
-                      aria-checked="false" class="menu-item menu-check" hidden>
-                Autocomplete
-                <span class="menu-note">Faded suggestions as you type — Tab to accept</span>
+              <button id="editor-suggest" type="button" role="menuitem" class="menu-item" hidden>
+                Suggest a continuation
+                <span class="menu-note">Ctrl-Space at the caret — Tab to accept, Esc to dismiss</span>
               </button>
               <button id="editor-revert" type="button" role="menuitem" class="menu-item">
                 Reload from disk

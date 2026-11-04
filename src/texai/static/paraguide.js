@@ -8,7 +8,8 @@
 //
 // Like the change markers, the bars live in an overlay that every page render
 // wipes, so `draw()` reruns cheaply on any scroll or zoom and `refresh()`
-// refetches only when the document itself has been rebuilt.
+// refetches only when the document itself has been rebuilt. The same answer
+// carries the author's `%@` annotations, handed on to `onAnnotations`.
 
 import { getJSON } from './api.js';
 
@@ -16,8 +17,9 @@ const BAR_WIDTH = 4; // px: the coloured rule itself
 const BAR_GAP = 12; // px to the left of the text column, so it clears the text
 
 export class ParagraphGuide {
-  constructor({ viewer }) {
+  constructor({ viewer, onAnnotations = null }) {
     this.viewer = viewer;
+    this.onAnnotations = onAnnotations;
     this.bars = [];
     this.palette = 5;
     this.enabled = true;
@@ -29,6 +31,7 @@ export class ParagraphGuide {
       const data = await getJSON('/api/paragraphs');
       this.bars = data.bars || [];
       this.palette = data.palette || this.palette;
+      this.onAnnotations?.(data.annotations || []);
     } catch {
       // A PDF mid-rebuild, or no SyncTeX yet: keep what we had rather than
       // clearing, and the next refresh after the build will replace it.

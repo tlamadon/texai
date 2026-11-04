@@ -201,3 +201,25 @@ def test_the_first_interrupt_is_acknowledged(capsys, monkeypatch):
     server.handle_exit(signal.SIGINT, None)
     assert "stopping now" in capsys.readouterr().out
     assert server.force_exit
+
+
+def test_main_needs_only_the_tex(project: Path, monkeypatch):
+    """The root, the PDF and the build are all inferred from the one file."""
+    import uvicorn
+
+    served = []
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self: served.append(self.config.port))
+    fake_build(project, "printf '%%PDF-1.4\\n' > main.pdf")
+
+    code = main([str(project / "main.tex"), "--build-cmd", f"{project / 'fake-build.sh'}"])
+    assert code == 0
+    assert (project / "main.pdf").is_file()
+    assert served
+
+
+def test_main_explains_an_ambiguous_directory(tmp_path: Path, monkeypatch, capsys):
+    for name in ("paper.tex", "slides.tex"):
+        (tmp_path / name).write_text("\\documentclass{article}\n")
+    monkeypatch.chdir(tmp_path)
+    assert main([]) == 2
+    assert "several documents" in capsys.readouterr().err

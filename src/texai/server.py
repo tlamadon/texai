@@ -568,7 +568,8 @@ def create_app(
 
     @app.post("/api/complete")
     async def complete(payload: CompleteRequest) -> dict[str, Any]:
-        """A fill-in-the-middle suggestion for the editor's ghost text.
+        """A fill-in-the-middle suggestion for the editor's ghost text, asked
+        for on demand (Ctrl-Space) rather than on every pause in typing.
 
         Read-only, stateless, and allowed while the agent runs: it neither
         touches disk nor goes through the turn controller. ``text`` is the live
@@ -582,8 +583,8 @@ def create_app(
             warn(f"complete {payload.file} — {exc}")
             raise _error(503, "completion_unavailable", str(exc)) from exc
         ms = int((time.monotonic() - started) * 1000)
-        # One human-paced line per suggestion, so the terminal answers "did it
-        # fire, what came back, how slow?" — the questions ghost text hides. The
+        # One line per suggestion, so the terminal answers "what came back, how
+        # slow?" — the questions ghost text hides. The
         # repr of the caret boundary (text just before it, then the insertion)
         # makes mid-word completions and stray leading characters obvious.
         if suggestion:

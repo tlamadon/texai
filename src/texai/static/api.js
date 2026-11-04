@@ -42,8 +42,8 @@ export async function postJSON(url, body, { signal } = {}) {
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      // Callers that debounce (ghost-text completion) pass a signal so a newer
-      // keystroke can abort the request this one is still waiting on.
+      // Callers that can be superseded (ghost-text completion) pass a signal so
+      // a newer request, or a keystroke, can abort the one still in flight.
       signal,
     })
   );

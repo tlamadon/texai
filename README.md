@@ -33,6 +33,10 @@ back marked on the page for you to accept or reject.
   its theorems by title — and clicking one scrolls the PDF there. Cmd/Ctrl-P
   jumps to any of them by name, and the paper's own `\ref` links work: click
   *Equation (1)* and the page goes to equation (1).
+- **Annotate the paper in the paper.** `%@intent motivation` names what a
+  paragraph is for; `%@comment`, `%@todo` or a bare `%@` leaves a note. They are
+  ordinary LaTeX comments, so they travel with the source through git, and the
+  preview shows them in the page margins beside the text they describe.
 - **Know how far you have drifted from git.** The toolbar carries the branch,
   how many files are uncommitted, and how many commits you are ahead or behind
   the remote — scoped to your project, even when it is a subdirectory of a
@@ -50,21 +54,32 @@ at the line; matching the clicked word against the source gets it to
 One command on a paper you already have — nothing to install:
 
 ```bash
-uvx texai --root /path/to/paper --pdf main.pdf --open
+uvx texai /path/to/paper/main.tex --open
 ```
 
-`--root` is the directory the paper lives in and `--pdf` is the PDF it builds,
-wherever that lands — `main.pdf`, `build/main.pdf`, `out/paper.pdf`. It does not
-have to exist yet: texai looks for the `.tex` named after it, compiles it, and
-then opens the viewer on <http://127.0.0.1:8765/>. All it needs is a TeX
-installation with `latexmk` and `synctex`.
+Name the `.tex`, or the PDF it builds, and texai works out the rest:
+
+- **From a `.tex`**, the PDF is wherever `latexmk` will write it: next to the
+  `.tex`, or under the `$out_dir` your `latexmkrc` names, or wherever an existing
+  `main.pdf` with its SyncTeX data already sits below it.
+- **From a PDF**, the source is the `.tex` with the same name, beside it or a few
+  directories up — `build/main.pdf` is built from `../main.tex`.
+- **From a directory, or from nothing at all** in the paper's own directory, it
+  is the one `.tex` there that opens with `\documentclass` (`main.tex` if there
+  are several).
+- **The project root** is the narrowest directory holding both, which is usually
+  the `.tex`'s own. Everything texai and the agent touch stays inside it.
+
+The PDF does not have to exist yet: texai compiles it, then opens the viewer on
+<http://127.0.0.1:8765/>. All it needs is a TeX installation with `latexmk` and
+`synctex`. When a guess is wrong, `--root` and `--pdf` override it.
 
 Nothing to hand? This repository's `example/` is a short paper split across four
 files, and ships uncompiled on purpose:
 
 ```bash
 git clone https://github.com/tlamadon/texai && cd texai
-uvx texai --root ./example --pdf ./example/main.pdf --open
+uvx texai example/main.tex --open
 ```
 
 `uvx` is `uv tool run`: it fetches texai into a throwaway environment, runs it,
@@ -100,7 +115,7 @@ about running it yourself.)
 `uvx` re-resolves every so often. Once texai has earned a place on your PATH:
 
 ```bash
-uv tool install texai        # then just: texai --root . --pdf main.pdf
+uv tool install texai        # then just: texai main.tex
 pip install texai            # or the pip equivalent
 ```
 
@@ -430,6 +445,46 @@ Alt-click "the elasticity of substitution"  →  Source tab, sections/model.tex:
 The `file:line` label on a change card opens the same editor at that change, for
 when it is faster to fix the agent's work than to describe the fix.
 
+When you are stuck mid-sentence, **Ctrl-Space** (or **Alt-\\**, for systems where
+Ctrl-Space switches the keyboard layout) asks for a continuation at the caret.
+It shows up as faded ghost text: **Tab** takes it, **Esc** or carrying on typing
+drops it. Nothing is requested until you ask, so typing never waits on it. It
+calls the Anthropic API directly rather than going through the agent, so it
+needs `ANTHROPIC_API_KEY` (or an `ant auth login` profile); without one, the
+⋮ menu leaves the item out.
+
+### Annotations in the source
+
+Notes about the paper belong in the paper. A comment line that opens with `%@`
+is an annotation: TeX skips it like any other comment, and texai shows it in
+the margins of the page.
+
+```latex
+%@intent motivation, contrast with prior work
+%@comment Is this consistent with Table 2? -- TL
+We estimate the elasticity from the 2008 reform, which ...
+%@todo cite the 2019 replication
+and find a value close to one.
+```
+
+- **`%@intent`** is a few keywords naming what the paragraph is *for*. They
+  appear in the left margin beside the paragraph's colour bar, in its colour,
+  so you can read the paper's argument down the edge of the page.
+- **Any other kind** (`%@comment`, `%@todo`, `%@question`, anything) and a bare
+  `%@ ...` is a note. It goes in the right margin, level with the line that
+  follows it, clamped to three lines until you hover over it.
+
+An annotation belongs to the blank-line-separated paragraph it sits in. A block
+of nothing but annotations, set off by blank lines, belongs to the next
+paragraph down. Clicking one opens the editor on its line, where `%@` lines are
+tinted so they stand out from ordinary comments. **Notes** in the toolbar hides
+and shows them; the button only appears when the paper has annotations.
+
+The agent is told what they mean. It keeps a paragraph's annotations with the
+paragraph when it rewrites it, writes to the stated intent, and leaves them
+alone unless asked. *Add an intent to every paragraph in the model section* or
+*resolve the todos in results.tex* are ordinary requests.
+
 ### Finding your way around the source
 
 Beside the editor is the document's outline: every `\section` and its relatives,
@@ -617,8 +672,9 @@ unavailable it falls back to `Update sections/model.tex, ...` and says so.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--root` | required | project root; everything stays inside it |
-| `--pdf` | required | PDF to review, relative to `--root` or to your shell |
+| *document* | the document in the current directory | the `.tex`, its PDF, or a directory holding it |
+| `--root` | the directory holding the `.tex` and the PDF | project root; everything stays inside it |
+| `--pdf` | where `latexmk` writes it | PDF to review, relative to `--root` or to your shell |
 | `--build-cmd` | `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>` | how to rebuild |
 | `--build-dir` | the root `.tex` file's directory | where to run the build |
 | `--model` | the CLI's default | model for the agent |
@@ -784,15 +840,6 @@ src/texai/
 
 ## Not built yet
 
-- **Comments on the page.** Margin notes anchored to a passage — the reviewer's
-  half of the loop, beside the agent's. Most of the machinery is already here: a
-  comment is a `file:line` like any other, and forward-syncs to a box the same
-  way a change marker does. The open question is where it is written. `% texai:`
-  lines in the source travel with the paper, show up in a diff and survive a
-  clone, at the cost of putting review chatter in the document a co-author will
-  read; a sidecar under `.texai/` keeps the `.tex` clean but has to survive the
-  lines moving underneath it — the problem the change markers already solve by
-  re-anchoring on the words rather than trusting the line number.
 - **Plan mode.** For a change worth arguing about before it happens: the agent
   writes a plan as markdown, you edit it in the same editor as the `.tex`, and
   only then does it touch the document. Snapshot, build and revert stay exactly
