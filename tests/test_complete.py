@@ -37,19 +37,27 @@ def test_clean_keeps_a_leading_space_but_drops_trailing_blank_lines():
     assert complete.clean(" and then\n\n") == " and then"
 
 
-def test_completion_disabled_by_default(monkeypatch):
+def test_completion_needs_no_opt_in_flag(monkeypatch):
+    # On demand, a suggestion only costs a request when one is asked for, so the
+    # only gates left are the SDK and credentials.
     monkeypatch.delenv("TEXAI_AUTOCOMPLETE", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    ok, reason = complete.completion_status()
+    try:
+        import anthropic  # noqa: F401
+    except ImportError:
+        assert reason == complete.INSTALL_HINT
+    else:
+        assert (ok, reason) == (True, None)
+
+
+def test_completion_reports_missing_credentials(monkeypatch, tmp_path):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ANTHROPIC_CONFIG_DIR", str(tmp_path))
     ok, reason = complete.completion_status()
     assert ok is False
-    assert reason == complete.DISABLED_HINT
-
-
-def test_completion_gate_opens_with_the_env_flag(monkeypatch):
-    monkeypatch.setenv("TEXAI_AUTOCOMPLETE", "1")
-    # Past the gate it depends on the SDK and credentials, but it is no longer
-    # the "off by default" refusal.
-    _, reason = complete.completion_status()
-    assert reason != complete.DISABLED_HINT
+    assert reason in {complete.AUTH_HINT, complete.INSTALL_HINT}
 
 
 def test_build_window_bounds_around_the_cursor(monkeypatch):

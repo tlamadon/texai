@@ -792,13 +792,6 @@ button.toggle.active {
 .editor-menu .menu-item:focus-visible { background: #414954; }
 /* A checkable menu item leaves room for a leading tick that only shows when on,
    so the label does not shift as it toggles. */
-.editor-menu .menu-check { padding-left: 20px; position: relative; }
-.editor-menu .menu-check[aria-checked="true"]::before {
-  content: "\2713";
-  position: absolute;
-  left: 6px;
-  color: var(--accent);
-}
 .editor-menu .menu-note {
   display: block;
   color: var(--muted);

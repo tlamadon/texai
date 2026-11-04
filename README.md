@@ -430,6 +430,14 @@ Alt-click "the elasticity of substitution"  →  Source tab, sections/model.tex:
 The `file:line` label on a change card opens the same editor at that change, for
 when it is faster to fix the agent's work than to describe the fix.
 
+When you are stuck mid-sentence, **Ctrl-Space** (or **Alt-\\**, for systems where
+Ctrl-Space switches the keyboard layout) asks for a continuation at the caret.
+It shows up as faded ghost text: **Tab** takes it, **Esc** or carrying on typing
+drops it. Nothing is requested until you ask, so typing never waits on it. It
+calls the Anthropic API directly rather than going through the agent, so it
+needs `ANTHROPIC_API_KEY` (or an `ant auth login` profile); without one, the
+⋮ menu leaves the item out.
+
 ### Finding your way around the source
 
 Beside the editor is the document's outline: every `\section` and its relatives,
