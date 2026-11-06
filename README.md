@@ -110,6 +110,24 @@ this to other people who sign in with their own Claude accounts needs approval
 from Anthropic, and API-key auth otherwise. That is about distribution, not
 about running it yourself.)
 
+### Using Codex instead
+
+texai can drive OpenAI's Codex instead of Claude. Its SDK is an optional extra,
+because it carries its own Codex runtime (a few hundred MB):
+
+```bash
+uvx 'texai[codex]' main.tex --agent codex
+```
+
+It uses whatever `codex login` already set up, ChatGPT sign-in or API key.
+Everything else works the same: the chat panel, the inline changes, revert,
+`show_in_pdf`, commit messages. **Attach terminal** copies `codex resume <id>`
+instead of `claude --resume`. `--model` is passed through, so `--model gpt-5.4`
+picks the Codex model.
+
+One thing is looser (see [Safety](#safety)): Codex has no files-only mode, so it
+reads with shell commands and edits with patches, in Codex's own sandbox.
+
 ### Keeping it around
 
 `uvx` re-resolves every so often. Once texai has earned a place on your PATH:
@@ -677,7 +695,8 @@ unavailable it falls back to `Update sections/model.tex, ...` and says so.
 | `--pdf` | where `latexmk` writes it | PDF to review, relative to `--root` or to your shell |
 | `--build-cmd` | `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>` | how to rebuild |
 | `--build-dir` | the root `.tex` file's directory | where to run the build |
-| `--model` | the CLI's default | model for the agent |
+| `--agent` | `claude` | `claude` or `codex` (needs `texai[codex]`) |
+| `--model` | the agent's default | model for the agent |
 | `--port` | `8765` | port on `127.0.0.1`; the next free one is used if busy |
 | `--synctex` | `synctex` | path to the `synctex` executable |
 | `--open` | off | open the viewer in your browser |
@@ -741,10 +760,16 @@ absent.
   `shell=False`. Nothing from the browser reaches a shell.
 - Every path — the PDF, whatever SyncTeX reports, every selection the browser
   sends back — is resolved through symlinks and must stay inside `--root`.
-- The agent gets `Read`, `Write`, `Edit`, `Glob` and `Grep`. No `Bash`, no web
+- Claude gets `Read`, `Write`, `Edit`, `Glob` and `Grep`. No `Bash`, no web
   access, no subagents. It cannot run the build; the harness does that.
+- Codex is looser, because it has no files-only mode: it runs shell commands
+  and applies patches. It runs in Codex's `workspace-write` sandbox, so it can
+  write only inside the project (and temp directories) and has no network, and
+  with approvals denied, so it never stops to ask. It is told not to compile,
+  but nothing prevents it.
 - The agent gets one tool of our own, `show_in_pdf`, which scrolls your view
-  and nothing else.
+  and nothing else. Claude calls it in-process. Codex calls it over MCP on
+  texai's own loopback port, which only exists when Codex is the agent.
 - Every turn is snapshotted before the agent starts, so any turn can be undone
   and a turn that breaks the build undoes itself. Snapshots are plain file
   copies in a temp directory keyed by project — deliberately *outside* the

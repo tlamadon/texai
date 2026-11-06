@@ -58,6 +58,12 @@ class EventBus:
     def since(self, last_id: int) -> list[Event]:
         return [event for event in self._backlog if event.id > last_id]
 
+    @property
+    def last_id(self) -> int:
+        """The id of the newest event, or 0 before the first. A client that has
+        everything up to here should stream ``since`` it, not from the start."""
+        return self._next_id - 1
+
     def subscribe(self) -> asyncio.Queue[Event]:
         queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_SIZE)
         self._subscribers.add(queue)

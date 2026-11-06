@@ -68,7 +68,7 @@ async def test_falls_back_when_there_is_no_diff(config: AppConfig, dirty: GitSta
 async def test_falls_back_when_the_agent_is_unavailable(
     config: AppConfig, dirty: GitStatus, monkeypatch
 ):
-    monkeypatch.setattr(commitmsg, "sdk_status", lambda: (False, "no agent here"))
+    monkeypatch.setattr(commitmsg, "agent_status", lambda *_: (False, "no agent here"))
 
     result = await commitmsg.propose_message(config, dirty, "a real diff")
 
@@ -81,7 +81,7 @@ async def test_falls_back_when_the_agent_raises(config: AppConfig, dirty: GitSta
     async def explode(*args, **kwargs):
         raise RuntimeError("the CLI went away")
 
-    monkeypatch.setattr(commitmsg, "sdk_status", lambda: (True, None))
+    monkeypatch.setattr(commitmsg, "agent_status", lambda *_: (True, None))
     monkeypatch.setattr(commitmsg, "_ask", explode)
 
     result = await commitmsg.propose_message(config, dirty, "a real diff")
@@ -96,7 +96,7 @@ async def test_falls_back_when_the_agent_says_nothing(
     async def empty(*args, **kwargs):
         return "   "
 
-    monkeypatch.setattr(commitmsg, "sdk_status", lambda: (True, None))
+    monkeypatch.setattr(commitmsg, "agent_status", lambda *_: (True, None))
     monkeypatch.setattr(commitmsg, "_ask", empty)
 
     result = await commitmsg.propose_message(config, dirty, "a real diff")
@@ -112,7 +112,7 @@ async def test_falls_back_when_the_agent_takes_too_long(
         await asyncio.sleep(5)
         return "never arrives"
 
-    monkeypatch.setattr(commitmsg, "sdk_status", lambda: (True, None))
+    monkeypatch.setattr(commitmsg, "agent_status", lambda *_: (True, None))
     monkeypatch.setattr(commitmsg, "_ask", slow)
     monkeypatch.setattr(commitmsg, "MESSAGE_TIMEOUT", 0.05)
 
@@ -126,7 +126,7 @@ async def test_uses_what_the_agent_wrote(config: AppConfig, dirty: GitStatus, mo
     async def wrote(*args, **kwargs):
         return "```\nTighten the identification argument.\n```"
 
-    monkeypatch.setattr(commitmsg, "sdk_status", lambda: (True, None))
+    monkeypatch.setattr(commitmsg, "agent_status", lambda *_: (True, None))
     monkeypatch.setattr(commitmsg, "_ask", wrote)
 
     result = await commitmsg.propose_message(config, dirty, "a real diff")

@@ -112,10 +112,23 @@ export class ChatPanel {
     try {
       const history = await getJSON('/api/turns');
       for (const turn of history.turns) {
+        if (turn.status === 'running') {
+          // Still going: drawn the way live events draw it, and the stream
+          // carries on from where this snapshot stops.
+          this._cardFor(turn);
+          for (const entry of turn.transcript || []) {
+            this._appendTranscript(turn.id, entry);
+            this._appendToCard(turn.id, entry);
+          }
+          continue;
+        }
         this._renderCompletedTurn(turn);
         for (const entry of turn.transcript || []) this._appendTranscript(turn.id, entry);
         this._appendTurnRule(turn);
       }
+      // Everything up to here is already on screen. Streaming from the start
+      // would replay it all: entries drawn twice, old jumps scrolling the page.
+      this.lastEventId = history.lastEventId ?? this.lastEventId;
       this._setBusy(history.busy);
       this.onChangesUpdated?.();
     } catch {

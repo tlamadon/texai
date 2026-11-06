@@ -451,3 +451,66 @@ async def test_absorbing_before_any_review_session_does_nothing(project: Path):
     changes = controller.session_changes()
     assert len(changes) == 1
     assert "agent" in changes[0]["after"]
+
+
+# ---------------------------------------------------------------- reloading the page
+
+
+class PausedAgent(ScriptedAgent):
+    """Publishes one entry as an agent does, then holds the turn open."""
+
+    def __init__(self, bus: EventBus) -> None:
+        super().__init__(bus, [])
+        self.release = asyncio.Event()
+        self.entry = {"kind": "text", "text": "Looking at the model section."}
+
+    async def run_turn(self, prompt: str, turn_id: str) -> TurnOutcome:
+        self.bus.publish("agent_entry", turnId=turn_id, entry=self.entry)
+        await self.release.wait()
+        return TurnOutcome(ok=True, text="done", entries=[self.entry])
+
+
+async def test_history_covers_every_event_so_nothing_is_replayed(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "tighten this")
+
+    turns, last = controller.history()
+    assert last == bus.last_id > 0
+    assert bus.since(last) == []  # a page streaming from here sees nothing again
+    assert turns[0]["transcript"] == controller.turns[0].transcript
+
+
+async def test_a_running_turn_brings_its_live_entries(project: Path):
+    bus = EventBus()
+    agent = PausedAgent(bus)
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await controller.submit("tighten this", [])
+    await asyncio.sleep(0.05)  # the agent has spoken; the turn is still open
+
+    (turn,), last = controller.history()
+    assert turn["status"] == "running"
+    # The record itself only has the prompt so far; the snapshot has both.
+    assert [e["kind"] for e in controller.turns[0].transcript] == ["user"]
+    assert [e["kind"] for e in turn["transcript"]] == ["user", "text"]
+    assert last == bus.last_id
+
+    agent.release.set()
+    await controller._task
+
+
+async def test_a_running_turn_that_outlived_the_backlog_keeps_its_record(project: Path):
+    bus = EventBus(backlog=3)
+    agent = PausedAgent(bus)
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await controller.submit("tighten this", [])
+    await asyncio.sleep(0.05)
+    for _ in range(5):
+        bus.publish("changes_updated", reason="noise")  # turn_started falls off
+
+    (turn,), _ = controller.history()
+    assert [e["kind"] for e in turn["transcript"]] == ["user"]
+
+    agent.release.set()
+    await controller._task

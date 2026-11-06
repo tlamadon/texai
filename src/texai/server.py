@@ -6,7 +6,7 @@ import asyncio
 import json
 import mimetypes
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
@@ -16,7 +16,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .agent import AgentSession, AgentUnavailable, sdk_status
+from .agent import AgentSession, AgentUnavailable
+from .agent_tools import TOOLS_MOUNT, build_tools_server
 from .commitmsg import propose_message
 from .complete import CompletionUnavailable, complete_text, completion_status
 from .config import AppConfig
@@ -110,12 +111,21 @@ def create_app(
     bus = agent.bus if agent is not None else EventBus()
     agent_session = agent if agent is not None else AgentSession(config, bus)
     controller = TurnController(config, bus, agent_session)
+    # Which agent is behind the panel; injected test doubles count as Claude.
+    agent_kind = getattr(agent_session, "kind", "claude")
+    # Codex runs out of process, so texai's own tools reach it over MCP, on
+    # this server. Claude takes them in-process and needs no endpoint.
+    tools_server = build_tools_server(config, bus) if agent_kind == "codex" else None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        yield
-        await controller.shutdown()
-        await agent_session.stop()
+        async with AsyncExitStack() as stack:
+            if tools_server is not None:
+                # A mounted app's own lifespan never runs; its sessions need this.
+                await stack.enter_async_context(tools_server.session_manager.run())
+            yield
+            await controller.shutdown()
+            await agent_session.stop()
 
     app = FastAPI(
         title="texai",
@@ -128,6 +138,9 @@ def create_app(
     app.state.bus = bus
     app.state.agent = agent_session
     app.state.turns = controller
+    if tools_server is not None:
+        app.mount(TOOLS_MOUNT, tools_server.streamable_http_app())
+
     class RevalidatingStatic(StaticFiles):
         """Static files the browser must check before reusing.
 
@@ -182,7 +195,7 @@ def create_app(
 
     @app.get("/api/info")
     async def info() -> dict[str, Any]:
-        available, reason = sdk_status()
+        available, reason = agent_session.status()
         complete_available, complete_reason = completion_status()
         return {
             "version": __version__,
@@ -195,6 +208,8 @@ def create_app(
             ),
             "buildCommand": config.build_description,
             "agent": {
+                "kind": agent_kind,
+                "name": getattr(agent_session, "name", "Claude"),
                 "available": available,
                 "reason": reason,
                 "running": agent_session.running,
@@ -395,10 +410,10 @@ def create_app(
 
     @app.get("/api/turns")
     async def list_turns() -> dict[str, Any]:
-        return {
-            "busy": controller.busy,
-            "turns": [turn.as_dict() for turn in controller.turns],
-        }
+        # lastEventId: stream events after it, and nothing in this answer is
+        # seen twice (see TurnController.history).
+        turns, last_event_id = controller.history()
+        return {"busy": controller.busy, "turns": turns, "lastEventId": last_event_id}
 
     @app.get("/api/turns/{turn_id}")
     async def get_turn(turn_id: str) -> dict[str, Any]:
@@ -478,7 +493,9 @@ def create_app(
             raise _error(409, "git_clean", "Nothing to commit.")
 
         diff = await asyncio.to_thread(scoped_diff, config)
-        proposed = await message_writer(config, status, diff, agent_session.model)
+        proposed = await message_writer(
+            config, status, diff, agent_session.model, agent=agent_kind
+        )
         return {**proposed, "dirty": status.dirty}
 
     @app.post("/api/git/commit")
