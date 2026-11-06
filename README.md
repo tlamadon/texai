@@ -715,13 +715,20 @@ unavailable it falls back to `Update sections/model.tex, ...` and says so.
 | *document* | the document in the current directory | the `.tex`, its PDF, or a directory holding it |
 | `--root` | the directory holding the `.tex` and the PDF | project root; everything stays inside it |
 | `--pdf` | where `latexmk` writes it | PDF to review, relative to `--root` or to your shell |
-| `--build-cmd` | `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>` | how to rebuild |
+| `--build-cmd` | `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>`, with the engine the document needs | how to rebuild |
 | `--build-dir` | the root `.tex` file's directory | where to run the build |
 | `--agent` | `claude` | `claude` or `codex` (needs `texai[codex]`) |
 | `--model` | the agent's default | model for the agent |
 | `--port` | `8765` | port on `127.0.0.1`; the next free one is used if busy |
 | `--synctex` | `synctex` | path to the `synctex` executable |
 | `--open` | off | open the viewer in your browser |
+
+The default build uses pdfLaTeX unless the document needs something else:
+`-lualatex` or `-xelatex` in place of `-pdf` when a `% !TEX program = …` line
+asks for it, when a `latexmkrc` beside it sets `$pdf_mode`, or when the root
+file or a local class, package or `\input` it loads uses `fontspec`,
+`unicode-math`, `polyglossia` or an engine-specific package. The startup banner
+says which, and why.
 
 `--build-cmd` is split with `shlex` and run without a shell, so `&&` and pipes
 are not supported — point it at a script if you need them.

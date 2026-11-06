@@ -14,7 +14,7 @@ from typing import Any
 from . import __version__
 from .agent import AGENT_KINDS, agent_status, create_agent
 from .agent_tools import tools_url
-from .build import BuildError, run_build, running_builds
+from .build import BuildError, detect_engine, run_build, running_builds
 from .config import AppConfig
 from .console import note, warn
 from .discover import DiscoveryError, discover
@@ -198,6 +198,11 @@ def main(argv: list[str] | None = None) -> int:
 
     available, reason = agent_status(args.agent)
     build = config.build_description or "not configured (pass --build-cmd)"
+    if config.build_description and not config.build_command and config.root_tex:
+        # Say why when it is not pdfLaTeX: a surprise engine should explain itself.
+        _engine, why = detect_engine(config.root_tex)
+        if why:
+            build += f"  ({why})"
 
     # flush: agents commonly start this with stdout redirected to a log.
     banner = "\n".join(

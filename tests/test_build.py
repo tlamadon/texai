@@ -6,6 +6,7 @@ import pytest
 from texai.build import (
     BuildError,
     default_build_command,
+    detect_engine,
     find_root_tex,
     parse_log_errors,
     resolve_command,
@@ -116,3 +117,67 @@ async def test_run_build_reads_the_log_when_stdout_is_quiet(tmp_path: Path):
 async def test_run_build_missing_binary(tmp_path: Path):
     with pytest.raises(BuildError, match="not found"):
         await run_build(["texai-no-such-binary-xyz"], tmp_path)
+
+
+# ---------------------------------------------------------------- the engine
+
+
+def test_a_plain_paper_builds_with_pdflatex(tmp_path: Path):
+    root = tmp_path / "main.tex"
+    root.write_text("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}x\\end{document}\n")
+    assert detect_engine(root) == ("pdflatex", "")
+    assert resolve_command(None, root)[1] == "-pdf"
+
+
+def test_fontspec_in_a_class_several_directories_away_needs_lualatex(tmp_path: Path):
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "letter.cls").write_text(
+        "\\LoadClass{article}\n\\RequirePackage{fontspec}\n\\setmainfont{TeX Gyre Pagella}\n"
+    )
+    folder = tmp_path / "letters" / "one"
+    folder.mkdir(parents=True)
+    root = folder / "letter.tex"
+    root.write_text("\\documentclass{../../templates/letter}\n\\begin{document}x\\end{document}\n")
+
+    engine, why = detect_engine(root)
+    assert engine == "lualatex"
+    assert "letter.cls" in why and "fontspec" in why
+    assert resolve_command(None, root)[1] == "-lualatex"
+
+
+def test_an_input_preamble_is_followed(tmp_path: Path):
+    (tmp_path / "preamble.tex").write_text("\\usepackage[T1]{fontenc}\n\\usepackage{xeCJK}\n")
+    root = tmp_path / "main.tex"
+    root.write_text("\\documentclass{article}\n\\input{preamble}\n\\begin{document}x\\end{document}\n")
+    assert detect_engine(root)[0] == "xelatex"
+
+
+def test_a_lua_only_package_beats_a_generic_unicode_one(tmp_path: Path):
+    root = tmp_path / "main.tex"
+    root.write_text("\\documentclass{article}\n\\usepackage{fontspec,luacode}\n")
+    assert detect_engine(root)[0] == "lualatex"
+
+
+def test_commented_out_packages_do_not_count(tmp_path: Path):
+    root = tmp_path / "main.tex"
+    root.write_text("\\documentclass{article}\n% \\usepackage{fontspec}\n\\usepackage{amsmath} % not fontspec\n")
+    assert detect_engine(root)[0] == "pdflatex"
+
+
+def test_a_magic_comment_wins(tmp_path: Path):
+    root = tmp_path / "main.tex"
+    root.write_text("% !TEX program = xelatex\n\\documentclass{article}\n\\usepackage{fontspec}\n")
+    assert detect_engine(root) == ("xelatex", "main.tex asks for xelatex")
+
+
+def test_latexmkrc_pdf_mode_is_honoured(tmp_path: Path):
+    (tmp_path / ".latexmkrc").write_text("$pdf_mode = 5;\n")
+    root = tmp_path / "main.tex"
+    root.write_text("\\documentclass{article}\n")
+    assert detect_engine(root)[0] == "xelatex"
+
+
+def test_an_explicit_build_command_is_left_alone(tmp_path: Path):
+    root = tmp_path / "main.tex"
+    root.write_text("\\documentclass{article}\n\\usepackage{fontspec}\n")
+    assert resolve_command("latexmk -pdf main.tex", root) == ["latexmk", "-pdf", "main.tex"]
