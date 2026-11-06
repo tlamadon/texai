@@ -149,6 +149,30 @@ class SourceWrite(BaseModel):
         return value
 
 
+class ParagraphWrite(BaseModel):
+    """An in-place edit from the page: one paragraph's new text.
+
+    ``start``/``end`` and ``original`` are what the box was opened on; the server
+    checks that paragraph is still there before replacing it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(min_length=1, max_length=1024)
+    start: int = Field(ge=1)
+    end: int = Field(ge=1)
+    original: str = Field(max_length=MAX_SOURCE_TEXT)
+    text: str = Field(max_length=MAX_SOURCE_TEXT)
+
+    @field_validator("file")
+    @classmethod
+    def _reject_traversal(cls, value: str) -> str:
+        candidate = PurePosixPath(value)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("file must be a relative path inside the project")
+        return value
+
+
 class SourceMerge(BaseModel):
     """An editor buffer offered up for a three-way merge with the file on disk.
 

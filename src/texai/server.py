@@ -35,6 +35,7 @@ from .models import (
     ChatRequest,
     CommitRequest,
     CompleteRequest,
+    ParagraphWrite,
     SelectRequest,
     SelectResponse,
     SourceMerge,
@@ -45,10 +46,13 @@ from .paragraphs import paragraph_bars
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .selection import atomic_write_json, build_selection
 from .source import (
+    NoParagraph,
     SourceConflict,
     SourceError,
     list_sources,
+    read_paragraph,
     read_source,
+    write_paragraph,
     write_source,
 )
 from .synctex import (
@@ -556,11 +560,7 @@ def create_app(
 
     @app.post("/api/source")
     async def put_source(payload: SourceWrite) -> dict[str, Any]:
-        """Save an edit and recompile.
-
-        The save is folded into the review baseline, so hand edits do not show
-        up as agent changes awaiting review.
-        """
+        """Save an edit and recompile."""
         if controller.busy:
             raise _error(409, "agent_busy", "The agent is editing right now; try again in a moment.")
         try:
@@ -570,8 +570,15 @@ def create_app(
         except SourceError as exc:
             raise _error(422, "source_unwritable", str(exc)) from exc
 
-        controller.absorb_manual_edit(written["file"])
-        bus.publish("source_saved", file=written["file"])
+        return {"ok": True, **written, "build": await _saved_by_hand(written["file"])}
+
+    async def _saved_by_hand(file: str) -> dict[str, Any]:
+        """Fold a hand edit into the review baseline, then rebuild.
+
+        Folded in so hand edits do not show up as agent changes awaiting review.
+        """
+        controller.absorb_manual_edit(file)
+        bus.publish("source_saved", file=file)
 
         result = await controller.rebuild()
         build = {
@@ -581,7 +588,35 @@ def create_app(
         }
         bus.publish("build_finished", turnId=None, attempt=1, ok=build["ok"],
                     errors=build["errors"], summary=build["summary"])
-        return {"ok": True, **written, "build": build}
+        return build
+
+    @app.get("/api/paragraph")
+    async def get_paragraph(file: str, line: int) -> dict[str, Any]:
+        """The paragraph around a source line, for editing it on the page."""
+        try:
+            return read_paragraph(config, file, line)
+        except NoParagraph as exc:
+            raise _error(422, "no_paragraph", str(exc)) from exc
+        except SourceError as exc:
+            raise _error(404, "source_unavailable", str(exc)) from exc
+
+    @app.post("/api/paragraph")
+    async def put_paragraph(payload: ParagraphWrite) -> dict[str, Any]:
+        """Replace one paragraph and recompile — the save from the page's edit box."""
+        if controller.busy:
+            raise _error(409, "agent_busy", "The agent is editing right now; try again in a moment.")
+        try:
+            written = write_paragraph(
+                config, payload.file, payload.start, payload.end, payload.original, payload.text
+            )
+        except SourceConflict as exc:
+            raise _error(409, "source_conflict", str(exc)) from exc
+        except SourceError as exc:
+            raise _error(422, "source_unwritable", str(exc)) from exc
+
+        if not written["changed"]:
+            return {"ok": True, **written, "build": None}
+        return {"ok": True, **written, "build": await _saved_by_hand(written["file"])}
 
     @app.post("/api/complete")
     async def complete(payload: CompleteRequest) -> dict[str, Any]:

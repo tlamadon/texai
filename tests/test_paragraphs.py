@@ -9,7 +9,7 @@ the numbering.
 
 from texai.paragraphs import (
     PARAGRAPH_PALETTE,
-    _body_start_line,
+    body_start_line,
     paragraph_ranges,
 )
 
@@ -52,8 +52,8 @@ def test_indexing_survives_preamble_so_palette_stays_in_step():
     ranges = paragraph_ranges(text)
     assert ranges[0] == (0, 1, 1)
     assert ranges[1] == (1, 3, 3)
-    assert _body_start_line(text) == 5
-    body = [(i, a, b) for (i, a, b) in ranges if b >= _body_start_line(text)]
+    assert body_start_line(text) == 5
+    body = [(i, a, b) for (i, a, b) in ranges if b >= body_start_line(text)]
     assert body[0][0] == 2  # the \begin{document}/... paragraph keeps index 2
     assert body[-1] == (3, 7, 7)
     # Its colour is index % palette, the same expression editor.js uses.
@@ -62,4 +62,4 @@ def test_indexing_survives_preamble_so_palette_stays_in_step():
 
 def test_body_start_defaults_to_one_without_preamble():
     # An \input file has no \begin{document}; every line is body.
-    assert _body_start_line("just prose\n\nmore prose\n") == 1
+    assert body_start_line("just prose\n\nmore prose\n") == 1

@@ -1,9 +1,11 @@
 // Wiring: load the PDF, watch it for changes, turn Cmd/Ctrl-clicks into
-// SyncTeX lookups, and keep a copyable reference to the last selection.
+// SyncTeX lookups, double-clicks into in-place edits, and keep a copyable
+// reference to the last selection.
 
 import { getJSON, postJSON } from './api.js';
 import { ChatPanel } from './chat.js';
 import { GitPanel } from './git.js';
+import { InlineEditor } from './inline.js';
 import { ViewHistory } from './history.js';
 import { SourceEditor } from './editor.js';
 import { QuickJump } from './jump.js';
@@ -45,6 +47,7 @@ let marks = null;
 let paraGuide = null;
 let notes = null;
 let viewHistory = null;
+let inline = null;
 
 const viewer = new PdfViewer({
   container: els.container,
@@ -58,6 +61,7 @@ const viewer = new PdfViewer({
     marks?.draw();
     paraGuide?.draw();
     notes?.draw();
+    inline?.place();
   },
   // Following a link moves the page; the arrow back has to know from where.
   onBeforeJump: () => viewHistory?.mark(),
@@ -127,6 +131,28 @@ editor.onSaved = () => {
 // The reverse of Cmd-click: put the cursor in the source, see it in the PDF.
 editor.onReveal = (file, line, phrases = []) =>
   file && goTo(file, line, { quiet: true, phrases });
+
+// Double-click a word on the page to edit its paragraph right there. The box
+// reads and writes the file on disk, so a buffer in the Source tab with unsaved
+// edits to the same file would be talking past it — that is the one refusal.
+inline = new InlineEditor({
+  viewer,
+  container: els.container,
+  resolve: (entry, clientX, clientY) => resolvePoint(entry, clientX, clientY),
+  bars: () => paraGuide.bars,
+  refuse: (file) =>
+    editor.dirty && editor.file === file
+      ? `${file} has unsaved edits in the Source tab — save or revert them first.`
+      : null,
+  onSaved: (result) => {
+    if (!result.changed) return;
+    git.refresh();
+    invalidateOutlines();
+    // The Source tab may have this file open; fold the new paragraph in.
+    editor.reload();
+  },
+  onError: (message) => showToast(message, { type: 'error' }),
+});
 
 // Scrolling one pane scrolls the other, when asked for. Created after the
 // editor, whose scroll events it listens to.
@@ -330,6 +356,7 @@ async function loadPdf(version, { preserveView = false } = {}) {
   showEmpty('');
   marks?.refresh();
   paraGuide?.refresh();
+  inline?.pdfReloaded();
   updateZoomReadout();
   els.pageCount.textContent = String(viewer.pageCount);
 }
@@ -401,20 +428,25 @@ async function select(entry, clientX, clientY, selectedText) {
   }
 }
 
+/** Where in the source a point on the page came from, without recording it. */
+function resolvePoint(entry, clientX, clientY) {
+  const point = viewer.clientPointToPdf(entry, clientX, clientY);
+  const word = viewer.wordAtClientPoint(clientX, clientY);
+  return postJSON('/api/resolve', {
+    page: entry.num,
+    x: Number(point.x.toFixed(3)),
+    y: Number(point.y.toFixed(3)),
+    selectedText: null,
+    word: word?.word ?? null,
+    contextBefore: word?.before ?? null,
+    contextAfter: word?.after ?? null,
+  });
+}
+
 /** Alt-click: jump to the source behind the click, without recording it. */
 async function openSourceAt(entry, clientX, clientY) {
   try {
-    const point = viewer.clientPointToPdf(entry, clientX, clientY);
-    const word = viewer.wordAtClientPoint(clientX, clientY);
-    const where = await postJSON('/api/resolve', {
-      page: entry.num,
-      x: Number(point.x.toFixed(3)),
-      y: Number(point.y.toFixed(3)),
-      selectedText: null,
-      word: word?.word ?? null,
-      contextBefore: word?.before ?? null,
-      contextAfter: word?.after ?? null,
-    });
+    const where = await resolvePoint(entry, clientX, clientY);
     // Land on the word itself, not the start of its line. When that could not
     // be worked out, say so — a cursor at column 1 with no explanation reads
     // like the feature is broken rather than declining to guess.
@@ -449,6 +481,18 @@ function onViewerClick(event) {
   const entry = viewer.pageAtClientPoint(event.clientX, event.clientY);
   if (!entry) return;
   select(entry, event.clientX, event.clientY, null);
+}
+
+/** Double-click: edit the paragraph under the pointer, on the page. */
+function onViewerDoubleClick(event) {
+  if (event.button !== 0 || event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return;
+  // Links, margin notes and change markers have double-clicks of their own to lose.
+  if (event.target.closest?.('a, button')) return;
+  const entry = viewer.pageAtClientPoint(event.clientX, event.clientY);
+  if (!entry) return;
+  // The browser has just selected the word; the box selects it instead.
+  window.getSelection()?.removeAllRanges();
+  inline.open(entry, event.clientX, event.clientY, event.target);
 }
 
 function referenceText(selection) {
@@ -503,6 +547,7 @@ els.zoomFit.addEventListener('click', () => {
 });
 els.copyRef.addEventListener('click', copyReference);
 els.viewer.addEventListener('click', onViewerClick);
+els.viewer.addEventListener('dblclick', onViewerDoubleClick);
 
 // Drag the divider between the document and the chat panel.
 (() => {
@@ -607,7 +652,7 @@ async function boot() {
 // Read-only handles; nothing here is part of the page's own control flow.
 window.__texai = {
   viewer, chat, marks, paraGuide, notes, editor, git, jump, contents, project, refreshContents,
-  history: viewHistory, scrollSync,
+  history: viewHistory, scrollSync, inline,
 };
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));
