@@ -60,6 +60,7 @@ export class ChatPanel {
     this.view = 'chat';
     this.lastTranscriptTurn = null;
     this.onTurnFinished = null;
+    this.onAgentEntry = null; // (turnId, entry) for each step of a running turn
     this.onChangesUpdated = null;
     this.onGoTo = null;      // click a file:line reference
     this.onEdit = null;      // open a marked passage in the editor
@@ -349,6 +350,7 @@ export class ChatPanel {
       case 'agent_entry':
         this._appendTranscript(event.turnId, event.entry);
         this._appendToCard(event.turnId, event.entry);
+        this.onAgentEntry?.(event.turnId, event.entry);
         break;
       case 'turn_finished':
         this._finishCard(event.turn);

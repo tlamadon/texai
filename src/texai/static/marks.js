@@ -230,6 +230,19 @@ export class MarksLayer {
     else this.clear();
   }
 
+  /**
+   * Show the markers now without changing the remembered choice: a request
+   * made from the page should land on the page, whatever the toggle says. The
+   * button reads as on, so switching them off again is one click.
+   */
+  reveal() {
+    if (!this.enabled) {
+      this.enabled = true;
+      this._renderButton();
+    }
+    this.refresh();
+  }
+
   _renderButton() {
     if (!this.button) return;
     this.button.classList.toggle('active', this.enabled);

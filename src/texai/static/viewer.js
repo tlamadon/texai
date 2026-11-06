@@ -466,6 +466,34 @@ export class PdfViewer {
   }
 
   /**
+   * A rectangle in page pixels, re-expressed in the scroll container's content
+   * coordinates — where to put an overlay that must outlive the page's own
+   * re-renders (which wipe everything drawn on the page) and still scroll with it.
+   */
+  pageRectToContainer(entry, rect) {
+    const pageRect = entry.el.getBoundingClientRect();
+    const hostRect = this.container.getBoundingClientRect();
+    return {
+      left: pageRect.left - hostRect.left + this.container.scrollLeft + rect.left,
+      top: pageRect.top - hostRect.top + this.container.scrollTop + rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  /** The inverse for a client rectangle: PDF points on the page it falls on. */
+  clientRectToPdf(entry, rect) {
+    const a = this.clientPointToPdf(entry, rect.left, rect.top);
+    const b = this.clientPointToPdf(entry, rect.right, rect.bottom);
+    return {
+      x: Math.min(a.x, b.x),
+      y: Math.min(a.y, b.y),
+      width: Math.abs(b.x - a.x),
+      height: Math.abs(b.y - a.y),
+    };
+  }
+
+  /**
    * Scroll a PDF-point box into the middle of the view.
    *
    * Page elements are always laid out (they carry their size before they

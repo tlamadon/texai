@@ -12,7 +12,9 @@ back marked on the page for you to accept or reject.
 - **Point at the page and the agent knows exactly where you mean.** Select a
   passage or click a word and it becomes a reference in your next message —
   `sections/model.tex:143:15`, the precise word, not a description of roughly
-  where you meant. Attach several, each with its own note.
+  where you meant. Attach several, each with its own note. Or ask right there:
+  select a sentence, click the ✦ that appears, type *tighten this*, and the
+  edit comes back on the page — no chat panel needed.
 - **Review its edits on the page, not in a diff.** Every change is marked inline
   in the PDF, old text struck through and new text beside it. Accept or reject
   them one at a time, across as many turns as you like.
@@ -165,6 +167,31 @@ rolled back. A half-applied batch on top of a broken document is worse than
 nothing.
 
 Turns that only answer a question — no file changed — skip the build entirely.
+
+### Asking from the page
+
+For a request about one passage, there is a shorter way round. Select the text
+in the PDF and a **✦** appears just above the end of the selection; click it, or
+press **Cmd/Ctrl-K**, and a box opens under the passage. Type the request and
+press **Enter**.
+
+```
+select "Page breaks are where a naive line-based mapping tends to go wrong"
+  ✦  →  "Make this sentence shorter and punchier."  →  Enter
+```
+
+It is the same turn a chip with a note would send, so it shows in the chat as
+usual, and it works with the panel put away. While the agent works the passage
+pulses and the box shows what it is doing, with a **Stop** button. When it is
+done:
+
+- **It edited something** — the box closes and the change appears as a marker on
+  the rebuilt page, ready to accept or reject, even if *Show changes* was off.
+- **It only answered** — *is this sentence clear?* — the answer stays in the box
+  until **Esc**, with **Open in chat** for the whole turn.
+
+Closing the box does not stop the agent; the turn finishes in the chat either
+way. One request runs at a time, so the ✦ stays away while the agent is busy.
 
 ### What the console says
 

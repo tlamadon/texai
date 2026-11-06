@@ -153,10 +153,7 @@ export class InlineEditor {
     if (!entry?.viewport) return;
 
     const rect = this.viewer.pdfRectToPageRect(entry, s.box);
-    const pageRect = entry.el.getBoundingClientRect();
-    const hostRect = this.container.getBoundingClientRect();
-    const left = pageRect.left - hostRect.left + this.container.scrollLeft + rect.left;
-    const top = pageRect.top - hostRect.top + this.container.scrollTop + rect.top;
+    const { left, top } = this.viewer.pageRectToContainer(entry, rect);
 
     const { style } = s.el;
     style.left = `${left - PAD_PX}px`;

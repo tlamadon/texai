@@ -2139,6 +2139,93 @@ if (canLocate) {
   }
 }
 
+// ---------------- asking about a selection, on the page ----------------
+// Everything short of sending: a request would start a real (billed) agent turn.
+{
+  const ready = await cdp.eval(`window.__texai.chat.agent.available && !window.__texai.chat.busy`);
+  const spot = ready && await cdp.json(`(async () => {
+    const span = [...document.querySelectorAll('#viewer .textLayer span')]
+      .find(s => s.textContent.length > 40 && s.getBoundingClientRect().width > 200);
+    if (!span) return null;
+    span.scrollIntoView({ block: 'center' });
+    await new Promise(r => setTimeout(r, 500));
+    const r = span.getBoundingClientRect();
+    return { x0: Math.round(r.left + 3), x1: Math.round(r.left + r.width * 0.6), y: Math.round(r.top + r.height / 2) };
+  })()`);
+
+  if (!spot) {
+    console.log('asking on the page: skipped (no agent available, or no line of text to select)');
+  } else {
+    const mouse = (type, x, clickCount = 1) => cdp.send('Input.dispatchMouseEvent',
+      { type, x, y: spot.y, button: 'left', clickCount });
+    await mouse('mousePressed', spot.x0);
+    for (let x = spot.x0; x <= spot.x1; x += 40) await mouse('mouseMoved', x);
+    await mouse('mouseReleased', spot.x1);
+    await sleep(200);
+
+    const offered = await cdp.json(`(() => {
+      const button = document.querySelector('.ask-button');
+      const r = button.getBoundingClientRect();
+      const sel = window.getSelection().getRangeAt(0).getClientRects();
+      const last = sel[sel.length - 1];
+      return {
+        shown: !button.hidden,
+        selected: window.getSelection().toString().length,
+        // Above the end of the selection, not on top of the text after it.
+        above: r.bottom <= last.top + 1,
+        atEnd: Math.abs((r.left + r.width / 2) - last.right) < 4,
+      };
+    })()`);
+    check('selecting text offers the ask button', offered.shown && offered.selected > 0, JSON.stringify(offered));
+    check('the button sits just above the end of the selection', offered.above && offered.atEnd,
+      JSON.stringify(offered));
+
+    await cdp.eval(`document.querySelector('.ask-button').click()`);
+    await sleep(200);
+    const opened = await cdp.json(`(() => {
+      const box = document.querySelector('.ask-box');
+      const input = box?.querySelector('textarea');
+      const page = document.querySelector('#viewer .page').getBoundingClientRect();
+      const r = box?.getBoundingClientRect();
+      return {
+        box: !!box,
+        focused: document.activeElement === input,
+        highlights: document.querySelectorAll('.ask-highlight').length,
+        buttonHidden: document.querySelector('.ask-button').hidden,
+        onPage: r && r.left >= page.left && r.right <= page.right,
+      };
+    })()`);
+    check('the button opens a request box with the cursor in it', opened.box && opened.focused,
+      JSON.stringify(opened));
+    check('the passage stays highlighted once the selection is gone', opened.highlights > 0,
+      `${opened.highlights} boxes`);
+    check('the request box stays on the page', opened.onPage === true);
+
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+    await sleep(150);
+    const escaped = await cdp.json(`({
+      box: !!document.querySelector('.ask-box'),
+      highlights: document.querySelectorAll('.ask-highlight').length,
+    })`);
+    check('Escape closes the box and its highlight', !escaped.box && escaped.highlights === 0,
+      JSON.stringify(escaped));
+
+    // A double-click selects a word too, but that one belongs to the in-place editor.
+    await mouse('mousePressed', spot.x0 + 30, 1);
+    await mouse('mouseReleased', spot.x0 + 30, 1);
+    await mouse('mousePressed', spot.x0 + 30, 2);
+    await mouse('mouseReleased', spot.x0 + 30, 2);
+    await sleep(300);
+    const doubled = await cdp.json(`({
+      offered: !document.querySelector('.ask-button').hidden,
+      editor: !!window.__texai.inline.session,
+    })`);
+    check('a double-click opens the editor, not the ask button', !doubled.offered, JSON.stringify(doubled));
+    await cdp.eval(`window.__texai.inline.close()`);
+  }
+}
+
 // ---------------- switching the paragraph guides off ----------------
 {
   const count = `JSON.stringify({

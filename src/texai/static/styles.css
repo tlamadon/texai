@@ -751,6 +751,102 @@ button.toggle.active {
 .inline-edit-status.busy { color: var(--warn); }
 .inline-edit-bar button { font-size: 11px; padding: 2px 8px; }
 
+/* ---------------- asking about a selection, on the page ---------------- */
+
+/* The button at the end of a selection, sitting just above it. Its own
+   transform centres it on the point, so the script only has to name the point. */
+.ask-button {
+  position: absolute;
+  z-index: 22;
+  transform: translate(-50%, -100%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.ask-button:hover { filter: brightness(1.15); }
+
+/* The passage being asked about, kept visible once the selection is gone. */
+.ask-highlight {
+  position: absolute;
+  z-index: 19;
+  pointer-events: none;
+  border-radius: 2px;
+  background: rgba(76, 141, 255, 0.2);
+}
+.ask-highlight.working { animation: ask-pulse 1.4s ease-in-out infinite; }
+@keyframes ask-pulse {
+  0%, 100% { background: rgba(76, 141, 255, 0.14); }
+  50%      { background: rgba(76, 141, 255, 0.34); }
+}
+
+/* The request box under the passage: the app's own chrome, not the paper's. */
+.ask-box {
+  position: absolute;
+  z-index: 21;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font: 12px/1.45 system-ui, sans-serif;
+}
+.ask-quote {
+  padding-right: 18px; /* clear of the close button */
+  color: var(--muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 0 6px;
+  font-size: 14px;
+  line-height: 18px;
+}
+.ask-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.6em;
+  padding: 6px 8px;
+  resize: none;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  color: var(--fg);
+  font: inherit;
+}
+.ask-input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.ask-status:empty { display: none; }
+.ask-status.busy { color: var(--warn); }
+.ask-status.ok { color: var(--ok); }
+.ask-status.err { color: var(--err); }
+.ask-reply {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding-top: 6px;
+  border-top: 1px solid var(--panel-border);
+}
+.ask-bar { display: flex; align-items: center; gap: 6px; }
+.ask-hint { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
+.ask-bar button { font-size: 11px; padding: 2px 10px; }
+
 /* ---------------- jump-to highlight ---------------- */
 
 .flash {

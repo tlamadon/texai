@@ -3,6 +3,7 @@
 // reference to the last selection.
 
 import { getJSON, postJSON } from './api.js';
+import { PageAsk } from './ask.js';
 import { ChatPanel } from './chat.js';
 import { GitPanel } from './git.js';
 import { InlineEditor } from './inline.js';
@@ -51,6 +52,7 @@ let paraGuide = null;
 let notes = null;
 let viewHistory = null;
 let inline = null;
+let ask = null;
 
 const viewer = new PdfViewer({
   container: els.container,
@@ -65,6 +67,7 @@ const viewer = new PdfViewer({
     paraGuide?.draw();
     notes?.draw();
     inline?.place();
+    ask?.place();
   },
   // Following a link moves the page; the arrow back has to know from where.
   onBeforeJump: () => viewHistory?.mark(),
@@ -160,6 +163,23 @@ inline = new InlineEditor({
   },
   onError: (message) => showToast(message, { type: 'error' }),
 });
+
+// Select a passage and ask for a change right there: a button at the end of the
+// selection opens a request box, the request goes to the agent as a turn, and
+// its edits come back as markers on the page — no need for the chat panel.
+ask = new PageAsk({
+  viewer,
+  container: els.container,
+  select: (passage) => recordSelection(passage),
+  available: () => chat.agent.available && !chat.busy,
+  onChanges: () => marks.reveal(),
+  onOpenChat: () => {
+    setPanelVisible(true);
+    chat.setView('chat');
+  },
+});
+chat.onTurnFinished = (turn) => ask.turnFinished(turn);
+chat.onAgentEntry = (turnId, entry) => ask.agentEntry(turnId, entry);
 
 // Scrolling one pane scrolls the other, when asked for. Created after the
 // editor, whose scroll events it listens to.
@@ -406,6 +426,7 @@ async function loadPdf(version, { preserveView = false } = {}) {
   marks?.refresh();
   paraGuide?.refresh();
   inline?.pdfReloaded();
+  ask?.pdfReloaded();
   updateZoomReadout();
   els.pageCount.textContent = String(viewer.pageCount);
 }
@@ -447,25 +468,34 @@ async function poll() {
 
 /* ---------------- selection ---------------- */
 
+/** Resolve a point on a page to its source, and record it as the current selection. */
+async function recordSelection({ page, point, word, selectedText }) {
+  const result = await postJSON('/api/select', {
+    page,
+    x: Number(point.x.toFixed(3)),
+    y: Number(point.y.toFixed(3)),
+    selectedText: selectedText || null,
+    word: word?.word ?? null,
+    contextBefore: word?.before ?? null,
+    contextAfter: word?.after ?? null,
+  });
+  lastSelection = result.selection;
+  els.copyRef.disabled = false;
+  return result;
+}
+
 async function select(entry, clientX, clientY, selectedText) {
   if (busy) return;
   busy = true;
   try {
-    const point = viewer.clientPointToPdf(entry, clientX, clientY);
     // SyncTeX only answers with a line. The word under the cursor, and the
     // words either side of it, are what get the server the rest of the way.
-    const word = viewer.wordAtClientPoint(clientX, clientY);
-    const result = await postJSON('/api/select', {
+    const result = await recordSelection({
       page: entry.num,
-      x: Number(point.x.toFixed(3)),
-      y: Number(point.y.toFixed(3)),
-      selectedText: selectedText || null,
-      word: word?.word ?? null,
-      contextBefore: word?.before ?? null,
-      contextAfter: word?.after ?? null,
+      point: viewer.clientPointToPdf(entry, clientX, clientY),
+      word: viewer.wordAtClientPoint(clientX, clientY),
+      selectedText,
     });
-    lastSelection = result.selection;
-    els.copyRef.disabled = false;
     // The passage lands on the composer, so the composer has to be there.
     setPanelVisible(true);
     // The passage becomes a chip on the composer; the selection file is still
@@ -717,7 +747,7 @@ async function boot() {
 // Read-only handles; nothing here is part of the page's own control flow.
 window.__texai = {
   viewer, chat, marks, paraGuide, notes, editor, git, jump, contents, project, refreshContents,
-  history: viewHistory, scrollSync, inline, setPanelVisible,
+  history: viewHistory, scrollSync, inline, ask, setPanelVisible,
 };
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));
