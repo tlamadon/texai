@@ -40,6 +40,7 @@ from .synctex import synctex_data_file
 
 __all__ = [
     "PARAGRAPH_PALETTE",
+    "body_start_line",
     "paragraph_ranges",
     "paragraph_bars",
 ]
@@ -102,7 +103,7 @@ def paragraph_ranges(text: str) -> list[tuple[int, int, int]]:
     return [(index, first, last) for index, (first, last) in enumerate(ranges)]
 
 
-def _body_start_line(text: str) -> int:
+def body_start_line(text: str) -> int:
     """The line where the body begins, or 1 for a file with no preamble.
 
     A ``\\begin{document}`` marks the split; the files pulled in with ``\\input``
@@ -265,7 +266,7 @@ def _map_file(
     """Every paragraph bar one file contributes, one per page it touches, and
     the annotations it carries, each placed beside the paragraph it belongs to."""
     text = path.read_text(encoding="utf-8", errors="replace")
-    body_start = _body_start_line(text)
+    body_start = body_start_line(text)
     ranges = paragraph_ranges(text)
     bars: list[dict[str, Any]] = []
     # Where each paragraph that typeset anything begins: (page, top).
@@ -299,6 +300,7 @@ def _map_file(
                     "page": page,
                     "x": round(left_margin, 2),
                     "y": round(y, 2),
+                    "width": round(right_margin - left_margin, 2),
                     "height": round(height, 2),
                 }
             )

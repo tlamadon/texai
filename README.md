@@ -25,9 +25,10 @@ back marked on the page for you to accept or reject.
 - **It only touches your LaTeX.** The agent gets file tools and nothing else —
   no shell, no network. And `claude --resume` drops the same session into a real
   terminal when you want the full CLI.
-- **Take over by hand whenever you like.** Alt-click opens the LaTeX at that
-  spot in an editor; Cmd/Ctrl-S saves and recompiles, and the page reloads where
-  you were. Clicking in the source scrolls the PDF back to it.
+- **Take over by hand whenever you like.** Double-click a word on the page to
+  edit its paragraph right there, LaTeX and all. Alt-click opens the LaTeX at
+  that spot in a full editor; Cmd/Ctrl-S saves and recompiles, and the page
+  reloads where you were. Clicking in the source scrolls the PDF back to it.
 - **Find your way around a long paper.** A contents column beside the page lists
   the whole document — every file it pulls in, its figures and tables by caption,
   its theorems by title — and clicking one scrolls the PDF there. Cmd/Ctrl-P
@@ -462,6 +463,20 @@ Alt-click "the elasticity of substitution"  →  Source tab, sections/model.tex:
 
 The `file:line` label on a change card opens the same editor at that change, for
 when it is faster to fix the agent's work than to describe the fix.
+
+For a small fix there is no need to leave the page: **double-click** a word and
+an editor opens over its paragraph, set in a serif at the page's size and as
+wide as its column, with that word selected. It holds the paragraph's LaTeX —
+type `\emph{…}`, `$\alpha_t$` or `\cite{…}` as you would in the source.
+**Cmd/Ctrl-Enter** or clicking elsewhere saves that one paragraph and
+recompiles; **Esc** cancels. The box stays up until the rebuilt page replaces
+the text under it, and if the build fails it stays open with LaTeX's error.
+
+A paragraph is a blank-line-separated block, the same one coloured in the
+gutter and the margin. Only that block is written back, and only if it is still
+what the box was opened on, so the agent editing elsewhere in the same file
+costs you nothing. If the Source tab holds unsaved edits to the same file, save
+or revert those first.
 
 When you are stuck mid-sentence, **Ctrl-Space** (or **Alt-\\**, for systems where
 Ctrl-Space switches the keyboard layout) asks for a continuation at the caret.

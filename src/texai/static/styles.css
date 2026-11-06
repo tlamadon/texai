@@ -126,6 +126,7 @@ button.ghost { background: transparent; }
   min-width: 0;
   overflow: auto;
   padding: 16px 0 48px;
+  position: relative; /* the in-place editor is placed against it */
 }
 
 
@@ -669,6 +670,80 @@ button.toggle.active {
 .mark-note { color: var(--muted); font-size: 12px; }
 .mark-actions { display: flex; gap: 6px; justify-content: flex-end; }
 
+
+/* ---------------- editing a paragraph on the page ---------------- */
+
+/* The box sits over the paragraph it edits, as wide as the text column and set
+   in a serif at the page's own size, so the edit reads in place. White, like the
+   page, so the old rendering underneath does not show through; the accent ring
+   says it is an editor, not the paper. The size comes from --inline-font, set
+   from the text that was clicked and rescaled with the zoom. */
+.inline-edit {
+  position: absolute;
+  z-index: 20;
+  box-sizing: border-box;
+  padding: 6px;
+  background: #fff;
+  color: #111;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--accent), 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.inline-edit .CodeMirror {
+  height: auto;
+  background: transparent;
+  color: #111;
+  font-family: "Latin Modern Roman", "CMU Serif", "Computer Modern Serif", "STIX Two Text",
+    "Times New Roman", Georgia, serif;
+  font-size: var(--inline-font, 13px);
+  line-height: 1.25;
+}
+.inline-edit .CodeMirror-lines { padding: 0; }
+.inline-edit .CodeMirror pre.CodeMirror-line,
+.inline-edit .CodeMirror pre.CodeMirror-line-like { padding: 0; }
+.inline-edit .CodeMirror-cursor { border-left: 1.5px solid #111; }
+.inline-edit .CodeMirror-selected { background: #dbe6fb; }
+.inline-edit .CodeMirror-focused .CodeMirror-selected { background: #c5d7fa; }
+.inline-edit .CodeMirror-matchingbracket { color: #0a58ca; font-weight: 600; }
+/* The LaTeX shows, but quietly: the prose is what is being read. */
+.inline-edit .cm-tag { color: #1f4f99; }
+.inline-edit .cm-keyword { color: #8a3ffc; }
+.inline-edit .cm-variable-2 { color: #6f2dbd; }
+.inline-edit .cm-number { color: #6f2dbd; }
+.inline-edit .cm-atom { color: #57606a; }
+.inline-edit .cm-builtin { color: #1f4f99; }
+.inline-edit .cm-comment { color: #8b949e; font-style: italic; }
+.inline-edit .cm-error { color: #cf222e; }
+
+/* Saving: the box stays where it is until the rebuilt page arrives under it. */
+.inline-edit.saving .CodeMirror { opacity: 0.55; }
+.inline-edit.saving { box-shadow: 0 0 0 2px var(--warn), 0 8px 28px rgba(0, 0, 0, 0.45); }
+
+/* The strip under the box: where it came from, how to close it, what went wrong. */
+.inline-edit-bar {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  color: var(--muted);
+  font: 11px/1.4 system-ui, sans-serif;
+}
+.inline-edit-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-edit-status.err { color: var(--err); white-space: normal; }
+.inline-edit-status.busy { color: var(--warn); }
+.inline-edit-bar button { font-size: 11px; padding: 2px 8px; }
 
 /* ---------------- jump-to highlight ---------------- */
 

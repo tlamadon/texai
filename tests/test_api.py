@@ -378,6 +378,45 @@ def test_source_write_refuses_stale_saves(config: AppConfig, project: Path):
     assert (project / "sections" / "model.tex").read_text() == "someone else got here first\n"
 
 
+def test_paragraph_round_trip(config: AppConfig, project: Path):
+    path = project / "sections" / "model.tex"
+    path.write_text("\\section{Model}\n\nAn $x$ here,\nand there.\n\nNext.\n")
+    client = make_client(config, fake_runner())
+
+    para = client.get("/api/paragraph", params={"file": "sections/model.tex", "line": 4}).json()
+    assert (para["start"], para["end"]) == (3, 4)
+
+    response = client.post(
+        "/api/paragraph",
+        json={"file": "sections/model.tex", "start": 3, "end": 4,
+              "original": para["text"], "text": "An $\\int_0^1 f$ here."},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["changed"] is True and "build" in body
+    assert path.read_text() == "\\section{Model}\n\nAn $\\int_0^1 f$ here.\n\nNext.\n"
+
+
+def test_paragraph_refuses_a_line_outside_any_paragraph(config: AppConfig, project: Path):
+    (project / "sections" / "model.tex").write_text("\\section{Model}\n\n\n\nNext.\n")
+    client = make_client(config, fake_runner())
+    response = client.get("/api/paragraph", params={"file": "sections/model.tex", "line": 4})
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"] == "no_paragraph"
+
+
+def test_paragraph_write_refuses_a_stale_paragraph(config: AppConfig, project: Path):
+    path = project / "sections" / "model.tex"
+    path.write_text("\\section{Model}\n\nTheirs.\n")
+    client = make_client(config, fake_runner())
+    response = client.post(
+        "/api/paragraph",
+        json={"file": "sections/model.tex", "start": 3, "end": 3, "original": "Mine.", "text": "x"},
+    )
+    assert response.status_code == 409
+    assert path.read_text() == "\\section{Model}\n\nTheirs.\n"
+
+
 def test_locate_can_scan_forward_for_a_line_that_rendered(
     config: AppConfig, project: Path, monkeypatch: pytest.MonkeyPatch
 ):

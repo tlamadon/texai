@@ -6,11 +6,14 @@ import pytest
 
 from texai.config import AppConfig
 from texai.source import (
+    NoParagraph,
     SourceConflict,
     SourceError,
     content_hash,
     list_sources,
+    read_paragraph,
     read_source,
+    write_paragraph,
     write_source,
 )
 
@@ -137,3 +140,96 @@ def test_write_is_atomic(project, monkeypatch):
 def test_hash_changes_with_content():
     assert content_hash("a") != content_hash("b")
     assert content_hash("a") == content_hash("a")
+
+
+# ---------------------------------------------------------------- one paragraph
+
+PAPER = (
+    "\\documentclass{article}\n"
+    "\\begin{document}\n"
+    "\n"
+    "First paragraph,\n"
+    "on two lines.\n"
+    "\n"
+    "Second with $\\alpha$.\n"
+    "\n"
+    "Third.\n"
+    "\\end{document}\n"
+)
+
+
+@pytest.fixture()
+def paper(project):
+    (project.root / "paper.tex").write_text(PAPER)
+    return project
+
+
+def test_read_paragraph_returns_the_block_around_a_line(paper):
+    para = read_paragraph(paper, "paper.tex", 5)
+    assert (para["start"], para["end"]) == (4, 5)
+    assert para["text"] == "First paragraph,\non two lines."
+    assert para["sha"] == content_hash(PAPER)
+
+
+def test_read_paragraph_takes_the_blank_line_after_a_paragraph_as_that_paragraph(paper):
+    # SyncTeX tends to name the blank line where TeX read the closing \\par.
+    assert read_paragraph(paper, "paper.tex", 6)["start"] == 4
+
+
+def test_read_paragraph_never_includes_the_document_frame(paper):
+    path = paper.root / "paper.tex"
+    path.write_text("\\documentclass{article}\n\\begin{document}\nHello,\nworld.\n\\end{document}\n")
+    para = read_paragraph(paper, "paper.tex", 3)
+    assert (para["start"], para["end"]) == (3, 4)
+    assert para["text"] == "Hello,\nworld."
+
+
+def test_read_paragraph_refuses_the_preamble_and_non_prose(paper):
+    with pytest.raises(NoParagraph):
+        read_paragraph(paper, "paper.tex", 1)
+    with pytest.raises(NoParagraph):
+        read_paragraph(paper, "refs.bib", 1)
+
+
+def test_write_paragraph_replaces_only_that_paragraph(paper):
+    out = write_paragraph(paper, "paper.tex", 7, 7, "Second with $\\alpha$.", "Now $\\beta^2$,\nsplit.\n\n")
+    assert out["changed"] is True
+    assert (out["start"], out["end"]) == (7, 8)
+    text = (paper.root / "paper.tex").read_text()
+    assert text == PAPER.replace("Second with $\\alpha$.", "Now $\\beta^2$,\nsplit.")
+
+
+def test_write_paragraph_unchanged_writes_nothing(paper):
+    path = paper.root / "paper.tex"
+    before = path.stat().st_mtime_ns
+    out = write_paragraph(paper, "paper.tex", 9, 9, "Third.", "Third.\n")
+    assert out["changed"] is False
+    assert path.stat().st_mtime_ns == before
+
+
+def test_write_paragraph_follows_a_paragraph_that_moved(paper):
+    path = paper.root / "paper.tex"
+    path.write_text(PAPER.replace("\\begin{document}\n", "\\begin{document}\nInserted.\n\n"))
+    out = write_paragraph(paper, "paper.tex", 9, 9, "Third.", "Last.")
+    assert out["start"] == 11
+    assert "Last.\n\\end{document}" in path.read_text()
+
+
+def test_write_paragraph_refuses_a_paragraph_that_changed(paper):
+    path = paper.root / "paper.tex"
+    path.write_text(PAPER.replace("Third.", "Third, rewritten."))
+    with pytest.raises(SourceConflict):
+        write_paragraph(paper, "paper.tex", 9, 9, "Third.", "Mine.")
+    assert "Third, rewritten." in path.read_text()
+
+
+def test_write_paragraph_refuses_an_ambiguous_match(paper):
+    path = paper.root / "paper.tex"
+    path.write_text("\\begin{document}\nSame.\n\nSame.\n\nSame.\n")
+    with pytest.raises(SourceConflict):
+        write_paragraph(paper, "paper.tex", 9, 9, "Same.", "Mine.")
+
+
+def test_emptying_a_paragraph_removes_it_and_one_break(paper):
+    write_paragraph(paper, "paper.tex", 7, 7, "Second with $\\alpha$.", "  \n")
+    assert (paper.root / "paper.tex").read_text() == PAPER.replace("Second with $\\alpha$.\n\n", "")
