@@ -83,6 +83,12 @@ button.ghost { background: transparent; }
 }
 .splitter:hover { background: var(--accent); }
 
+/* The right-hand panel put away: the page takes the whole window. Hidden rather
+   than collapsed to zero, so nothing in it can take focus or a click. */
+.app.panel-hidden { grid-template-columns: minmax(320px, 1fr); }
+.app.panel-hidden > .splitter,
+.app.panel-hidden > .chat-pane { display: none; }
+
 /* ---------------- toolbar ---------------- */
 
 .toolbar {

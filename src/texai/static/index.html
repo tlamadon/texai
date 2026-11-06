@@ -52,6 +52,9 @@
         <button id="toggle-sync" type="button" class="toggle" aria-pressed="false"
                 title="Keep the source scrolled to whatever the page is showing, and back">
           Sync scroll</button>
+        <button id="toggle-guides" type="button" class="toggle" aria-pressed="true"
+                title="Colour each paragraph in the margin, matching the source's gutter">
+          Guides</button>
         <button id="toggle-notes" type="button" class="toggle" aria-pressed="true" hidden
                 title="Show the %@ annotations from the source in the page margins">Notes</button>
         <button id="toggle-marks" type="button" class="toggle"
@@ -69,6 +72,15 @@
           <span id="git-branch">&mdash;</span>
           <span id="git-count" class="git-count" hidden>0</span>
           <span id="git-ahead" class="git-ahead" hidden></span>
+        </button>
+
+        <button id="panel-toggle" type="button" class="ghost icon on" aria-pressed="true"
+                title="Hide the chat and source panel">
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none"
+                  stroke="currentColor" stroke-width="1.4"/>
+            <path d="M10 2.5v11" stroke="currentColor" stroke-width="1.4"/>
+          </svg>
         </button>
       </header>
 

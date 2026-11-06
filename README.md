@@ -478,6 +478,13 @@ what the box was opened on, so the agent editing elsewhere in the same file
 costs you nothing. If the Source tab holds unsaved edits to the same file, save
 or revert those first.
 
+With editing on the page, the chat and the source can be put away: the panel
+button at the right of the toolbar (or **Cmd/Ctrl-\\**) hides them and gives the
+page the whole window. Alt-clicking into the source or attaching a passage
+brings the panel back. The coloured paragraph bars in the margin matter most
+beside the source, so **Guides** in the toolbar switches them off; your `%@`
+notes stay.
+
 When you are stuck mid-sentence, **Ctrl-Space** (or **Alt-\\**, for systems where
 Ctrl-Space switches the keyboard layout) asks for a continuation at the caret.
 It shows up as faded ghost text: **Tab** takes it, **Esc** or carrying on typing

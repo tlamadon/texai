@@ -2139,6 +2139,85 @@ if (canLocate) {
   }
 }
 
+// ---------------- switching the paragraph guides off ----------------
+{
+  const count = `JSON.stringify({
+    bars: document.querySelectorAll('#viewer .para-bar').length,
+    notes: document.querySelectorAll('#viewer .note-layer button').length,
+    pressed: document.getElementById('toggle-guides').getAttribute('aria-pressed'),
+    stored: localStorage.getItem('texai:show-guides'),
+  })`;
+  const on = JSON.parse(await cdp.eval(count));
+  await cdp.eval(`document.getElementById('toggle-guides').click()`);
+  await sleep(200);
+  const off = JSON.parse(await cdp.eval(count));
+  // A redraw (scroll, zoom, rebuild) must not bring them back — and must still
+  // hand on the annotations, which arrive with the bars.
+  const delivered = await cdp.eval(`(async () => {
+    const guide = window.__texai.paraGuide;
+    const pass = guide.onAnnotations;
+    let calls = 0;
+    guide.onAnnotations = (items) => { calls += 1; pass(items); };
+    await guide.refresh();
+    guide.onAnnotations = pass;
+    return calls;
+  })()`);
+  const refreshed = JSON.parse(await cdp.eval(count));
+  console.log('guides:', JSON.stringify({ on, off, refreshed, delivered }));
+  check('the guides are drawn by default', on.bars > 0 && on.pressed === 'true', `${on.bars} bars`);
+  check('Guides switches the bars off', off.bars === 0 && off.pressed === 'false', `${off.bars} bars`);
+  check('and leaves the notes alone', off.notes === on.notes, `${on.notes} -> ${off.notes}`);
+  check('the notes still refresh while they are off', delivered === 1, `${delivered} deliveries`);
+  check('they stay off through a refresh, and are remembered',
+    refreshed.bars === 0 && refreshed.stored === '0', JSON.stringify(refreshed));
+  await cdp.eval(`document.getElementById('toggle-guides').click()`);
+  await sleep(200);
+  const back = JSON.parse(await cdp.eval(count));
+  check('switching them on draws them again', back.bars === on.bars, `${back.bars} bars`);
+}
+
+// ---------------- putting the right-hand panel away ----------------
+{
+  const measure = `(() => {
+    const pane = document.querySelector('.chat-pane').getBoundingClientRect();
+    const canvas = document.querySelector('.canvas-pane').getBoundingClientRect();
+    return {
+      pane: pane.width,
+      canvas: Math.round(canvas.width),
+      window: window.innerWidth,
+      page: Math.round(document.querySelector('#viewer .page').getBoundingClientRect().width),
+      pressed: document.getElementById('panel-toggle').getAttribute('aria-pressed'),
+      stored: localStorage.getItem('texai.panel'),
+    };
+  })()`;
+  const shown = await cdp.json(measure);
+  await cdp.eval(`window.__texai.viewer.setFitWidth()`);
+  const fitted = await cdp.json(measure);
+  await cdp.eval(`document.getElementById('panel-toggle').click()`);
+  await sleep(400);
+  const hidden = await cdp.json(measure);
+  console.log('panel:', JSON.stringify({ shown, hidden }));
+  check('hiding the panel takes it out of the layout', hidden.pane === 0, `${hidden.pane}px`);
+  check('the page side takes the whole window', hidden.canvas === hidden.window,
+    `${hidden.canvas} vs ${hidden.window}`);
+  check('a fitted page grows into the room', hidden.page > fitted.page, `${fitted.page} -> ${hidden.page}`);
+  check('the toggle reads as off, and is remembered', hidden.pressed === 'false' && hidden.stored === '0',
+    `${hidden.pressed} / ${hidden.stored}`);
+
+  await cdp.eval(`document.getElementById('panel-toggle').click()`);
+  await sleep(300);
+  const back = await cdp.json(measure);
+  check('showing it again restores the panel', back.pane > 200 && back.pressed === 'true', `${back.pane}px`);
+
+  // Opening a source needs the panel, so it comes back on its own.
+
+  await cdp.eval(`window.__texai.setPanelVisible(false)`);
+  await cdp.eval(`window.__texai.chat.onEdit('main.tex', 3, 1, null)`);
+  await sleep(400);
+  const reopened = await cdp.json(measure);
+  check('opening a source brings the panel back', reopened.pane > 200, `${reopened.pane}px`);
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

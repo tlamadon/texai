@@ -10,23 +10,43 @@
 // wipes, so `draw()` reruns cheaply on any scroll or zoom and `refresh()`
 // refetches only when the document itself has been rebuilt. The same answer
 // carries the author's `%@` annotations, handed on to `onAnnotations`.
+//
+// The bars earn their place beside the source; reading the page alone, they are
+// just colour. So they can be switched off, and the choice is remembered — but
+// the fetch carries on regardless, because the annotations ride on it.
 
 import { getJSON } from './api.js';
 
+const STORAGE_KEY = 'texai:show-guides';
 const BAR_WIDTH = 4; // px: the coloured rule itself
 const BAR_GAP = 12; // px to the left of the text column, so it clears the text
 
 export class ParagraphGuide {
-  constructor({ viewer, onAnnotations = null }) {
+  constructor({ viewer, button = null, onAnnotations = null }) {
     this.viewer = viewer;
+    this.button = button;
     this.onAnnotations = onAnnotations;
     this.bars = [];
     this.palette = 5;
-    this.enabled = true;
+    this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
+    this.button?.addEventListener('click', () => this.toggle());
+    this._reflect();
+  }
+
+  toggle() {
+    this.enabled = !this.enabled;
+    localStorage.setItem(STORAGE_KEY, this.enabled ? '1' : '0');
+    this._reflect();
+    this.draw();
+  }
+
+  _reflect() {
+    if (!this.button) return;
+    this.button.classList.toggle('active', this.enabled);
+    this.button.setAttribute('aria-pressed', String(this.enabled));
   }
 
   async refresh() {
-    if (!this.enabled) return;
     try {
       const data = await getJSON('/api/paragraphs');
       this.bars = data.bars || [];

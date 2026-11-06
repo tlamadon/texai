@@ -35,12 +35,15 @@ const els = {
   copyRef: document.getElementById('copy-reference'),
   toggleMarks: document.getElementById('toggle-marks'),
   toggleNotes: document.getElementById('toggle-notes'),
+  toggleGuides: document.getElementById('toggle-guides'),
   toggleSync: document.getElementById('toggle-sync'),
   acceptAll: document.getElementById('accept-all'),
   conn: document.getElementById('conn'),
   download: document.getElementById('download-pdf'),
   modKey: document.getElementById('mod-key'),
   composer: document.getElementById('composer'),
+  app: document.querySelector('.app'),
+  panelToggle: document.getElementById('panel-toggle'),
 };
 
 let marks = null;
@@ -76,7 +79,11 @@ marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.a
 // PDF is (re)built; redrawn on every render alongside the change markers. Its
 // answer also places the author's `%@` annotations, drawn in the margins.
 notes = new AnnotationLayer({ viewer, button: els.toggleNotes });
-paraGuide = new ParagraphGuide({ viewer, onAnnotations: (items) => notes.set(items) });
+paraGuide = new ParagraphGuide({
+  viewer,
+  button: els.toggleGuides,
+  onAnnotations: (items) => notes.set(items),
+});
 
 // Saving rebuilds the PDF; the watcher below notices the new version and
 // reloads the page, so there is nothing to do here but let it happen.
@@ -167,8 +174,50 @@ chat.onViewChange = (view) => {
   if (view === 'source') scrollSync.align();
 };
 
+/* ---------------- the right-hand panel ---------------- */
+
+// The chat and the source can be put away, leaving the page the whole window;
+// with editing in place on the page, reading and fixing need nothing else. The
+// choice is remembered. Anything that only makes sense in the panel — opening a
+// source, attaching a passage — brings it back rather than working unseen.
+const PANEL_KEY = 'texai.panel';
+let panelVisible = true;
+
+function setPanelVisible(visible) {
+  if (visible === panelVisible) return;
+  panelVisible = visible;
+  els.app.classList.toggle('panel-hidden', !visible);
+  els.panelToggle.classList.toggle('on', visible);
+  els.panelToggle.setAttribute('aria-pressed', String(visible));
+  els.panelToggle.title = `${visible ? 'Hide' : 'Show'} the chat and source panel ${panelShortcut()}`;
+  try {
+    localStorage.setItem(PANEL_KEY, visible ? '1' : '0');
+  } catch {
+    /* storage disabled: the panel just will not be remembered */
+  }
+  // The page's half of the window changed size, as dragging the splitter does.
+  if (viewer.fitWidth) {
+    viewer.setFitWidth();
+    updateZoomReadout();
+  }
+  // CodeMirror measures nothing while hidden, and the page may have moved on.
+  if (visible && chat.view === 'source') {
+    setTimeout(() => {
+      editor.cm?.refresh();
+      scrollSync.align();
+    }, 0);
+  }
+}
+
+function panelShortcut() {
+  return `(${IS_MAC ? 'Cmd' : 'Ctrl'}-\\)`;
+}
+
+els.panelToggle.addEventListener('click', () => setPanelVisible(!panelVisible));
+
 /** Open the source behind a spot in the document. */
 async function editAt(file, line, column = null) {
+  setPanelVisible(true);
   chat.setView('source');
   await editor.open(file, line, column);
 }
@@ -417,6 +466,8 @@ async function select(entry, clientX, clientY, selectedText) {
     });
     lastSelection = result.selection;
     els.copyRef.disabled = false;
+    // The passage lands on the composer, so the composer has to be there.
+    setPanelVisible(true);
     // The passage becomes a chip on the composer; the selection file is still
     // written for agents driving texai from outside the browser.
     chat.addSelection(result.selection);
@@ -579,11 +630,18 @@ els.viewer.addEventListener('dblclick', onViewerDoubleClick);
 // editor and the composer — so it is caught on the way down, before CodeMirror
 // or the browser's print dialog get a say. Ctrl-P on a Mac is left alone: it
 // moves the cursor up a line, as it does in every other text field there.
+// Cmd/Ctrl-\ puts the right-hand panel away or brings it back, from anywhere.
 document.addEventListener(
   'keydown',
   (event) => {
     const modifier = IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     if (!modifier || event.altKey || event.shiftKey) return;
+    if (event.key === '\\') {
+      event.preventDefault();
+      event.stopPropagation();
+      setPanelVisible(!panelVisible);
+      return;
+    }
     if (event.key !== 'p' && event.key !== 'P') return;
     event.preventDefault();
     event.stopPropagation();
@@ -614,6 +672,13 @@ async function boot() {
   for (const id of ['outline-search', 'contents-search']) {
     const button = document.getElementById(id);
     button.title = `${button.title} ${shortcut}`;
+  }
+  els.panelToggle.title = `${els.panelToggle.title} ${panelShortcut()}`;
+  // Before the PDF loads, so it is fitted to the width it will actually have.
+  try {
+    if (localStorage.getItem(PANEL_KEY) === '0') setPanelVisible(false);
+  } catch {
+    /* storage disabled: start with the panel showing */
   }
   refreshContents();
   try {
@@ -652,7 +717,7 @@ async function boot() {
 // Read-only handles; nothing here is part of the page's own control flow.
 window.__texai = {
   viewer, chat, marks, paraGuide, notes, editor, git, jump, contents, project, refreshContents,
-  history: viewHistory, scrollSync, inline,
+  history: viewHistory, scrollSync, inline, setPanelVisible,
 };
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));
