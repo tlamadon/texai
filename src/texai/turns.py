@@ -64,6 +64,9 @@ class Turn:
     cost_usd: float | None = None
     error: str | None = None
     reverted: bool = False
+    # The id of this turn's turn_started event: where its live entries begin
+    # in the event backlog, while the turn is still running.
+    event_id: int = 0
 
     def as_dict(self, *, include_diff: bool = False) -> dict[str, Any]:
         changes = [
@@ -119,6 +122,34 @@ class TurnController:
     def busy(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    def history(self) -> tuple[list[dict[str, Any]], int]:
+        """Every turn as the chat panel draws it, and the event id that covers.
+
+        A page that loads this and then streams events after that id sees each
+        thing once. Without the id it would replay the whole backlog on top of
+        the history: every entry drawn twice, every old ``navigate`` scrolling
+        the page again.
+
+        A running turn's record is only partly written — the agent's entries
+        join it when the agent finishes — so its transcript is rebuilt from the
+        backlog, where every entry was published as it happened. Should the turn
+        have outlived the backlog, the partial record is the best there is.
+        """
+        last = self.bus.last_id
+        turns: list[dict[str, Any]] = []
+        for turn in self.turns:
+            record = turn.as_dict()
+            if turn.status == "running" and turn.event_id:
+                events = self.bus.since(turn.event_id - 1)
+                if events and events[0].id == turn.event_id:
+                    record["transcript"] = [
+                        event.data["entry"]
+                        for event in events
+                        if event.type == "agent_entry" and event.data.get("turnId") == turn.id
+                    ]
+            turns.append(record)
+        return turns, last
+
     def get(self, turn_id: str) -> Turn | None:
         return next((turn for turn in self.turns if turn.id == turn_id), None)
 
@@ -148,7 +179,7 @@ class TurnController:
             selections=[selection.model_dump() for selection in selections],
         )
         self.turns.append(turn)
-        self.bus.publish("turn_started", turn=turn.as_dict())
+        turn.event_id = self.bus.publish("turn_started", turn=turn.as_dict()).id
         # After turn_started, so the chat card exists before entries arrive.
         self._emit(turn, user_entry(turn.prompt))
 

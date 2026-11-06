@@ -410,10 +410,10 @@ def create_app(
 
     @app.get("/api/turns")
     async def list_turns() -> dict[str, Any]:
-        return {
-            "busy": controller.busy,
-            "turns": [turn.as_dict() for turn in controller.turns],
-        }
+        # lastEventId: stream events after it, and nothing in this answer is
+        # seen twice (see TurnController.history).
+        turns, last_event_id = controller.history()
+        return {"busy": controller.busy, "turns": turns, "lastEventId": last_event_id}
 
     @app.get("/api/turns/{turn_id}")
     async def get_turn(turn_id: str) -> dict[str, Any]:

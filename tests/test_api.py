@@ -306,7 +306,7 @@ def test_chat_reports_agent_unavailable(config: AppConfig, monkeypatch: pytest.M
 def test_turns_start_empty(config: AppConfig):
     client = make_client(config, fake_runner())
     body = client.get("/api/turns").json()
-    assert body == {"busy": False, "turns": []}
+    assert body == {"busy": False, "turns": [], "lastEventId": 0}
 
 
 def test_unknown_turn_is_404(config: AppConfig):
