@@ -7,7 +7,7 @@ description = "Overleaf, but the collaborator is your coding agent: point at the
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["latex", "pdf", "synctex", "agent", "claude", "editing"]
+keywords = ["latex", "pdf", "synctex", "agent", "claude", "codex", "editing"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -39,6 +39,14 @@ texai = "texai.cli:main"
 # The agent SDK is a plain dependency now. This extra is kept so that the
 # `texai[agent]` install line already published in 0.1.0 keeps working.
 agent = []
+# Codex as the editing agent (`texai --agent codex`). Optional because the SDK
+# brings its own Codex runtime, a few hundred MB a Claude user never needs. mcp
+# serves texai's tools to it; the Claude SDK happens to pull it in too, but
+# texai imports it directly for Codex, so it is named here.
+codex = [
+    "openai-codex>=0.167",
+    "mcp>=1.20",
+]
 
 [dependency-groups]
 dev = [

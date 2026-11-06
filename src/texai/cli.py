@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .agent import AgentSession, sdk_status
+from .agent import AGENT_KINDS, agent_status, create_agent
+from .agent_tools import tools_url
 from .build import BuildError, run_build, running_builds
 from .config import AppConfig
 from .console import note, warn
@@ -80,7 +81,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory to run the build in (default: the root .tex file's directory)",
     )
     parser.add_argument(
-        "--model", default=None, help="model for the agent (default: the CLI's default)"
+        "--agent",
+        choices=AGENT_KINDS,
+        default=AGENT_KINDS[0],
+        help=(
+            "which coding agent edits the document (default: claude). codex needs the "
+            "optional extra: texai[codex]"
+        ),
+    )
+    parser.add_argument(
+        "--model", default=None, help="model for the agent (default: the agent's own default)"
     )
     parser.add_argument("--open", action="store_true", help="open the viewer in a browser")
     parser.add_argument("--version", action="version", version=f"texai {__version__}")
@@ -186,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     port = _find_port(args.port)
     url = f"http://{HOST}:{port}/"
 
-    available, reason = sdk_status()
+    available, reason = agent_status(args.agent)
     build = config.build_description or "not configured (pass --build-cmd)"
 
     # flush: agents commonly start this with stdout redirected to a log.
@@ -198,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  pdf:       {config.pdf_rel}",
             f"  selection: {config.selection_file}",
             f"  build:     {build}",
-            f"  agent:     {'ready' if available else f'disabled — {reason}'}",
+            f"  agent:     {args.agent} — {'ready' if available else f'disabled: {reason}'}",
             f"  viewer:    {url}",
             "  Cmd/Ctrl-click a passage, write an instruction, send. Ctrl-C to stop.",
         ]
@@ -210,7 +220,9 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn  # imported late so --help stays fast
 
-    agent = AgentSession(config, EventBus(), model=args.model)
+    agent = create_agent(
+        args.agent, config, EventBus(), model=args.model, tools_url=tools_url(HOST, port)
+    )
     app = create_app(config, agent=agent)
     server = _announcing_server(uvicorn, app, port)
     server.run()

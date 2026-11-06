@@ -1,11 +1,18 @@
-"""The background Claude Agent SDK session that edits the document.
+"""The background agent session that edits the document.
 
 One long-lived session per project, so the agent accumulates knowledge of the
 paper across turns instead of re-reading it every time. Everything it emits is
 republished on the event bus, which is what the chat panel renders.
 
-The SDK is an optional dependency: without it the viewer, SyncTeX bridge and
-selection file all still work, and the chat panel reports why it is disabled.
+Two agents can sit behind it: Claude (the default, this module) and Codex
+(:mod:`texai.codex_agent`). Both answer to the same small interface — start,
+run a turn, interrupt, stop, a session id and a resume command — and report a
+:class:`TurnOutcome`, so the turn controller never knows which one it drives.
+Everything that keeps a turn honest (snapshots, the rebuild, revert) works from
+the files on disk, not from what the agent says it did, so it holds for either.
+
+When an agent cannot run, the viewer, SyncTeX bridge and selection file all
+still work, and the chat panel reports why it is disabled.
 """
 
 from __future__ import annotations
@@ -21,7 +28,19 @@ from .events import EventBus
 from .navigate import LocateError, locate
 from .prompt import SYSTEM_PROMPT_APPEND
 
-__all__ = ["AgentUnavailable", "TurnOutcome", "AgentSession", "sdk_status"]
+__all__ = [
+    "AGENT_KINDS",
+    "AgentUnavailable",
+    "TurnOutcome",
+    "AgentSession",
+    "agent_status",
+    "create_agent",
+    "navigate_to",
+    "sdk_status",
+]
+
+# Which agents texai can drive. The first is the default.
+AGENT_KINDS = ("claude", "codex")
 
 # Everything the agent needs to edit LaTeX. Bash is deliberately absent: the
 # harness owns compilation, so a shell would only add risk and thrash.
@@ -68,7 +87,7 @@ class TurnOutcome:
 
 
 def sdk_status() -> tuple[bool, str | None]:
-    """Whether the agent can run here, and why not if it cannot."""
+    """Whether the Claude agent can run here, and why not if it cannot."""
     import shutil
 
     try:
@@ -78,6 +97,37 @@ def sdk_status() -> tuple[bool, str | None]:
     if shutil.which("claude") is None:
         return False, CLI_HINT
     return True, None
+
+
+def agent_status(kind: str = "claude") -> tuple[bool, str | None]:
+    """Whether the named agent can run here, and why not if it cannot."""
+    if kind == "codex":
+        from .codex_agent import codex_status
+
+        return codex_status()
+    return sdk_status()
+
+
+def create_agent(
+    kind: str,
+    config: AppConfig,
+    bus: EventBus,
+    model: str | None = None,
+    tools_url: str | None = None,
+) -> Any:
+    """The session for the named agent.
+
+    ``tools_url`` is where texai serves its own tools over MCP. Claude takes them
+    in-process and does not need it; Codex runs as a separate process and
+    reaches them there.
+    """
+    if kind == "codex":
+        from .codex_agent import CodexSession
+
+        return CodexSession(config, bus, model=model, tools_url=tools_url)
+    if kind != "claude":
+        raise ValueError(f"unknown agent {kind!r}; expected one of {', '.join(AGENT_KINDS)}")
+    return AgentSession(config, bus, model=model)
 
 
 def _relative(path_value: Any, root: Path) -> str:
@@ -117,6 +167,36 @@ where something is in words.
 """.strip()
 
 
+async def navigate_to(config: AppConfig, bus: EventBus, file: Any, line: Any, why: Any) -> str:
+    """Move the user's view to a source location; the tool's answer, as text.
+
+    The body of ``show_in_pdf`` for every agent: Claude calls it in-process,
+    Codex over texai's MCP endpoint.
+    """
+    file = str(file or "").strip()
+    try:
+        line = int(line or 1)
+    except (TypeError, ValueError):
+        line = 1
+    why = str(why or "").strip()
+
+    try:
+        found = await asyncio.to_thread(locate, config, file, line)
+    except LocateError as exc:
+        return f"Could not show that: {exc}"
+
+    if not found["found"]:
+        return (
+            f"SyncTeX has no record of {found['file']}:{found['line']}, so the "
+            "view did not move. That line may produce no output (a comment, a "
+            "definition, or something inside an untracked environment) — try a "
+            "line that renders visible text."
+        )
+
+    bus.publish("navigate", **found, why=why)
+    return f"Showing {found['file']}:{found['line']} — the view moved to page {found['page']}."
+
+
 def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
     """An in-process MCP server giving the agent one action: move the view.
 
@@ -135,48 +215,19 @@ def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
         },
     )
     async def show_in_pdf(args: dict[str, Any]) -> dict[str, Any]:
-        file = str(args.get("file", "")).strip()
-        line = int(args.get("line", 1) or 1)
-        why = str(args.get("why", "") or "").strip()
-
-        try:
-            found = await asyncio.to_thread(locate, config, file, line)
-        except LocateError as exc:
-            return {"content": [{"type": "text", "text": f"Could not show that: {exc}"}]}
-
-        if not found["found"]:
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": (
-                            f"SyncTeX has no record of {found['file']}:{found['line']}, so the "
-                            "view did not move. That line may produce no output (a comment, a "
-                            "definition, or something inside an untracked environment) — try a "
-                            "line that renders visible text."
-                        ),
-                    }
-                ]
-            }
-
-        bus.publish("navigate", **found, why=why)
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Showing {found['file']}:{found['line']} — the view moved to page "
-                        f"{found['page']}."
-                    ),
-                }
-            ]
-        }
+        text = await navigate_to(
+            config, bus, args.get("file", ""), args.get("line", 1), args.get("why", "")
+        )
+        return {"content": [{"type": "text", "text": text}]}
 
     return create_sdk_mcp_server(name="texai", version="1.0.0", tools=[show_in_pdf])
 
 
 class AgentSession:
-    """A single persistent agent conversation scoped to one project."""
+    """A single persistent Claude conversation scoped to one project."""
+
+    kind = "claude"
+    name = "Claude"
 
     def __init__(self, config: AppConfig, bus: EventBus, model: str | None = None) -> None:
         self.config = config
@@ -190,6 +241,9 @@ class AgentSession:
     @property
     def running(self) -> bool:
         return self._started
+
+    def status(self) -> tuple[bool, str | None]:
+        return sdk_status()
 
     @property
     def session_id(self) -> str | None:
@@ -210,7 +264,7 @@ class AgentSession:
         if self._started:
             return
 
-        ok, reason = sdk_status()
+        ok, reason = self.status()
         if not ok:
             raise AgentUnavailable(reason or "agent unavailable")
 

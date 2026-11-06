@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 
-from .agent import sdk_status
+from .agent import agent_status
 from .config import AppConfig
 from .git import GitStatus, summarize
 
@@ -39,6 +39,7 @@ async def propose_message(
     status: GitStatus,
     diff: str,
     model: str | None = None,
+    agent: str = "claude",
 ) -> dict[str, str]:
     """Return ``{"message": ..., "source": "agent"|"fallback", "reason": ...}``.
 
@@ -50,12 +51,14 @@ async def propose_message(
     if not diff.strip():
         return {**fallback, "reason": "Nothing is uncommitted."}
 
-    available, why = sdk_status()
+    available, why = agent_status(agent)
     if not available:
         return {**fallback, "reason": why or "The agent is unavailable."}
 
     try:
-        text = await asyncio.wait_for(_ask(config, diff, model), timeout=MESSAGE_TIMEOUT)
+        text = await asyncio.wait_for(
+            _ask(config, diff, model, agent), timeout=MESSAGE_TIMEOUT
+        )
     except asyncio.TimeoutError:
         return {**fallback, "reason": f"The agent took longer than {MESSAGE_TIMEOUT}s."}
     except Exception as exc:  # noqa: BLE001 - degrade, never fail the request
@@ -67,7 +70,16 @@ async def propose_message(
     return {"message": cleaned, "source": "agent"}
 
 
-async def _ask(config: AppConfig, diff: str, model: str | None) -> str:
+async def _ask(config: AppConfig, diff: str, model: str | None, agent: str = "claude") -> str:
+    prompt = (
+        "Write a commit message for these uncommitted changes.\n\n"
+        f"```diff\n{diff}\n```"
+    )
+    if agent == "codex":
+        from .codex_agent import codex_one_shot
+
+        return await codex_one_shot(config, SYSTEM_PROMPT, prompt, model)
+
     from claude_agent_sdk import AssistantMessage, ClaudeAgentOptions, TextBlock, query
 
     options = ClaudeAgentOptions(
@@ -79,11 +91,6 @@ async def _ask(config: AppConfig, diff: str, model: str | None) -> str:
         max_turns=1,
         setting_sources=[],  # hermetic: no project settings, no CLAUDE.md
         **({"model": model} if model else {}),
-    )
-
-    prompt = (
-        "Write a commit message for these uncommitted changes.\n\n"
-        f"```diff\n{diff}\n```"
     )
 
     parts: list[str] = []

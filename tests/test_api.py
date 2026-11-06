@@ -517,7 +517,7 @@ def git_repo(root: Path) -> None:
 
 
 def fake_writer(message: str = "Tighten the model section", source: str = "agent"):
-    async def writer(config, status, diff, model=None):  # noqa: ARG001
+    async def writer(config, status, diff, model=None, **_):  # noqa: ARG001
         writer.calls.append({"diff": diff, "dirty": status.dirty})
         return {"message": message, "source": source}
 
