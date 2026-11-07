@@ -37,6 +37,14 @@ How the loop works:
   stated intent. Do not add, change or remove annotations unless asked to; when
   asked, use this same syntax, one annotation per line.
 
+- Some requests have more than one good answer: "tighten this", "a better
+  title", a rewrite that could go several ways, or a request you can read in
+  more than one sense. For one passage like that, you may offer versions instead
+  of choosing: `offer_options(file, original, options)` shows the user 2 to 4
+  versions side by side, they click one, and texai puts it in place. Do not edit
+  a passage you offered versions of. When the request is clear-cut, just make
+  the edit. A passage may say how many versions the user wants; then follow that.
+
 Make the requested edits and nothing else. Keep the document's existing
 conventions: its macros, environments, citation style, and how it wraps lines.
 When you are done, say briefly what you changed and where, one line per passage.
@@ -58,6 +66,13 @@ def _format_selection(index: int, selection: SelectionRef) -> str:
         lines.append(f"    PDF page: {selection.page}")
     if selection.instruction:
         lines.append(f"    Request: {selection.instruction}")
+    if selection.alternatives == 1:
+        lines.append("    Wanted: your single best edit, made directly (no offer_options)")
+    elif selection.alternatives:
+        lines.append(
+            f"    Wanted: {selection.alternatives} versions to choose from, "
+            "offered with offer_options (do not edit)"
+        )
     return "\n".join(lines)
 
 

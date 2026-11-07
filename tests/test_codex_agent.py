@@ -137,11 +137,12 @@ def test_only_final_errors_become_notices(config):
     assert notice["kind"] == "notice" and notice["isError"] is True
 
 
-def test_the_thread_is_pointed_at_texai_with_its_tool_pre_approved():
+def test_the_thread_is_pointed_at_texai_with_its_tools_pre_approved():
     # Approvals are denied for the thread, so without this every call is refused.
     texai = _thread_config("http://127.0.0.1:8765/agent-tools/mcp")["mcp_servers"]["texai"]
     assert texai["url"].endswith(TOOLS_PATH)
     assert texai["tools"]["show_in_pdf"]["approval_mode"] == "approve"
+    assert texai["tools"]["offer_options"]["approval_mode"] == "approve"
     assert _thread_config(None) is None
 
 
@@ -265,7 +266,8 @@ def test_codex_reaches_show_in_pdf_on_texais_own_server(config):
         _rpc(client, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session_id)
 
         _, listed = _rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, session_id)
-        assert [tool["name"] for tool in listed["result"]["tools"]] == ["show_in_pdf"]
+        names = [tool["name"] for tool in listed["result"]["tools"]]
+        assert names == ["show_in_pdf", "offer_options"]
 
         _, called = _rpc(
             client,
@@ -281,6 +283,30 @@ def test_codex_reaches_show_in_pdf_on_texais_own_server(config):
         # call went all the way through to the same handler Claude uses.
         text = called["result"]["content"][0]["text"]
         assert "sections/model.tex" in text or "Could not show that" in text
+
+        _, offered = _rpc(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "offer_options",
+                    "arguments": {
+                        "file": "sections/model.tex",
+                        "original": "\\section{Model}",
+                        "options": [
+                            {"label": "plainer", "text": "\\section{Setup}"},
+                            {"label": "broader", "text": "\\section{Framework}"},
+                        ],
+                    },
+                },
+            },
+            session_id,
+        )
+        assert offered["result"]["content"][0]["text"].startswith("Offered 2 options")
+        (event,) = [e for e in app.state.bus.since(0) if e.type == "options_offered"]
+        assert [o["label"] for o in event.data["offer"]["options"]] == ["plainer", "broader"]
 
         info = client.get("/api/info").json()["agent"]
         assert (info["kind"], info["name"]) == ("codex", "Codex")

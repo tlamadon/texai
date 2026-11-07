@@ -6,6 +6,7 @@
 // cannot show something the chat quietly dropped.
 
 import { getJSON, postJSON } from './api.js';
+import { markChosen, renderOffer } from './options.js';
 import { showToast } from './toast.js';
 
 const MAX_CHIP_TEXT = 90;
@@ -369,6 +370,12 @@ export class ChatPanel {
       case 'navigate':
         this.onNavigate?.(event);
         break;
+      case 'offer_picked': {
+        // Picked on the page or here: either way, show which one went in.
+        const node = this.cards.get(event.turnId)?.offers?.[event.offer];
+        if (node) markChosen(node, event.option);
+        break;
+      }
       case 'agent_session':
         this.agent = {
           ...this.agent,
@@ -555,6 +562,25 @@ export class ChatPanel {
     card.footer.replaceChildren();
 
     if (turn.error) card.footer.append(el('pre', 'errors', turn.error));
+
+    // Versions the agent offered instead of editing: pickable here too, so
+    // closing the box on the page does not lose them.
+    card.offers = (turn.offers || []).map((offer, k) => {
+      const node = renderOffer(offer, {
+        compact: true,
+        // Marked as picked once it has landed (offer_picked), not on the click:
+        // a pick that does not build is rolled back.
+        onPick: async (i) => {
+          try {
+            await postJSON(`/api/turns/${turn.id}/pick`, { offer: k, option: i });
+          } catch (err) {
+            showToast(err.message || String(err), { type: 'error' });
+          }
+        },
+      });
+      card.footer.append(node);
+      return node;
+    });
 
     if (turn.changes?.length) {
       const list = el('div', 'changes');

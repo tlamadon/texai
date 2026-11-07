@@ -17,6 +17,7 @@ __all__ = [
     "SelectResponse",
     "SelectionRef",
     "ChatRequest",
+    "PickRequest",
 ]
 
 # A PDF page cannot exceed 200in = 14400pt; allow a little slack and reject the
@@ -88,6 +89,9 @@ class SelectionRef(BaseModel):
     selectedText: str | None = Field(default=None, max_length=MAX_SELECTED_TEXT)
     word: str | None = Field(default=None, max_length=MAX_WORD_TEXT)
     instruction: str | None = Field(default=None, max_length=MAX_INSTRUCTION)
+    # How many versions the user wants: 1 is "just make the best edit", more is
+    # "offer that many to pick from", none leaves it to the agent.
+    alternatives: int | None = Field(default=None, ge=1, le=4)
 
     @field_validator("file")
     @classmethod
@@ -111,6 +115,15 @@ class ChatRequest(BaseModel):
         if not self.message.strip() and not self.selections:
             raise ValueError("provide a message, one or more selections, or both")
         return self
+
+
+class PickRequest(BaseModel):
+    """The version the user clicked, among those a turn offered."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    offer: int = Field(default=0, ge=0, le=100)
+    option: int = Field(ge=0, le=10)
 
 
 class SourceLocation(BaseModel):

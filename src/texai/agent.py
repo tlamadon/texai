@@ -26,6 +26,7 @@ from . import transcript
 from .config import AppConfig
 from .events import EventBus
 from .navigate import LocateError, locate
+from .options import OFFER_OPTIONS_DESCRIPTION, OFFER_OPTIONS_SCHEMA, offer_options
 from .prompt import SYSTEM_PROMPT_APPEND
 
 __all__ = [
@@ -53,6 +54,8 @@ ALLOWED_TOOLS = [
     "NotebookEdit",
     # In-process tool that scrolls the user's PDF view (see build_navigation_server).
     "mcp__texai__show_in_pdf",
+    # Versions of a passage for the user to pick from (see texai.options).
+    "mcp__texai__offer_options",
 ]
 DISALLOWED_TOOLS = ["Bash", "WebFetch", "WebSearch", "Task", "KillShell", "BashOutput"]
 
@@ -147,6 +150,9 @@ def summarize_tool_use(name: str, tool_input: dict[str, Any], root: Path) -> str
         pattern = tool_input.get("pattern", "")
         path = tool_input.get("path")
         return f"{pattern} in {_relative(path, root)}" if path else str(pattern)
+    if name.endswith("offer_options"):
+        count = len(tool_input.get("options") or [])
+        return f"{count} versions of a passage in {tool_input.get('file', '')}".strip()
     for key in ("command", "description", "prompt"):
         if key in tool_input:
             return str(tool_input[key])[:200]
@@ -198,7 +204,8 @@ async def navigate_to(config: AppConfig, bus: EventBus, file: Any, line: Any, wh
 
 
 def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
-    """An in-process MCP server giving the agent one action: move the view.
+    """An in-process MCP server giving the agent texai's own actions: move the
+    view, and offer versions of a passage for the user to pick from.
 
     Runs in this process, so the handler can publish straight onto the event
     bus the browser is already listening to.
@@ -220,7 +227,19 @@ def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
         )
         return {"content": [{"type": "text", "text": text}]}
 
-    return create_sdk_mcp_server(name="texai", version="1.0.0", tools=[show_in_pdf])
+    @tool("offer_options", OFFER_OPTIONS_DESCRIPTION, OFFER_OPTIONS_SCHEMA)
+    async def offer(args: dict[str, Any]) -> dict[str, Any]:
+        text = await offer_options(
+            config,
+            bus,
+            args.get("file", ""),
+            args.get("original", ""),
+            args.get("options", []),
+            args.get("note", ""),
+        )
+        return {"content": [{"type": "text", "text": text}]}
+
+    return create_sdk_mcp_server(name="texai", version="1.0.0", tools=[show_in_pdf, offer])
 
 
 class AgentSession:

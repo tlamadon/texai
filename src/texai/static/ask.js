@@ -14,18 +14,35 @@
 // way. It stays only when there is something to read and nothing else to show
 // it: an answer to a question, a failure, or "no changes".
 //
+// Or something to choose: the agent may offer versions of the passage instead
+// of editing it — when the request has more than one good answer, or when the
+// box's switch asks for three. The box widens to show them side by side; a
+// click (or its number key) puts that one in place, as a turn of its own whose
+// edit comes back as a change marker like any other.
+//
 // Everything here lives in the scroll container, like the in-place editor:
 // pages wipe whatever is drawn on them each time they re-render. The passage is
 // remembered in PDF points, so it follows zoom; after a rebuild the text may
 // have moved, which is why the highlight goes once the answer is in.
 
 import { postJSON } from './api.js';
+import { markChosen, renderOffer } from './options.js';
 import { showToast } from './toast.js';
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
 const MAX_QUOTE = 90; // characters of the passage quoted at the top of the box
 const MAX_RECTS = 200;
 const BOX_WIDTH = 380; // px
+const OPTION_WIDTH = 260; // px per version, when the box shows versions to pick
+const MODE_KEY = 'texai:ask-mode';
+
+// How many versions to ask for. Auto leaves it to the agent, which offers
+// versions only when the request has more than one good answer.
+const MODES = [
+  { mode: 'auto', label: 'auto', alternatives: null, title: 'Let the agent decide: one edit, or versions to pick from when there are several good ones' },
+  { mode: 'best', label: 'best', alternatives: 1, title: 'Just make the best edit' },
+  { mode: 'three', label: '×3', alternatives: 3, title: 'Propose three versions to pick from' },
+];
 const GAP = 6; // px between the passage and what hangs off it
 
 const el = (tag, className, text) => {
@@ -59,6 +76,10 @@ export class PageAsk {
     this.ask = null;
     // A turn that finished before /api/chat told us its id.
     this._early = null;
+    // The switch in the box, kept from one request to the next.
+    this.mode = MODES.some((m) => m.mode === localStorage.getItem(MODE_KEY))
+      ? localStorage.getItem(MODE_KEY)
+      : 'auto';
 
     this.button = el('button', 'ask-button', '✦');
     this.button.type = 'button';
@@ -88,9 +109,19 @@ export class PageAsk {
       true
     );
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && this.ask?.state === 'done') {
+      const state = this.ask?.state;
+      if (event.key === 'Escape' && (state === 'done' || state === 'choose')) {
         this.close();
         return;
+      }
+      if (state === 'choose' && /^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const typing = event.target.closest?.('input, textarea, [contenteditable="true"], .cm-editor');
+        const [first] = this.ask.offers;
+        if (!typing && first && Number(event.key) <= first.options.length) {
+          event.preventDefault();
+          this.pick(0, Number(event.key) - 1);
+          return;
+        }
       }
       const modifier = IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
       if (!modifier || event.altKey || event.shiftKey || (event.key !== 'k' && event.key !== 'K')) return;
@@ -191,15 +222,34 @@ export class PageAsk {
     const status = el('div', 'ask-status');
     const body = el('div', 'ask-reply');
     body.hidden = true;
+    const offers = el('div', 'ask-offers');
+    offers.hidden = true;
     const bar = el('div', 'ask-bar');
-    const hint = el('span', 'ask-hint', 'Enter to send · Shift-Enter for a new line · Esc to close');
+    const modes = el('div', 'ask-mode');
+    modes.setAttribute('role', 'radiogroup');
+    modes.setAttribute('aria-label', 'How many versions');
+    for (const { mode, label, title } of MODES) {
+      const button = el('button', '', label);
+      button.type = 'button';
+      button.title = title;
+      button.dataset.mode = mode;
+      button.setAttribute('role', 'radio');
+      button.addEventListener('click', () => {
+        this.mode = mode;
+        localStorage.setItem(MODE_KEY, mode);
+        this._showMode();
+        input.focus();
+      });
+      modes.append(button);
+    }
+    const hint = el('span', 'ask-hint');
     const primary = el('button', 'primary', 'Send');
     primary.type = 'button';
     const close = el('button', 'ghost ask-close', '×');
     close.type = 'button';
     close.title = 'Close';
-    bar.append(hint, primary);
-    box.append(close, quote, input, status, body, bar);
+    bar.append(modes, hint, primary);
+    box.append(close, quote, input, status, body, offers, bar);
 
     const highlights = passage.rects.map(() => {
       const node = el('div', 'ask-highlight');
@@ -208,7 +258,12 @@ export class PageAsk {
     });
     this.container.append(box);
 
-    this.ask = { passage, el: box, input, status, body, bar, hint, primary, highlights, state: 'compose' };
+    this.ask = {
+      passage, el: box, input, status, body, offersEl: offers, bar, modes, hint, primary, highlights,
+      state: 'compose', offers: [],
+    };
+    this._showMode();
+    this._setState('compose');
 
     input.addEventListener('input', () => autosize(input));
     input.addEventListener('keydown', (event) => {
@@ -224,7 +279,7 @@ export class PageAsk {
       const state = this.ask?.state;
       if (state === 'compose') this.send();
       else if (state === 'working') this.stop();
-      else if (state === 'done') this.onOpenChat?.();
+      else if (state === 'done' || state === 'choose') this.onOpenChat?.();
     });
     close.addEventListener('click', () => this.close());
 
@@ -261,6 +316,7 @@ export class PageAsk {
             page: passage.page,
             selectedText: passage.text,
             instruction: request,
+            alternatives: MODES.find((m) => m.mode === this.mode)?.alternatives ?? null,
           },
         ],
       });
@@ -312,10 +368,16 @@ export class PageAsk {
     }
     if (a.turnId !== turn.id) return;
 
+    const changes = turn.reverted ? [] : turn.changes || [];
+    if (!changes.length && turn.status === 'answered' && turn.offers?.length) {
+      // Nothing changed, so the passage is still where it is highlighted.
+      this._showOffers(turn);
+      return;
+    }
+
     for (const node of a.highlights) node.remove();
     a.highlights = [];
 
-    const changes = turn.reverted ? [] : turn.changes || [];
     if (changes.length) {
       const files = changes.map((c) => c.file).join(', ');
       this.close();
@@ -337,7 +399,54 @@ export class PageAsk {
     this.place();
   }
 
+  /* ---------------- picking a version ---------------- */
+
+  _showOffers(turn) {
+    const a = this.ask;
+    a.offerTurn = turn.id;
+    a.offers = turn.offers;
+    a.offersEl.replaceChildren(
+      ...turn.offers.map((offer, k) => renderOffer(offer, { onPick: (i) => this.pick(k, i) }))
+    );
+    a.offersEl.hidden = false;
+    a.body.hidden = true;
+    const count = turn.offers[0].options.length;
+    this._setStatus(`${count} versions — pick one to put it in place.`, '');
+    this._setState('choose');
+    this.place();
+  }
+
+  /** Put version `option` of offer `offer` in place: a turn of its own, without the agent. */
+  async pick(offer, option) {
+    const a = this.ask;
+    if (!a || a.state !== 'choose') return;
+    markChosen(a.offersEl.children[offer], option);
+    this._setState('sending');
+    this._setStatus('Putting it in place…', 'busy');
+    try {
+      const response = await postJSON(`/api/turns/${a.offerTurn}/pick`, { offer, option });
+      if (this.ask !== a) return;
+      a.turnId = response.turn.id;
+    } catch (err) {
+      if (this.ask !== a) return;
+      markChosen(a.offersEl.children[offer], -1);
+      this._setState('choose');
+      this._setStatus(err.message || String(err), 'err');
+      return;
+    }
+    this._setState('working');
+    this._setStatus('Rebuilding…', 'busy');
+    if (this._early?.id === a.turnId) this.turnFinished(this._early);
+    this._early = null;
+  }
+
   /* ---------------- the box ---------------- */
+
+  _showMode() {
+    for (const button of this.ask.modes.children) {
+      button.setAttribute('aria-checked', String(button.dataset.mode === this.mode));
+    }
+  }
 
   _setState(state) {
     const a = this.ask;
@@ -345,14 +454,19 @@ export class PageAsk {
     a.el.dataset.state = state;
     a.input.hidden = state !== 'compose';
     a.input.disabled = state !== 'compose';
+    a.modes.hidden = state !== 'compose';
     for (const node of a.highlights) node.classList.toggle('working', state === 'sending' || state === 'working');
+    const count = a.offers[0]?.options.length || 0;
     a.hint.textContent = {
-      compose: 'Enter to send · Shift-Enter for a new line · Esc to close',
+      compose: 'Enter to send · Esc to close',
       sending: '',
       working: 'The page rebuilds when it is done',
       done: 'Esc to close',
+      choose: `Click or press 1–${count} · Esc to close`,
     }[state];
-    a.primary.textContent = { compose: 'Send', sending: 'Send', working: 'Stop', done: 'Open in chat' }[state];
+    a.hint.title = state === 'compose' ? 'Shift-Enter for a new line' : '';
+    const primary = { compose: 'Send', sending: 'Send', working: 'Stop', done: 'Open in chat', choose: 'Open in chat' };
+    a.primary.textContent = primary[state];
     a.primary.className = state === 'compose' ? 'primary' : 'ghost';
     a.primary.disabled = state === 'sending';
   }
@@ -393,7 +507,11 @@ export class PageAsk {
     const page = this.viewer.pageRectToContainer(entry, { left: 0, top: 0, width: entry.el.clientWidth, height: 0 });
     const left = Math.min(...onPage.map((r) => r.left));
     const bottom = Math.max(...onPage.map((r) => r.top + r.height));
-    const width = Math.min(BOX_WIDTH, page.width - 2 * GAP);
+    // Wide enough for the versions side by side, when there are some to pick.
+    const wanted = a.offers.length
+      ? Math.max(BOX_WIDTH, Math.max(...a.offers.map((o) => o.options.length)) * OPTION_WIDTH)
+      : BOX_WIDTH;
+    const width = Math.min(wanted, page.width - 2 * GAP);
     const x = Math.max(page.left + GAP, Math.min(left, page.left + page.width - width - GAP));
     Object.assign(a.el.style, { left: `${x}px`, top: `${bottom + GAP}px`, width: `${width}px` });
   }

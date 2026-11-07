@@ -53,8 +53,8 @@ CODEX_INSTRUCTIONS = (
 You are running under Codex. Edit files with apply_patch. Shell commands are
 fine for finding your way around (rg, sed -n, cat), but never run latexmk,
 pdflatex, or anything else that compiles or writes build output: texai owns the
-build and runs it when you finish. The `show_in_pdf` tool lives on the `texai`
-MCP server.
+build and runs it when you finish. The `show_in_pdf` and `offer_options` tools
+live on the `texai` MCP server.
 
 Your replies are shown as plain text, not rendered markdown. Refer to places as
 `file:line` relative to the project root (sections/model.tex:12), never as a
@@ -190,11 +190,11 @@ class CodexTranscript:
 
 
 def _thread_config(tools_url: str | None) -> dict[str, Any] | None:
-    """Point the thread at texai's MCP endpoint, with its one tool pre-approved.
+    """Point the thread at texai's MCP endpoint, with its tools pre-approved.
 
     Approvals are denied for the thread as a whole, and an MCP tool counts as
     something to approve, so without the per-tool override every call to
-    ``show_in_pdf`` would be refused.
+    ``show_in_pdf`` or ``offer_options`` would be refused.
     """
     if not tools_url:
         return None
@@ -203,7 +203,10 @@ def _thread_config(tools_url: str | None) -> dict[str, Any] | None:
             "texai": {
                 "url": tools_url,
                 "required": True,
-                "tools": {"show_in_pdf": {"approval_mode": "approve"}},
+                "tools": {
+                    "show_in_pdf": {"approval_mode": "approve"},
+                    "offer_options": {"approval_mode": "approve"},
+                },
             }
         }
     }

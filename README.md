@@ -14,7 +14,9 @@ back marked on the page for you to accept or reject.
   `sections/model.tex:143:15`, the precise word, not a description of roughly
   where you meant. Attach several, each with its own note. Or ask right there:
   select a sentence, click the ✦ that appears, type *tighten this*, and the
-  edit comes back on the page — no chat panel needed.
+  edit comes back on the page — no chat panel needed. When there is more than
+  one good way to say it, the agent offers versions side by side and you click
+  the one you want.
 - **Review its edits on the page, not in a diff.** Every change is marked inline
   in the PDF, old text struck through and new text beside it. Accept or reject
   them one at a time, across as many turns as you like.
@@ -187,8 +189,21 @@ done:
 
 - **It edited something** — the box closes and the change appears as a marker on
   the rebuilt page, ready to accept or reject, even if *Show changes* was off.
+- **It offered versions** — the box widens and shows them side by side, the
+  words each one changes highlighted. Click one, or press its number, and texai
+  puts it in place itself — no second agent call — then rebuilds, and it comes
+  back as a change marker like any other edit. Picking another one later swaps
+  it in for the first.
 - **It only answered** — *is this sentence clear?* — the answer stays in the box
   until **Esc**, with **Open in chat** for the whole turn.
+
+The small **auto · best · ×3** switch in the box says how many versions you
+want. *auto* leaves it to the agent, which offers versions only when a request
+has more than one good answer (*a better title*, *tighten this*) and edits
+directly otherwise; *best* asks for one edit, made directly; *×3* asks for three
+versions to pick from. The switch keeps its setting from one request to the
+next. The versions also stay in the turn's chat card, so you can still pick one
+after closing the box.
 
 Closing the box does not stop the agent; the turn finishes in the chat either
 way. One request runs at a time, so the ✦ stays away while the agent is busy.
@@ -326,6 +341,12 @@ under you:
 ```
 
 The tool only scrolls; it cannot change anything.
+
+Its second tool, `offer_options(file, original, options)`, is how it hands you
+versions to pick from (see *Asking from the page*). It changes nothing either:
+texai checks that `original` occurs exactly once in the file, and the agent is
+told to fix its quote if not. Your pick is applied by texai as a plain
+replacement of that text, in a turn of its own.
 
 ### Two views, one stream
 
@@ -823,9 +844,10 @@ absent.
   write only inside the project (and temp directories) and has no network, and
   with approvals denied, so it never stops to ask. It is told not to compile,
   but nothing prevents it.
-- The agent gets one tool of our own, `show_in_pdf`, which scrolls your view
-  and nothing else. Claude calls it in-process. Codex calls it over MCP on
-  texai's own loopback port, which only exists when Codex is the agent.
+- The agent gets two tools of our own: `show_in_pdf`, which scrolls your view,
+  and `offer_options`, which shows you versions of a passage to pick from.
+  Neither writes anything. Claude calls them in-process. Codex calls them over
+  MCP on texai's own loopback port, which only exists when Codex is the agent.
 - Every turn is snapshotted before the agent starts, so any turn can be undone
   and a turn that breaks the build undoes itself. Snapshots are plain file
   copies in a temp directory keyed by project — deliberately *outside* the

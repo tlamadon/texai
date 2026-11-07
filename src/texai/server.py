@@ -36,6 +36,7 @@ from .models import (
     CommitRequest,
     CompleteRequest,
     ParagraphWrite,
+    PickRequest,
     SelectRequest,
     SelectResponse,
     SourceMerge,
@@ -63,7 +64,7 @@ from .synctex import (
     SyncTexNoResult,
     run_synctex_edit,
 )
-from .turns import TurnBusy, TurnController
+from .turns import OfferError, TurnBusy, TurnController
 from .words import locate as locate_word_detail
 
 __all__ = ["create_app", "normalize_selected_text", "pdf_version_tag"]
@@ -714,6 +715,19 @@ def create_app(
             raise _error(404, "turn_not_found", f"No turn {turn_id}.") from exc
         except FileNotFoundError as exc:
             raise _error(410, "snapshot_gone", str(exc)) from exc
+        return {"ok": True, "turn": turn.as_dict()}
+
+    @app.post("/api/turns/{turn_id}/pick")
+    async def pick_option(turn_id: str, payload: PickRequest) -> dict[str, Any]:
+        """Put in place one of the versions a turn offered; runs as a turn."""
+        try:
+            turn = await controller.pick(turn_id, payload.offer, payload.option)
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
+        except KeyError as exc:
+            raise _error(404, "turn_not_found", f"No turn {turn_id}.") from exc
+        except OfferError as exc:
+            raise _error(404, "option_not_found", str(exc)) from exc
         return {"ok": True, "turn": turn.as_dict()}
 
     return app

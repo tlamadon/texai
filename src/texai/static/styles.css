@@ -847,6 +847,74 @@ button.toggle.active {
 .ask-hint { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
 .ask-bar button { font-size: 11px; padding: 2px 10px; }
 
+/* auto · best · ×3: how many versions to ask for, one compact switch. */
+.ask-mode {
+  display: flex;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ask-mode[hidden] { display: none; }
+.ask-bar .ask-mode button {
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.ask-bar .ask-mode button + button { border-left: 1px solid var(--panel-border); }
+.ask-bar .ask-mode button[aria-checked="true"] { background: var(--accent); color: #fff; }
+
+/* ---------------- versions to pick from ---------------- */
+
+/* Side by side under the passage, stacked in the chat panel. */
+.ask-offers { display: flex; flex-direction: column; gap: 8px; }
+.ask-offers[hidden] { display: none; }
+.offer { display: flex; flex-direction: column; gap: 6px; }
+.offer-note { color: var(--muted); }
+.offer-options { display: flex; gap: 6px; align-items: stretch; }
+.offer.compact .offer-options { flex-direction: column; }
+.offer-option {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.offer-option:hover, .offer-option:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+.offer-option.picked { border-color: var(--ok); }
+.offer-label { display: flex; gap: 6px; align-items: baseline; font-weight: 600; }
+.offer-key {
+  flex: none;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--panel-border);
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+}
+.offer-text {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11.5px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.offer-ins { background: rgba(63, 185, 80, 0.22); color: inherit; border-radius: 2px; }
+/* Once one is chosen the rest step back, and none takes another click until
+   the pick has landed. */
+.ask-box:not([data-state="choose"]) .offer-option { cursor: default; pointer-events: none; }
+.ask-box:not([data-state="choose"]) .offer-option:not(.chosen) { opacity: 0.45; }
+
 /* ---------------- jump-to highlight ---------------- */
 
 .flash {

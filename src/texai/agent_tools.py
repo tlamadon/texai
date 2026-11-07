@@ -1,20 +1,23 @@
 """texai's own agent tools, served over MCP for agents that run out of process.
 
-Claude takes ``show_in_pdf`` as an in-process tool (see
+Claude takes ``show_in_pdf`` and ``offer_options`` as in-process tools (see
 :func:`texai.agent.build_navigation_server`). Codex runs as a separate process,
-so it reaches the same tool here instead: a streamable-HTTP MCP endpoint mounted
+so it reaches the same tools here instead: a streamable-HTTP MCP endpoint mounted
 on texai's own server, on the loopback port it already listens on. The handler
-is the same :func:`texai.agent.navigate_to`, so both agents move the view the
-same way and get the same answer back.
+is the same (:func:`texai.agent.navigate_to`, :func:`texai.options.offer_options`),
+so both agents move the view the same way and get the same answer back.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel
+
 from .agent import SHOW_IN_PDF_DESCRIPTION, navigate_to
 from .config import AppConfig
 from .events import EventBus
+from .options import OFFER_OPTIONS_DESCRIPTION, offer_options
 
 __all__ = ["TOOLS_MOUNT", "TOOLS_PATH", "build_tools_server", "tools_url"]
 
@@ -24,12 +27,19 @@ TOOLS_MOUNT = "/agent-tools"
 TOOLS_PATH = f"{TOOLS_MOUNT}/mcp"
 
 
+class Option(BaseModel):
+    """One version of the passage, as ``offer_options`` takes it."""
+
+    label: str
+    text: str
+
+
 def tools_url(host: str, port: int) -> str:
     return f"http://{host}:{port}{TOOLS_PATH}"
 
 
 def build_tools_server(config: AppConfig, bus: EventBus) -> Any:
-    """A FastMCP server carrying ``show_in_pdf``.
+    """A FastMCP server carrying ``show_in_pdf`` and ``offer_options``.
 
     The caller mounts ``server.streamable_http_app()`` and must run
     ``server.session_manager.run()`` for the app's lifetime: a mounted
@@ -61,4 +71,11 @@ def build_tools_server(config: AppConfig, bus: EventBus) -> Any:
     async def show_in_pdf(file: str, line: int, why: str = "") -> str:
         return await navigate_to(config, bus, file, line, why)
 
+    @server.tool(name="offer_options", description=OFFER_OPTIONS_DESCRIPTION)
+    async def offer(file: str, original: str, options: list[Option], note: str = "") -> str:
+        return await offer_options(
+            config, bus, file, original, [option.model_dump() for option in options], note
+        )
+
     return server
+

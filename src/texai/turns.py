@@ -4,7 +4,8 @@ A turn is the unit the UI shows and the unit you can undo. The sequence is
 deliberately fixed rather than left to the agent:
 
 1. snapshot the source tree
-2. let the agent edit
+2. let the agent edit (or, when the user picks one of the versions the agent
+   offered, put that version in place — no agent needed)
 3. if nothing changed, stop here (a question, not an edit)
 4. build; on failure hand the errors back to the agent and rebuild
 5. still broken after the retries -> restore the snapshot, so a turn never
@@ -17,7 +18,7 @@ import asyncio
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .agent import AgentSession, AgentUnavailable
 from .build import BuildError, BuildResult, run_build
@@ -25,12 +26,13 @@ from .config import AppConfig
 from .events import EventBus
 from .models import SelectionRef
 from .hunks import reconstruct
+from .options import OfferError, OfferStale, apply_option
 from .prompt import compose_build_failure_prompt, compose_turn_prompt
 from .selection import atomic_write_text
 from .snapshots import Snapshot, diff_against, hunks_against, read_pair, restore, take_snapshot
 from .transcript import build_entry, notice_entry, user_entry
 
-__all__ = ["Turn", "TurnController", "TurnBusy"]
+__all__ = ["Turn", "TurnController", "TurnBusy", "OfferError"]
 
 MAX_BUILD_ATTEMPTS = 3
 KEEP_SNAPSHOTS = 20
@@ -51,6 +53,9 @@ class Turn:
     status: str = "running"  # running | applied | answered | reverted | failed
     agent_text: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    # Versions of a passage the agent offered instead of editing it, each with
+    # the index of the one picked once the user has (see texai.options).
+    offers: list[dict[str, Any]] = field(default_factory=list)
     changes: list[dict[str, Any]] = field(default_factory=list)
     build_ok: bool | None = None
     build_errors: list[str] = field(default_factory=list)
@@ -82,6 +87,7 @@ class Turn:
             "status": self.status,
             "agentText": self.agent_text,
             "toolCalls": self.tool_calls,
+            "offers": self.offers,
             "changes": changes,
             "buildOk": self.build_ok,
             "buildErrors": self.build_errors,
@@ -110,6 +116,9 @@ class TurnController:
         self._accepted: set[str] = set()
         self._task: asyncio.Task[None] | None = None
         self._counter = 0
+        # What the agent should hear at the start of its next turn: picks
+        # applied without it, so it knows which of its versions went in.
+        self._news: list[str] = []
 
     def _emit(self, turn: Turn, entry: dict[str, Any]) -> None:
         """Record a harness-side entry so the transcript is complete, not just agent output."""
@@ -171,40 +180,123 @@ class TurnController:
                 self.config.root, self.config.snapshots_dir, BASELINE_ID
             )
 
+        prompt = compose_turn_prompt(message, selections, self.config.pdf_rel)
+        if self._news:
+            prompt = "\n".join(self._news) + "\n\n" + prompt
+            self._news = []
+        turn = self._start_turn(message, prompt, [s.model_dump() for s in selections])
+        self._task = asyncio.create_task(self._run(turn, self._ask_agent))
+        return turn
+
+    async def pick(self, turn_id: str, offer_index: int, option_index: int) -> Turn:
+        """Put one of the versions a turn offered in place, as a turn of its own.
+
+        Its own turn so that it is reviewed, reverted and attributed like any
+        other edit. texai makes the replacement itself; only if the passage has
+        changed since the offer does the agent get asked to apply the version.
+        Picking again swaps the new version in for the one picked before.
+        """
+        if self.busy:
+            raise TurnBusy("an agent turn is already running")
+        source = self.get(turn_id)
+        if source is None:
+            raise KeyError(turn_id)
+        if not 0 <= offer_index < len(source.offers):
+            raise OfferError(f"{turn_id} has no offer {offer_index + 1}")
+        offer = source.offers[offer_index]
+        if not 0 <= option_index < len(offer["options"]):
+            raise OfferError(f"that offer has no option {option_index + 1}")
+
+        option = offer["options"][option_index]
+        where = f"{offer['file']}:{offer['line']}"
+        picked = (
+            f"the user picked option {option_index + 1}, “{option['label']}”, of the "
+            f"versions you offered in {turn_id} for {where}"
+        )
+        turn = self._start_turn(
+            f"Use “{option['label']}” ({option_index + 1} of {len(offer['options'])})",
+            f"{picked[0].upper()}{picked[1:]}:\n\n{option['text']}",
+            source.selections,
+        )
+
+        async def put_in_place(turn: Turn) -> None:
+            try:
+                apply_option(self.config, offer, option_index)
+            except OfferStale:
+                # Changed under the offer: the agent can still find where it went.
+                self._emit(turn, notice_entry("The passage has changed since; asking the agent."))
+                await self._ask_agent(
+                    turn,
+                    f"{turn.prompt}\n\nThe passage has changed since you offered it, so "
+                    "texai could not swap this in. Find where it is now and apply this "
+                    "version there.",
+                )
+                return
+            self._emit(turn, notice_entry(f"Put option {option_index + 1} in place at {where}."))
+            self._news.append(f"(Since your last turn: {picked}, and texai put it in place.)")
+
+        async def run() -> None:
+            await self._run(turn, put_in_place)
+            if turn.status == "applied":
+                offer["picked"] = option_index
+                self.bus.publish(
+                    "offer_picked", turnId=turn_id, offer=offer_index, option=option_index
+                )
+
+        self._task = asyncio.create_task(run())
+        return turn
+
+    def _start_turn(self, message: str, prompt: str, selections: list[dict[str, Any]]) -> Turn:
         turn = Turn(
             id=self._new_turn_id(),
             created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
             message=message,
-            prompt=compose_turn_prompt(message, selections, self.config.pdf_rel),
-            selections=[selection.model_dump() for selection in selections],
+            prompt=prompt,
+            selections=selections,
         )
         self.turns.append(turn)
         turn.event_id = self.bus.publish("turn_started", turn=turn.as_dict()).id
         # After turn_started, so the chat card exists before entries arrive.
         self._emit(turn, user_entry(turn.prompt))
-
-        self._task = asyncio.create_task(self._run(turn))
         return turn
 
-    async def _run(self, turn: Turn) -> None:
+    async def _ask_agent(self, turn: Turn, prompt: str | None = None) -> None:
+        outcome = await self.agent.run_turn(prompt or turn.prompt, turn.id)
+        turn.agent_text = outcome.text
+        turn.tool_calls = outcome.tool_calls
+        turn.transcript.extend(outcome.entries)
+        self._add_cost(turn, outcome.cost_usd)
+        if outcome.error:
+            turn.error = outcome.error
+        turn.offers = self._offers_since(turn)
+
+    def _offers_since(self, turn: Turn) -> list[dict[str, Any]]:
+        """The offers made while this turn ran.
+
+        Turns run one at a time, so every offer since this turn started is its
+        own. Read from the event backlog, where the tool handler put them; a
+        turn long enough to outrun the backlog loses its offers, and the user
+        still has the agent's reply to read.
+        """
+        return [
+            dict(event.data["offer"])
+            for event in self.bus.since(turn.event_id)
+            if event.type == "options_offered"
+        ]
+
+    async def _run(self, turn: Turn, work: Callable[[Turn], Awaitable[None]]) -> None:
         try:
             snapshot = take_snapshot(self.config.root, self.config.snapshots_dir, turn.id)
             self._snapshots[turn.id] = snapshot
             self._prune_snapshots()
 
-            outcome = await self.agent.run_turn(turn.prompt, turn.id)
-            turn.agent_text = outcome.text
-            turn.tool_calls = outcome.tool_calls
-            turn.transcript.extend(outcome.entries)
-            self._add_cost(turn, outcome.cost_usd)
-            if outcome.error:
-                turn.error = outcome.error
+            await work(turn)
 
             turn.changes = diff_against(snapshot, self.config.root)
 
             if not turn.changes:
                 # The agent answered without editing: nothing to build or undo.
-                turn.status = "failed" if outcome.error else "answered"
+                turn.status = "failed" if turn.error else "answered"
                 self._finish(turn)
                 return
 

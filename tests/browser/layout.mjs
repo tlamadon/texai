@@ -2201,6 +2201,13 @@ if (canLocate) {
       `${opened.highlights} boxes`);
     check('the request box stays on the page', opened.onPage === true);
 
+    const modes = await cdp.json(`[...document.querySelectorAll('.ask-box .ask-mode button')]
+      .map(b => [b.textContent, b.getAttribute('aria-checked')])`);
+    check('the box offers auto · best · ×3, one of them on',
+      modes.map(([label]) => label).join() === 'auto,best,×3' &&
+        modes.filter(([, on]) => on === 'true').length === 1,
+      JSON.stringify(modes));
+
     await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     await sleep(150);
