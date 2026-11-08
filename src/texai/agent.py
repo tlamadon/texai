@@ -51,13 +51,22 @@ EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
 # Everything the agent needs to edit LaTeX. Bash is deliberately absent: the
 # harness owns compilation, so a shell would only add risk and thrash.
-ALLOWED_TOOLS = [
+#
+# These are also the only built-in tools the session is given, and texai's are
+# the only MCP tools: every tool the model can see rides along in every
+# request, and past a few dozen Claude Code starts holding them back behind a
+# search, so reaching show_in_pdf would cost a model call of its own. The
+# user's own MCP servers and connectors are left out for the same reason.
+BUILTIN_TOOLS = [
     "Read",
     "Write",
     "Edit",
     "Glob",
     "Grep",
     "NotebookEdit",
+]
+ALLOWED_TOOLS = [
+    *BUILTIN_TOOLS,
     # In-process tool that scrolls the user's PDF view (see build_navigation_server).
     "mcp__texai__show_in_pdf",
     # Versions of a passage for the user to pick from (see texai.options).
@@ -351,6 +360,8 @@ class AgentSession:
         options = ClaudeAgentOptions(
             cwd=str(self.config.root),
             mcp_servers={"texai": build_navigation_server(self.config, self.bus)},
+            strict_mcp_config=True,
+            tools=list(BUILTIN_TOOLS),
             permission_mode="acceptEdits",
             allowed_tools=list(ALLOWED_TOOLS),
             disallowed_tools=list(DISALLOWED_TOOLS),
