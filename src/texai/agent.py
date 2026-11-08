@@ -145,7 +145,7 @@ def create_agent(
     if kind == "codex":
         from .codex_agent import CodexSession
 
-        return CodexSession(config, bus, model=model, tools_url=tools_url)
+        return CodexSession(config, bus, model=model, tools_url=tools_url, effort=effort)
     if kind != "claude":
         raise ValueError(f"unknown agent {kind!r}; expected one of {', '.join(AGENT_KINDS)}")
     return AgentSession(config, bus, model=model, effort=effort)

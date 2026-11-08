@@ -37,7 +37,7 @@ from .events import EventBus
 from .prompt import SYSTEM_PROMPT_APPEND
 from .timing import AgentClock
 
-__all__ = ["CodexSession", "CodexTranscript", "codex_status", "codex_one_shot"]
+__all__ = ["CODEX_EFFORT_LEVELS", "CodexSession", "CodexTranscript", "codex_status", "codex_one_shot"]
 
 INSTALL_HINT = (
     "The Codex SDK is not installed. It is an optional extra: run "
@@ -215,16 +215,23 @@ def tick(clock: AgentClock, method: str, data: dict[str, Any]) -> None:
         clock.harness("result")
 
 
-def _thread_config(tools_url: str | None) -> dict[str, Any] | None:
+# Codex's own reasoning-effort levels; which ones a model accepts is up to it.
+CODEX_EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+
+
+def _thread_config(tools_url: str | None, effort: str | None = None) -> dict[str, Any] | None:
     """Point the thread at texai's MCP endpoint, with its tools pre-approved.
 
     Approvals are denied for the thread as a whole, and an MCP tool counts as
     something to approve, so without the per-tool override every call to
-    ``show_in_pdf`` or ``offer_options`` would be refused.
+    ``show_in_pdf`` or ``offer_options`` would be refused. ``effort`` is
+    Codex's reasoning effort, left to its own default when not given.
     """
+    config: dict[str, Any] = {"model_reasoning_effort": effort} if effort else {}
     if not tools_url:
-        return None
+        return config or None
     return {
+        **config,
         "mcp_servers": {
             "texai": {
                 "url": tools_url,
@@ -250,11 +257,12 @@ class CodexSession:
         bus: EventBus,
         model: str | None = None,
         tools_url: str | None = None,
+        effort: str | None = None,
     ) -> None:
         self.config = config
         self.bus = bus
         self.model = model
-        self.effort: str | None = None  # Codex's reasoning effort is its own config
+        self.effort = effort
         self.tools_url = tools_url
         self._stack: AsyncExitStack | None = None
         self._thread: Any = None
@@ -295,7 +303,7 @@ class CodexSession:
                 sandbox=Sandbox.workspace_write,
                 approval_mode=ApprovalMode.deny_all,
                 developer_instructions=CODEX_INSTRUCTIONS,
-                config=_thread_config(self.tools_url),
+                config=_thread_config(self.tools_url, self.effort),
                 **({"model": self.model} if self.model else {}),
             )
         except Exception as exc:  # noqa: BLE001 - surfaced to the UI verbatim

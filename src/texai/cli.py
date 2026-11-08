@@ -14,6 +14,7 @@ from typing import Any
 from . import __version__
 from .agent import AGENT_KINDS, EFFORT_LEVELS, agent_status, create_agent
 from .agent_tools import tools_url
+from .codex_agent import CODEX_EFFORT_LEVELS
 from .build import BuildError, detect_engine, run_build, running_builds
 from .config import AppConfig
 from .console import note, warn
@@ -95,11 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--effort",
-        choices=EFFORT_LEVELS,
         default=None,
+        metavar="LEVEL",
         help=(
-            "how hard Claude thinks before it answers; lower is faster "
-            "(default: Claude Code's own). Claude only"
+            "how hard the agent thinks before it answers; lower is faster "
+            f"(default: the agent's own). Claude: {', '.join(EFFORT_LEVELS)}; "
+            f"Codex: {', '.join(CODEX_EFFORT_LEVELS)}"
         ),
     )
     parser.add_argument("--open", action="store_true", help="open the viewer in a browser")
@@ -163,7 +165,11 @@ def build_missing_pdf(config: AppConfig) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    levels = CODEX_EFFORT_LEVELS if args.agent == "codex" else EFFORT_LEVELS
+    if args.effort and args.effort not in levels:
+        parser.error(f"--effort for {args.agent} must be one of: {', '.join(levels)}")
 
     try:
         layout = discover(args.document, root=args.root, pdf=args.pdf)
@@ -237,8 +243,6 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn  # imported late so --help stays fast
 
-    if args.effort and args.agent != "claude":
-        warn(f"--effort applies to Claude only; {args.agent} ignores it")
     agent = create_agent(
         args.agent,
         config,

@@ -316,3 +316,9 @@ def test_claude_gets_no_tool_endpoint(config):
     with TestClient(create_app(config), base_url="http://127.0.0.1") as client:
         assert client.post(TOOLS_PATH, json={}).status_code in (404, 405)
         assert client.get("/api/info").json()["agent"]["kind"] == "claude"
+
+
+def test_an_effort_level_becomes_codexs_reasoning_effort():
+    assert _thread_config(None, "low") == {"model_reasoning_effort": "low"}
+    config = _thread_config("http://127.0.0.1:8765/agent-tools/mcp", "high")
+    assert config["model_reasoning_effort"] == "high" and "texai" in config["mcp_servers"]
