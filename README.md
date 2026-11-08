@@ -949,6 +949,28 @@ src/texai/
   as they are; what is new is a turn whose output is a file to read rather than
   edits to accept, and a way of saying "now do it" against a plan you may have
   rewritten in the meantime.
+- **Learning how you write.** Every turn already records a choice: which of
+  the offered versions you picked, which changes you kept and which you
+  reverted, what you rewrote by hand right after the agent touched a line.
+  Repeated enough, those choices are a style ("keeps the first person", "never
+  *utilize*", "cuts the hedge, keeps the citation"). The idea is to log them
+  locally, have the agent periodically consolidate them into a style file — a
+  skill the agent reads on every turn, in your project or your home directory —
+  and let you read and edit that file like any other source. Nothing leaves the
+  machine beyond what a turn already sends.
+- **Selecting without a mouse.** Asking about a passage starts from a text
+  selection, which is fiddly on a touchscreen and imprecise across lines. Two
+  additions: a small icon beside each paragraph (the guide bars already know
+  where every paragraph sits on the page) that opens a comment or a question
+  scoped to it; and a way of picking whole lines — tap a first and a last line
+  in the margin — rather than dragging across glyphs. Together they should make
+  the page usable from a phone or a tablet.
+- **A better speech interface.** Talking is often the quickest way to say what
+  is wrong with a paragraph. Today that means the operating system's dictation
+  into the request box. Something built in — hold to talk, transcription into
+  the request, ideally pointed at the paragraph you are looking at or have
+  tapped — would fit the reading-and-reacting loop, and the mobile one above
+  especially.
 - **A container.** `docker run` with TeX Live inside, so the one real dependency
   — a TeX installation carrying `latexmk` and `synctex` — stops being something
   to install first. Two things to work out: the agent needs the `claude` CLI and
