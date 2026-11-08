@@ -23,6 +23,7 @@ from .events import EventBus
 from .paths import PathOutsideRootError
 from .server import create_app
 from .synctex import synctex_data_file
+from .quick import QuickSession
 from .timing import timings_path
 
 __all__ = ["main", "build_parser", "build_missing_pdf", "pending_work"]
@@ -102,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
             "how hard the agent thinks before it answers; lower is faster "
             f"(default: the agent's own). Claude: {', '.join(EFFORT_LEVELS)}; "
             f"Codex: {', '.join(CODEX_EFFORT_LEVELS)}"
+        ),
+    )
+    parser.add_argument(
+        "--no-quick",
+        action="store_true",
+        help=(
+            "send requests about one marked passage to the agent too, instead of "
+            "the quick editor that answers them in one model call (Claude only)"
         ),
     )
     parser.add_argument("--open", action="store_true", help="open the viewer in a browser")
@@ -251,7 +260,10 @@ def main(argv: list[str] | None = None) -> int:
         tools_url=tools_url(HOST, port),
         effort=args.effort,
     )
-    app = create_app(config, agent=agent)
+    quick = None
+    if args.agent == "claude" and not args.no_quick:
+        quick = QuickSession(config, agent.bus, model=args.model, effort=args.effort)
+    app = create_app(config, agent=agent, quick=quick)
     server = _announcing_server(uvicorn, app, port)
     server.run()
     # Uvicorn cancels whatever request was in flight on the way out, which can

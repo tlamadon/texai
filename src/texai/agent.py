@@ -308,6 +308,9 @@ class AgentSession:
 
     kind = "claude"
     name = "Claude"
+    # Whether this is the session the chat panel drives: it announces itself,
+    # offers `claude --resume`, and its replies are shown as written.
+    primary = True
 
     def __init__(
         self,
@@ -355,9 +358,23 @@ class AgentSession:
         if not ok:
             raise AgentUnavailable(reason or "agent unavailable")
 
-        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+        from claude_agent_sdk import ClaudeSDKClient
 
-        options = ClaudeAgentOptions(
+        try:
+            self._client = ClaudeSDKClient(options=self._options())
+            await self._client.connect()
+        except Exception as exc:  # noqa: BLE001 - surfaced to the UI verbatim
+            self._client = None
+            raise AgentUnavailable(f"Could not start the agent session: {exc}") from exc
+
+        self._started = True
+        if self.primary:
+            self.bus.publish("agent_ready", model=self.model)
+
+    def _options(self) -> Any:
+        from claude_agent_sdk import ClaudeAgentOptions
+
+        return ClaudeAgentOptions(
             cwd=str(self.config.root),
             mcp_servers={"texai": build_navigation_server(self.config, self.bus)},
             strict_mcp_config=True,
@@ -379,16 +396,6 @@ class AgentSession:
             **({"model": self.model} if self.model else {}),
             **({"effort": self.effort} if self.effort else {}),
         )
-
-        try:
-            self._client = ClaudeSDKClient(options=options)
-            await self._client.connect()
-        except Exception as exc:  # noqa: BLE001 - surfaced to the UI verbatim
-            self._client = None
-            raise AgentUnavailable(f"Could not start the agent session: {exc}") from exc
-
-        self._started = True
-        self.bus.publish("agent_ready", model=self.model)
 
     async def run_turn(self, prompt: str, turn_id: str) -> TurnOutcome:
         """Send one turn and stream everything it produces onto the bus."""
@@ -433,7 +440,8 @@ class AgentSession:
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 texts.append(block.text)
-                                emit(transcript.text_entry(block.text))
+                                if self.primary:
+                                    emit(transcript.text_entry(block.text))
                             elif isinstance(block, ToolUseBlock):
                                 tool_names[block.id] = block.name
                                 summary = summarize_tool_use(
@@ -480,7 +488,7 @@ class AgentSession:
                         clock.extra.update(_result_facts(message))
                         subtype = getattr(message, "subtype", None)
                         new_session = getattr(message, "session_id", None)
-                        if new_session and new_session != self._session_id:
+                        if self.primary and new_session and new_session != self._session_id:
                             self._session_id = new_session
                             # Lets the UI offer `claude --resume <id>` right away.
                             self.bus.publish(

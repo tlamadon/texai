@@ -66,6 +66,7 @@ from .synctex import (
     SyncTexNoResult,
     run_synctex_edit,
 )
+from .quick import QuickSession
 from .turns import OfferError, TurnBusy, TurnController
 from .words import locate as locate_word_detail
 
@@ -108,16 +109,19 @@ def create_app(
     synctex_runner: SyncTexRunner = run_synctex_edit,
     agent: AgentSession | None = None,
     message_writer: Callable[..., Any] = propose_message,
+    quick: QuickSession | None = None,
 ) -> FastAPI:
     """Build the application for one review session.
 
     ``synctex_runner``, ``agent`` and ``message_writer`` are injectable so tests
     can exercise the API without a real TeX installation or a live agent.
+    ``quick`` is the quick editor for one-passage requests; without one, every
+    request goes to the agent.
     """
     # An injected agent brings its own bus; everything must publish to the same one.
     bus = agent.bus if agent is not None else EventBus()
     agent_session = agent if agent is not None else AgentSession(config, bus)
-    controller = TurnController(config, bus, agent_session)
+    controller = TurnController(config, bus, agent_session, quick=quick)
     # Which agent is behind the panel; injected test doubles count as Claude.
     agent_kind = getattr(agent_session, "kind", "claude")
     # Codex runs out of process, so texai's own tools reach it over MCP, on
@@ -133,6 +137,8 @@ def create_app(
             yield
             await controller.shutdown()
             await agent_session.stop()
+            if quick is not None:
+                await quick.stop()
 
     app = FastAPI(
         title="texai",
@@ -411,6 +417,8 @@ def create_app(
     async def interrupt() -> dict[str, Any]:
         try:
             await agent_session.interrupt()
+            if quick is not None:
+                await quick.interrupt()
         except AgentUnavailable as exc:
             raise _error(503, "agent_unavailable", str(exc)) from exc
         return {"ok": True}

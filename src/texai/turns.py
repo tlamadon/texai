@@ -26,13 +26,22 @@ from .config import AppConfig
 from .events import EventBus
 from .models import SelectionRef
 from .hunks import reconstruct
-from .options import OfferError, OfferStale, apply_option
+from .options import OfferError, OfferStale, apply_option, offer_options
 from .prompt import compose_build_failure_prompt, compose_turn_prompt
+from .quick import (
+    QuickSession,
+    QuickStale,
+    apply_edit,
+    compose_quick_prompt,
+    find_passage,
+    parse_answer,
+    quick_eligible,
+)
 from .selection import atomic_write_text
 from .console import note
 from .timing import Stopwatch, record, seconds
 from .snapshots import Snapshot, diff_against, hunks_against, read_pair, restore, take_snapshot
-from .transcript import build_entry, notice_entry, user_entry
+from .transcript import build_entry, notice_entry, text_entry, user_entry
 
 __all__ = ["Turn", "TurnController", "TurnBusy", "OfferError"]
 
@@ -110,10 +119,18 @@ class Turn:
 class TurnController:
     """Runs turns one at a time and keeps their history."""
 
-    def __init__(self, config: AppConfig, bus: EventBus, agent: AgentSession) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        bus: EventBus,
+        agent: AgentSession,
+        quick: QuickSession | None = None,
+    ) -> None:
         self.config = config
         self.bus = bus
         self.agent = agent
+        # The quick editor for one-passage requests (see texai.quick), if any.
+        self.quick = quick
         self.turns: list[Turn] = []
         self._snapshots: dict[str, Snapshot] = {}
         # Everything changed since here is "pending review", however many turns
@@ -180,7 +197,10 @@ class TurnController:
             raise TurnBusy("an agent turn is already running")
         phases: dict[str, int] = {}
         watch = Stopwatch()
-        if not self.agent.running:
+        passage = None
+        if self.quick is not None and quick_eligible(message, selections):
+            passage = find_passage(self.config, selections[0])
+        if passage is None and not self.agent.running:
             await self.agent.start()  # raises AgentUnavailable with a usable message
             phases["agentStartMs"] = watch.lap()
 
@@ -192,14 +212,90 @@ class TurnController:
             phases["baselineMs"] = watch.lap()
 
         prompt = compose_turn_prompt(message, selections, self.config.pdf_rel)
-        if self._news:
-            prompt = "\n".join(self._news) + "\n\n" + prompt
-            self._news = []
+        if passage is None:
+            prompt = self._with_news(prompt)
         turn = self._start_turn(message, prompt, [s.model_dump() for s in selections])
         turn.watch = watch  # the turn's clock starts with the agent start-up
         turn.timing["phases"].update(phases)
-        self._task = asyncio.create_task(self._run(turn, self._ask_agent))
+        if passage is not None:
+            selection = selections[0]
+
+            async def quick_edit(turn: Turn) -> None:
+                await self._ask_quick(turn, passage, selection)
+
+            turn.timing["route"] = "quick"
+            self._task = asyncio.create_task(self._run(turn, quick_edit, phase="quickMs"))
+        else:
+            turn.timing["route"] = "agent"
+            self._task = asyncio.create_task(self._run(turn, self._ask_agent))
         return turn
+
+    def _with_news(self, prompt: str) -> str:
+        """The prompt, after whatever the agent has missed since its last turn."""
+        if not self._news:
+            return prompt
+        prompt = "\n".join(self._news) + "\n\n" + prompt
+        self._news = []
+        return prompt
+
+    async def _ensure_agent(self, turn: Turn) -> None:
+        """Start the agent mid-turn, for a quick edit that needs it after all."""
+        if self.agent.running:
+            return
+        watch = Stopwatch()
+        await self.agent.start()
+        turn.timing["phases"]["agentStartMs"] = watch.total()
+
+    async def _ask_quick(self, turn: Turn, passage: Any, selection: SelectionRef) -> None:
+        """One passage, one request: the quick editor answers, texai applies it.
+
+        Whatever it cannot do, or answers in a way texai cannot use, goes to
+        the agent as an ordinary turn.
+        """
+        assert self.quick is not None
+        outcome = await self.quick.run_turn(compose_quick_prompt(passage, selection), turn.id)
+        if outcome.timing:
+            turn.timing["agentCalls"].append({**outcome.timing, "quick": True})
+        turn.tool_calls = list(outcome.tool_calls)
+        turn.transcript.extend(outcome.entries)
+        self._add_cost(turn, outcome.cost_usd)
+
+        answer = parse_answer(outcome.text) if not outcome.error else None
+        where = f"{passage.file}:{passage.start}"
+        request = (selection.instruction or "").strip()
+        if answer is not None and answer.kind == "edit":
+            try:
+                apply_edit(self.config, passage, answer.text)
+            except QuickStale as exc:
+                answer.kind, answer.text = "agent", str(exc)
+            else:
+                turn.agent_text = answer.note or f"Edited {where}."
+                self._emit(turn, text_entry(turn.agent_text))
+                self._news.append(
+                    f"(Since your last turn: on the user's request “{request}”, texai's "
+                    f"quick editor rewrote {passage.file}:{passage.start}-{passage.end}.)"
+                )
+                return
+        if answer is not None and answer.kind == "versions":
+            reply = await offer_options(
+                self.config, self.bus, passage.file, passage.text, answer.versions
+            )
+            turn.offers = self._offers_since(turn)
+            if turn.offers:
+                turn.agent_text = f"{len(answer.versions)} versions of {where} to pick from."
+                self._emit(turn, text_entry(turn.agent_text))
+                return
+            answer.kind, answer.text = "agent", reply
+        if answer is not None and answer.kind == "reply":
+            turn.agent_text = answer.text
+            self._emit(turn, text_entry(answer.text))
+            return
+
+        why = answer.text if answer is not None else (outcome.error or "it did not answer")
+        self._emit(turn, notice_entry(f"Handing this to the agent: {why}"))
+        turn.timing["route"] = "quick→agent"
+        await self._ensure_agent(turn)
+        await self._ask_agent(turn, self._with_news(turn.prompt))
 
     async def pick(self, turn_id: str, offer_index: int, option_index: int) -> Turn:
         """Put one of the versions a turn offered in place, as a turn of its own.
@@ -247,6 +343,8 @@ class TurnController:
                 return
             self._emit(turn, notice_entry(f"Put option {option_index + 1} in place at {where}."))
             self._news.append(f"(Since your last turn: {picked}, and texai put it in place.)")
+
+        turn.timing["route"] = "pick"
 
         async def run() -> None:
             await self._run(turn, put_in_place, phase="pickMs")
@@ -421,7 +519,8 @@ class TurnController:
             fix_prompt = compose_build_failure_prompt(result.errors, result.summary(), attempt)
             self._emit(turn, user_entry(fix_prompt))
             watch = Stopwatch()
-            fix = await self.agent.run_turn(fix_prompt, turn.id)
+            await self._ensure_agent(turn)
+            fix = await self.agent.run_turn(self._with_news(fix_prompt), turn.id)
             phases = turn.timing["phases"]
             phases["fixMs"] = phases.get("fixMs", 0) + watch.total()
             if fix.timing:
@@ -659,7 +758,7 @@ def timing_line(turn: Turn) -> str:
 
     calls = timing.get("agentCalls") or []
     if calls:
-        agent_ms = phases.get("agentMs", 0) + phases.get("fixMs", 0) or phases.get("pickMs", 0)
+        agent_ms = sum(phases.get(k, 0) for k in ("agentMs", "quickMs", "pickMs", "fixMs"))
         model_ms = sum(c.get("modelMs", 0) for c in calls)
         thinking_ms = sum(c.get("thinkingMs", 0) for c in calls)
         tool_ms = sum(c.get("toolMs", 0) for c in calls)
@@ -681,5 +780,6 @@ def timing_line(turn: Turn) -> str:
         if phases.get(key):
             parts.append(f"{label} {seconds(phases[key])}")
 
-    head = f"{turn.id} {turn.status} in {seconds(timing.get('totalMs'))}"
+    route = f" ({timing['route']})" if timing.get("route") else ""
+    head = f"{turn.id} {turn.status}{route} in {seconds(timing.get('totalMs'))}"
     return f"{head} — {', '.join(parts)}" if parts else head
