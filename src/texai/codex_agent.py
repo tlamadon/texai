@@ -35,6 +35,7 @@ from .agent import AgentUnavailable, TurnOutcome, _relative
 from .config import AppConfig
 from .events import EventBus
 from .prompt import SYSTEM_PROMPT_APPEND
+from .timing import AgentClock
 
 __all__ = ["CodexSession", "CodexTranscript", "codex_status", "codex_one_shot"]
 
@@ -189,6 +190,31 @@ class CodexTranscript:
         return []
 
 
+# Codex items that are tools at work, and the verb the transcript gives them.
+_TOOL_VERBS = {"commandExecution": "Shell", "fileChange": "Edit", "webSearch": "WebSearch"}
+
+
+def tick(clock: AgentClock, method: str, data: dict[str, Any]) -> None:
+    """Charge the time since the last notification to what this one reports.
+
+    A tool item starting means the model was writing the call; one completing,
+    that the tool was running. Reasoning and messages completing are the model.
+    """
+    item = data.get("item") if isinstance(data.get("item"), dict) else None
+    kind = item.get("type") if item else None
+    is_tool = kind in _TOOL_VERBS or kind == "mcpToolCall"
+    if method == "item/started" and is_tool:
+        clock.model("tool_use")
+    elif method == "item/completed" and is_tool:
+        clock.tool(_TOOL_VERBS.get(kind) or str(item.get("tool") or "tool"))
+    elif method == "item/completed" and kind == "reasoning":
+        clock.model("thinking")
+    elif method == "item/completed" and kind == "agentMessage":
+        clock.model("text")
+    elif method == "turn/completed":
+        clock.harness("result")
+
+
 def _thread_config(tools_url: str | None) -> dict[str, Any] | None:
     """Point the thread at texai's MCP endpoint, with its tools pre-approved.
 
@@ -228,6 +254,7 @@ class CodexSession:
         self.config = config
         self.bus = bus
         self.model = model
+        self.effort: str | None = None  # Codex's reasoning effort is its own config
         self.tools_url = tools_url
         self._stack: AsyncExitStack | None = None
         self._thread: Any = None
@@ -295,6 +322,7 @@ class CodexSession:
         status: str | None = None
         error: str | None = None
         duration_ms: int | None = None
+        clock = AgentClock()
 
         def emit(entry: dict[str, Any]) -> None:
             entries.append(entry)
@@ -305,6 +333,7 @@ class CodexSession:
                 self._turn = await self._thread.turn(prompt)
                 async for notification in self._turn.stream():
                     data = _dump(notification.payload)
+                    tick(clock, notification.method, data)
                     for entry in log.feed(notification.method, data):
                         emit(entry)
                     if notification.method == "turn/completed":
@@ -339,6 +368,7 @@ class CodexSession:
             terminal_reason=status,
             duration_ms=duration_ms,
             session_id=self._session_id,
+            timing=clock.summary(),
         )
 
     async def interrupt(self) -> None:

@@ -24,6 +24,7 @@ from typing import Any
 
 from . import transcript
 from .config import AppConfig
+from .timing import AgentClock
 from .events import EventBus
 from .navigate import LocateError, locate
 from .options import OFFER_OPTIONS_DESCRIPTION, OFFER_OPTIONS_SCHEMA, offer_options
@@ -31,6 +32,7 @@ from .prompt import SYSTEM_PROMPT_APPEND
 
 __all__ = [
     "AGENT_KINDS",
+    "EFFORT_LEVELS",
     "AgentUnavailable",
     "TurnOutcome",
     "AgentSession",
@@ -42,6 +44,10 @@ __all__ = [
 
 # Which agents texai can drive. The first is the default.
 AGENT_KINDS = ("claude", "codex")
+
+# How hard Claude thinks before answering (the SDK's ``effort``). None leaves
+# it to Claude Code's own default.
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
 # Everything the agent needs to edit LaTeX. Bash is deliberately absent: the
 # harness owns compilation, so a shell would only add risk and thrash.
@@ -87,6 +93,8 @@ class TurnOutcome:
     duration_ms: int | None = None
     num_turns: int | None = None
     session_id: str | None = None
+    # Where the call's time went (see texai.timing).
+    timing: dict[str, Any] | None = None
 
 
 def sdk_status() -> tuple[bool, str | None]:
@@ -117,6 +125,7 @@ def create_agent(
     bus: EventBus,
     model: str | None = None,
     tools_url: str | None = None,
+    effort: str | None = None,
 ) -> Any:
     """The session for the named agent.
 
@@ -130,7 +139,7 @@ def create_agent(
         return CodexSession(config, bus, model=model, tools_url=tools_url)
     if kind != "claude":
         raise ValueError(f"unknown agent {kind!r}; expected one of {', '.join(AGENT_KINDS)}")
-    return AgentSession(config, bus, model=model)
+    return AgentSession(config, bus, model=model, effort=effort)
 
 
 def _relative(path_value: Any, root: Path) -> str:
@@ -242,16 +251,66 @@ def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
     return create_sdk_mcp_server(name="texai", version="1.0.0", tools=[show_in_pdf, offer])
 
 
+def _block_kind(content: list[Any], thinking: type, tool_use: type) -> str:
+    """What a model message was spent on, for the clock: the first block decides."""
+    for block in content:
+        if isinstance(block, thinking):
+            return "thinking"
+        if isinstance(block, tool_use):
+            return "tool_use"
+        return "text"
+    return "text"
+
+
+def _init_facts(data: Any) -> dict[str, Any]:
+    """What the session start-up says about the request size: model and tool surface."""
+    if not isinstance(data, dict):
+        return {}
+    servers = data.get("mcp_servers") or []
+    return {
+        "initModel": data.get("model"),
+        "toolCount": len(data.get("tools") or []),
+        "mcpServers": [
+            s.get("name") if isinstance(s, dict) else str(s) for s in servers
+        ],
+    }
+
+
+def _result_facts(message: Any) -> dict[str, Any]:
+    """Claude Code's own account of the call: API time and tokens."""
+    usage = getattr(message, "usage", None) or {}
+    keys = (
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    )
+    return {
+        "durationMs": getattr(message, "duration_ms", None),
+        "apiMs": getattr(message, "duration_api_ms", None),
+        "numTurns": getattr(message, "num_turns", None),
+        "costUsd": getattr(message, "total_cost_usd", None),
+        "usage": {k: usage[k] for k in keys if isinstance(usage, dict) and k in usage},
+    }
+
+
 class AgentSession:
     """A single persistent Claude conversation scoped to one project."""
 
     kind = "claude"
     name = "Claude"
 
-    def __init__(self, config: AppConfig, bus: EventBus, model: str | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        bus: EventBus,
+        model: str | None = None,
+        effort: str | None = None,
+    ) -> None:
         self.config = config
         self.bus = bus
         self.model = model
+        self.effort = effort
         self._client: Any = None
         self._lock = asyncio.Lock()
         self._started = False
@@ -303,6 +362,7 @@ class AgentSession:
                 "append": SYSTEM_PROMPT_APPEND,
             },
             **({"model": self.model} if self.model else {}),
+            **({"effort": self.effort} if self.effort else {}),
         )
 
         try:
@@ -336,6 +396,7 @@ class AgentSession:
         entries: list[dict[str, Any]] = []
         tool_names: dict[str, str] = {}  # tool_use_id -> tool name, to label results
         outcome = TurnOutcome(ok=False)
+        clock = AgentClock()
 
         def emit(entry: dict[str, Any]) -> None:
             entries.append(entry)
@@ -346,6 +407,11 @@ class AgentSession:
                 await self._client.query(prompt)
                 async for message in self._client.receive_response():
                     if isinstance(message, AssistantMessage):
+                        clock.model(
+                            _block_kind(message.content, ThinkingBlock, ToolUseBlock),
+                            call=getattr(message, "message_id", None),
+                            model=getattr(message, "model", None),
+                        )
                         for block in message.content:
                             if isinstance(block, TextBlock):
                                 texts.append(block.text)
@@ -365,6 +431,13 @@ class AgentSession:
                                 emit(transcript.thinking_entry())
                     elif isinstance(message, UserMessage):
                         # Tool results come back as user turns, as in Claude Code.
+                        results = [
+                            tool_names.get(block.tool_use_id, "tool")
+                            for block in message.content
+                            if isinstance(block, ToolResultBlock)
+                        ]
+                        if results:
+                            clock.tool("+".join(dict.fromkeys(results)))
                         for block in message.content:
                             if isinstance(block, ToolResultBlock):
                                 emit(
@@ -375,10 +448,18 @@ class AgentSession:
                                     )
                                 )
                     elif isinstance(message, SystemMessage):
+                        if message.subtype == "thinking_tokens":
+                            clock.thinking()  # sent while the model thinks
+                        else:
+                            clock.harness(message.subtype)
+                        if message.subtype == "init":
+                            clock.extra.update(_init_facts(message.data))
                         entry = transcript.system_entry(message.subtype, message.data)
                         if entry is not None:  # routine bookkeeping is dropped
                             emit(entry)
                     elif isinstance(message, ResultMessage):
+                        clock.harness("result")
+                        clock.extra.update(_result_facts(message))
                         subtype = getattr(message, "subtype", None)
                         new_session = getattr(message, "session_id", None)
                         if new_session and new_session != self._session_id:
@@ -419,6 +500,7 @@ class AgentSession:
                     error=str(exc),
                 )
 
+        outcome.timing = clock.summary()
         if outcome.error:
             emit(transcript.notice_entry(outcome.error, is_error=True))
             self.bus.publish("agent_error", turnId=turn_id, message=outcome.error)

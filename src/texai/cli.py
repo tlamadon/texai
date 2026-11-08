@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .agent import AGENT_KINDS, agent_status, create_agent
+from .agent import AGENT_KINDS, EFFORT_LEVELS, agent_status, create_agent
 from .agent_tools import tools_url
 from .build import BuildError, detect_engine, run_build, running_builds
 from .config import AppConfig
@@ -22,6 +22,7 @@ from .events import EventBus
 from .paths import PathOutsideRootError
 from .server import create_app
 from .synctex import synctex_data_file
+from .timing import timings_path
 
 __all__ = ["main", "build_parser", "build_missing_pdf", "pending_work"]
 
@@ -91,6 +92,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model", default=None, help="model for the agent (default: the agent's own default)"
+    )
+    parser.add_argument(
+        "--effort",
+        choices=EFFORT_LEVELS,
+        default=None,
+        help=(
+            "how hard Claude thinks before it answers; lower is faster "
+            "(default: Claude Code's own). Claude only"
+        ),
     )
     parser.add_argument("--open", action="store_true", help="open the viewer in a browser")
     parser.add_argument("--version", action="version", version=f"texai {__version__}")
@@ -213,7 +223,9 @@ def main(argv: list[str] | None = None) -> int:
             f"  pdf:       {config.pdf_rel}",
             f"  selection: {config.selection_file}",
             f"  build:     {build}",
-            f"  agent:     {args.agent} — {'ready' if available else f'disabled: {reason}'}",
+            f"  agent:     {args.agent}{_agent_settings(args)} — "
+            f"{'ready' if available else f'disabled: {reason}'}",
+            f"  timings:   {timings_path(config.root)}",
             f"  viewer:    {url}",
             "  Cmd/Ctrl-click a passage, write an instruction, send. Ctrl-C to stop.",
         ]
@@ -225,8 +237,15 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn  # imported late so --help stays fast
 
+    if args.effort and args.agent != "claude":
+        warn(f"--effort applies to Claude only; {args.agent} ignores it")
     agent = create_agent(
-        args.agent, config, EventBus(), model=args.model, tools_url=tools_url(HOST, port)
+        args.agent,
+        config,
+        EventBus(),
+        model=args.model,
+        tools_url=tools_url(HOST, port),
+        effort=args.effort,
     )
     app = create_app(config, agent=agent)
     server = _announcing_server(uvicorn, app, port)
@@ -236,6 +255,13 @@ def main(argv: list[str] | None = None) -> int:
     # above was the shutdown finishing rather than something going wrong.
     note("stopped.")
     return 0
+
+
+def _agent_settings(args: argparse.Namespace) -> str:
+    """The model and effort asked for, when either was."""
+    bits = [f"model {args.model}" if args.model else "", f"effort {args.effort}" if args.effort else ""]
+    shown = ", ".join(bit for bit in bits if bit)
+    return f" ({shown})" if shown else ""
 
 
 def _relative(path: Path | None, root: Path) -> str:

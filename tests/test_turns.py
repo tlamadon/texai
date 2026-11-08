@@ -514,3 +514,37 @@ async def test_a_running_turn_that_outlived_the_backlog_keeps_its_record(project
 
     agent.release.set()
     await controller._task
+
+
+# ---------------------------------------------------------------- timing
+
+
+async def test_a_turn_logs_where_its_time_went(project: Path):
+    import json
+
+    from texai.timing import timings_path
+
+    bus = EventBus()
+    agent = ScriptedAgent(
+        bus,
+        [
+            edit(project, "alpha\n\\broken\ngamma\n"),
+            edit(project, "alpha\nfixed\ngamma\n"),
+        ],
+    )
+    # Fails while the file holds \broken, passes once it is fixed.
+    check = "import sys; sys.exit('broken' in open('sections/model.tex').read())"
+    build = f"{shlex.quote(sys.executable)} -c {shlex.quote(check)}"
+    config = AppConfig.create(project, project / "main.pdf", build_command=build, build_dir=project)
+    controller = TurnController(config, bus, agent)
+    agent.running = False  # so the start-up is timed too
+
+    await run_to_completion(controller, "tighten this")
+
+    (line,) = timings_path(project).read_text().splitlines()
+    logged = json.loads(line)
+    assert logged["kind"] == "turn" and logged["status"] == "applied"
+    assert {"agentStartMs", "snapshotMs", "agentMs", "diffMs", "fixMs"} <= set(logged["phases"])
+    assert [(b["attempt"], b["ok"]) for b in logged["builds"]] == [(1, False), (2, True)]
+    assert logged["totalMs"] >= sum(b["ms"] for b in logged["builds"])
+    assert controller.turns[-1].as_dict()["timing"]["totalMs"] == logged["totalMs"]

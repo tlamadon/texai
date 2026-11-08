@@ -29,6 +29,8 @@ from .hunks import reconstruct
 from .options import OfferError, OfferStale, apply_option
 from .prompt import compose_build_failure_prompt, compose_turn_prompt
 from .selection import atomic_write_text
+from .console import note
+from .timing import Stopwatch, record, seconds
 from .snapshots import Snapshot, diff_against, hunks_against, read_pair, restore, take_snapshot
 from .transcript import build_entry, notice_entry, user_entry
 
@@ -72,6 +74,9 @@ class Turn:
     # The id of this turn's turn_started event: where its live entries begin
     # in the event backlog, while the turn is still running.
     event_id: int = 0
+    # Where the turn's time went, phase by phase (see texai.timing).
+    timing: dict[str, Any] = field(default_factory=dict)
+    watch: Stopwatch = field(default_factory=Stopwatch, repr=False)
 
     def as_dict(self, *, include_diff: bool = False) -> dict[str, Any]:
         changes = [
@@ -98,6 +103,7 @@ class Turn:
             "costUsd": self.cost_usd,
             "error": self.error,
             "reverted": self.reverted,
+            "timing": self.timing,
         }
 
 
@@ -172,19 +178,26 @@ class TurnController:
         """Queue a composer submission. Returns immediately; work continues in the background."""
         if self.busy:
             raise TurnBusy("an agent turn is already running")
+        phases: dict[str, int] = {}
+        watch = Stopwatch()
         if not self.agent.running:
             await self.agent.start()  # raises AgentUnavailable with a usable message
+            phases["agentStartMs"] = watch.lap()
 
         if self._baseline is None:
+            watch.lap()
             self._baseline = take_snapshot(
                 self.config.root, self.config.snapshots_dir, BASELINE_ID
             )
+            phases["baselineMs"] = watch.lap()
 
         prompt = compose_turn_prompt(message, selections, self.config.pdf_rel)
         if self._news:
             prompt = "\n".join(self._news) + "\n\n" + prompt
             self._news = []
         turn = self._start_turn(message, prompt, [s.model_dump() for s in selections])
+        turn.watch = watch  # the turn's clock starts with the agent start-up
+        turn.timing["phases"].update(phases)
         self._task = asyncio.create_task(self._run(turn, self._ask_agent))
         return turn
 
@@ -236,7 +249,7 @@ class TurnController:
             self._news.append(f"(Since your last turn: {picked}, and texai put it in place.)")
 
         async def run() -> None:
-            await self._run(turn, put_in_place)
+            await self._run(turn, put_in_place, phase="pickMs")
             if turn.status == "applied":
                 offer["picked"] = option_index
                 self.bus.publish(
@@ -254,6 +267,7 @@ class TurnController:
             prompt=prompt,
             selections=selections,
         )
+        turn.timing = {"phases": {}, "builds": [], "agentCalls": []}
         self.turns.append(turn)
         turn.event_id = self.bus.publish("turn_started", turn=turn.as_dict()).id
         # After turn_started, so the chat card exists before entries arrive.
@@ -262,6 +276,8 @@ class TurnController:
 
     async def _ask_agent(self, turn: Turn, prompt: str | None = None) -> None:
         outcome = await self.agent.run_turn(prompt or turn.prompt, turn.id)
+        if outcome.timing:
+            turn.timing["agentCalls"].append(outcome.timing)
         turn.agent_text = outcome.text
         turn.tool_calls = outcome.tool_calls
         turn.transcript.extend(outcome.entries)
@@ -284,15 +300,22 @@ class TurnController:
             if event.type == "options_offered"
         ]
 
-    async def _run(self, turn: Turn, work: Callable[[Turn], Awaitable[None]]) -> None:
+    async def _run(
+        self, turn: Turn, work: Callable[[Turn], Awaitable[None]], phase: str = "agentMs"
+    ) -> None:
+        phases = turn.timing["phases"]
+        watch = Stopwatch()
         try:
             snapshot = take_snapshot(self.config.root, self.config.snapshots_dir, turn.id)
             self._snapshots[turn.id] = snapshot
             self._prune_snapshots()
+            phases["snapshotMs"] = watch.lap()
 
             await work(turn)
+            phases[phase] = watch.lap()
 
             turn.changes = diff_against(snapshot, self.config.root)
+            phases["diffMs"] = watch.lap()
 
             if not turn.changes:
                 # The agent answered without editing: nothing to build or undo.
@@ -301,6 +324,7 @@ class TurnController:
                 return
 
             build = await self._build_with_retries(turn)
+            watch.lap()
 
             if build is not None and build.ok:
                 turn.changes = diff_against(snapshot, self.config.root)
@@ -309,6 +333,7 @@ class TurnController:
                     (str(h["file"]), int(h["newStart"]), int(h["newEnd"] or h["newStart"]))
                     for h in turn.hunks
                 ]
+                phases["diffMs"] += watch.lap()
                 turn.build_ok = True
                 turn.status = "applied"
             else:
@@ -329,6 +354,7 @@ class TurnController:
                     reason="The document did not compile after the edits, so the turn was undone.",
                 )
                 await self._rebuild_quietly()
+                phases["revertMs"] = watch.lap()
 
             self._finish(turn)
         except asyncio.CancelledError:
@@ -351,6 +377,7 @@ class TurnController:
             self.bus.publish("build_started", turnId=turn.id, attempt=attempt)
             label = "compiling…" if attempt == 1 else f"rebuilding (attempt {attempt})…"
             self._emit(turn, build_entry(label))
+            watch = Stopwatch()
             try:
                 result = await run_build(
                     self.config.build_argv(),
@@ -363,11 +390,13 @@ class TurnController:
                     ),
                 )
             except BuildError as exc:
+                turn.timing["builds"].append({"attempt": attempt, "ms": watch.total(), "ok": False})
                 turn.error = str(exc)
                 self._emit(turn, build_entry(str(exc), is_error=True))
                 self.bus.publish("build_failed", turnId=turn.id, message=str(exc))
                 return None
 
+            turn.timing["builds"].append({"attempt": attempt, "ms": watch.total(), "ok": result.ok})
             self.bus.publish(
                 "build_finished",
                 turnId=turn.id,
@@ -391,7 +420,12 @@ class TurnController:
 
             fix_prompt = compose_build_failure_prompt(result.errors, result.summary(), attempt)
             self._emit(turn, user_entry(fix_prompt))
+            watch = Stopwatch()
             fix = await self.agent.run_turn(fix_prompt, turn.id)
+            phases = turn.timing["phases"]
+            phases["fixMs"] = phases.get("fixMs", 0) + watch.total()
+            if fix.timing:
+                turn.timing["agentCalls"].append({**fix.timing, "fix": attempt})
             turn.agent_text = f"{turn.agent_text}\n\n{fix.text}".strip()
             turn.tool_calls.extend(fix.tool_calls)
             turn.transcript.extend(fix.entries)
@@ -417,9 +451,32 @@ class TurnController:
         turn.cost_usd = round((turn.cost_usd or 0.0) + cost, 6)
 
     def _finish(self, turn: Turn) -> None:
+        self._record_timing(turn)
         self.refresh_review_states()
         self.bus.publish("turn_finished", turn=turn.as_dict())
         self.bus.publish("changes_updated", reason="turn_finished")
+
+    def _record_timing(self, turn: Turn) -> None:
+        """Close the turn's clock, log where its time went, and say so on the console."""
+        turn.timing["totalMs"] = turn.watch.total()
+        record(
+            self.config.root,
+            {
+                "kind": "turn",
+                "at": turn.created_at,
+                "turnId": turn.id,
+                "agent": getattr(self.agent, "kind", None),
+                "model": getattr(self.agent, "model", None),
+                "effort": getattr(self.agent, "effort", None),
+                "status": turn.status,
+                "buildOk": turn.build_ok,
+                "selections": len(turn.selections),
+                "promptChars": len(turn.prompt),
+                "changedFiles": len(turn.changes),
+                **turn.timing,
+            },
+        )
+        note(timing_line(turn))
 
     # --------------------------------------------------------------- reverting
 
@@ -592,3 +649,37 @@ class TurnController:
                 await self._task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+
+
+def timing_line(turn: Turn) -> str:
+    """One console line saying where a turn's time went."""
+    timing = turn.timing
+    phases = timing.get("phases", {})
+    parts: list[str] = []
+
+    calls = timing.get("agentCalls") or []
+    if calls:
+        agent_ms = phases.get("agentMs", 0) + phases.get("fixMs", 0) or phases.get("pickMs", 0)
+        model_ms = sum(c.get("modelMs", 0) for c in calls)
+        thinking_ms = sum(c.get("thinkingMs", 0) for c in calls)
+        tool_ms = sum(c.get("toolMs", 0) for c in calls)
+        requests = sum(c.get("modelCalls", 0) for c in calls)
+        parts.append(
+            f"agent {seconds(agent_ms)} (model {seconds(model_ms)}, thinking "
+            f"{seconds(thinking_ms)} of it; tools {seconds(tool_ms)}; "
+            f"{requests} model call{'' if requests == 1 else 's'})"
+        )
+    elif "pickMs" in phases:
+        parts.append(f"put in place {seconds(phases['pickMs'])}")
+
+    builds = timing.get("builds") or []
+    if builds:
+        build_ms = sum(b["ms"] for b in builds)
+        parts.append(f"build {seconds(build_ms)}" + (f" ×{len(builds)}" if len(builds) > 1 else ""))
+
+    for key, label in (("agentStartMs", "agent start"), ("revertMs", "revert")):
+        if phases.get(key):
+            parts.append(f"{label} {seconds(phases[key])}")
+
+    head = f"{turn.id} {turn.status} in {seconds(timing.get('totalMs'))}"
+    return f"{head} — {', '.join(parts)}" if parts else head

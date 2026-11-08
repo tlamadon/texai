@@ -19,6 +19,7 @@ from . import __version__
 from .agent import AgentSession, AgentUnavailable
 from .agent_tools import TOOLS_MOUNT, build_tools_server
 from .commitmsg import propose_message
+from .complete import MODEL as COMPLETION_MODEL
 from .complete import CompletionUnavailable, complete_text, completion_status
 from .config import AppConfig
 from .console import note, warn
@@ -56,6 +57,7 @@ from .source import (
     write_paragraph,
     write_source,
 )
+from .timing import record as record_timing
 from .synctex import (
     SyncTexDataMissing,
     SyncTexError,
@@ -498,8 +500,20 @@ def create_app(
             raise _error(409, "git_clean", "Nothing to commit.")
 
         diff = await asyncio.to_thread(scoped_diff, config)
+        started = time.monotonic()
         proposed = await message_writer(
             config, status, diff, agent_session.model, agent=agent_kind
+        )
+        record_timing(
+            config.root,
+            {
+                "kind": "commit_message",
+                "agent": agent_kind,
+                "model": agent_session.model,
+                "totalMs": int((time.monotonic() - started) * 1000),
+                "source": proposed.get("source"),
+                "diffChars": len(diff),
+            },
         )
         return {**proposed, "dirty": status.dirty}
 
@@ -636,6 +650,15 @@ def create_app(
             warn(f"complete {payload.file} — {exc}")
             raise _error(503, "completion_unavailable", str(exc)) from exc
         ms = int((time.monotonic() - started) * 1000)
+        record_timing(
+            config.root,
+            {
+                "kind": "completion",
+                "model": COMPLETION_MODEL,
+                "totalMs": ms,
+                "chars": len(suggestion),
+            },
+        )
         # One line per suggestion, so the terminal answers "what came back, how
         # slow?" — the questions ghost text hides. The
         # repr of the caret boundary (text just before it, then the insertion)
