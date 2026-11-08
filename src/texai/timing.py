@@ -13,6 +13,11 @@ thinking block means the model was thinking, a tool call that it was writing
 one, a tool result that the tool was running. The first block of each model
 call also carries the wait before the model started answering, and is marked
 so that wait can be told apart.
+
+When the agent also passes on the raw API stream (Claude does), each model
+request is timed from the inside as well: how long it waited for the first
+token, how long each block took to generate, and how many tokens went in and
+came out.
 """
 
 from __future__ import annotations
@@ -78,6 +83,11 @@ class AgentClock:
         self.calls = 0
         self._call: Any = None
         self.extra: dict[str, Any] = {}
+        # Per model request, from the raw stream: see stream().
+        self.requests: list[dict[str, Any]] = []
+        self._ready = self._watch.started  # when the next request could start
+        self._request: dict[str, Any] | None = None
+        self._block: dict[str, Any] | None = None
 
     def model(self, block: str, call: str | None = None, model: str | None = None) -> None:
         """A model block arrived: ``thinking``, ``text`` or ``tool_use``.
@@ -121,6 +131,54 @@ class AgentClock:
     def tool(self, name: str) -> None:
         """A tool result arrived: the time since was the tool running."""
         self.spans.append({"what": "tool", "tool": name, "ms": self._watch.lap()})
+        self._ready = time.monotonic()
+
+    def stream(self, event: dict[str, Any]) -> None:
+        """One raw API stream event, timing the request it belongs to.
+
+        ``waitMs`` runs from when the request could start (the turn being sent,
+        or the last tool result coming back) to the API's first reply, which
+        arrives with the first token: the agent's own overhead, the network,
+        any queue, and reading the prompt. ``generateMs`` is the rest.
+        """
+        now = time.monotonic()
+        kind = event.get("type")
+        if kind == "message_start":
+            message = event.get("message") or {}
+            usage = message.get("usage") or {}
+            self._request = {
+                "id": message.get("id"),
+                "waitMs": _ms(now - self._ready),
+                "inputTokens": usage.get("input_tokens"),
+                "cacheReadTokens": usage.get("cache_read_input_tokens"),
+                "cacheWriteTokens": usage.get("cache_creation_input_tokens"),
+                "blocks": [],
+                "_started": now,
+            }
+            self.requests.append(self._request)
+            return
+        request = self._request
+        if request is None:
+            return
+        if kind == "content_block_start":
+            block = event.get("content_block") or {}
+            self._block = {"type": block.get("type"), "_started": now}
+        elif kind == "content_block_stop" and self._block is not None:
+            started = self._block.pop("_started")
+            request["blocks"].append({**self._block, "ms": _ms(now - started)})
+            self._block = None
+        elif kind == "message_delta":
+            usage = event.get("usage") or {}
+            if "output_tokens" in usage:
+                request["outputTokens"] = usage["output_tokens"]
+        elif kind == "message_stop":
+            request["generateMs"] = _ms(now - request.pop("_started"))
+            if request.get("outputTokens") and request["generateMs"]:
+                request["tokensPerS"] = round(
+                    request["outputTokens"] / (request["generateMs"] / 1000), 1
+                )
+            self._request = None
+            self._ready = now
 
     def harness(self, what: str) -> None:
         """Anything else: the agent's own bookkeeping, start-up, the final result."""
@@ -144,6 +202,23 @@ class AgentClock:
             "tools": tools,
             "modelCalls": self.calls,
             "models": self.models,
+            **_request_totals(self.requests),
             **self.extra,
+            "requests": self.requests,
             "spans": self.spans,
         }
+
+
+def _ms(seconds_: float) -> int:
+    return round(seconds_ * 1000)
+
+
+def _request_totals(requests: list[dict[str, Any]]) -> dict[str, Any]:
+    """The per-request stream timings, added up; nothing when there were none."""
+    if not requests:
+        return {}
+    return {
+        "waitMs": sum(r.get("waitMs", 0) for r in requests),
+        "generateMs": sum(r.get("generateMs", 0) for r in requests),
+        "outputTokens": sum(r.get("outputTokens") or 0 for r in requests),
+    }

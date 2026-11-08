@@ -362,6 +362,10 @@ class AgentSession:
             mcp_servers={"texai": build_navigation_server(self.config, self.bus)},
             strict_mcp_config=True,
             tools=list(BUILTIN_TOOLS),
+            # The raw API stream, so each model request can be timed from the
+            # inside (see texai.timing); the transcript still comes from the
+            # finished messages.
+            include_partial_messages=True,
             permission_mode="acceptEdits",
             allowed_tools=list(ALLOWED_TOOLS),
             disallowed_tools=list(DISALLOWED_TOOLS),
@@ -394,6 +398,7 @@ class AgentSession:
         from claude_agent_sdk import (
             AssistantMessage,
             ResultMessage,
+            StreamEvent,
             SystemMessage,
             TextBlock,
             ThinkingBlock,
@@ -417,7 +422,9 @@ class AgentSession:
             try:
                 await self._client.query(prompt)
                 async for message in self._client.receive_response():
-                    if isinstance(message, AssistantMessage):
+                    if isinstance(message, StreamEvent):
+                        clock.stream(message.event)
+                    elif isinstance(message, AssistantMessage):
                         clock.model(
                             _block_kind(message.content, ThinkingBlock, ToolUseBlock),
                             call=getattr(message, "message_id", None),

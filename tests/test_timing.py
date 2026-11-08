@@ -170,3 +170,33 @@ def test_thinking_progress_is_model_time_and_one_call_with_its_answer(clock_time
     assert summary["modelMs"] == 3200
     assert summary["firstBlockMs"] == 1300
     assert summary["modelCalls"] == 1
+
+
+def test_the_raw_stream_splits_a_request_into_wait_and_generation(
+    clock_time: FakeTime,
+):
+    clock = AgentClock()
+    clock_time.advance(1.2)  # the agent's overhead, the network, reading the prompt
+    clock.stream(
+        {
+            "type": "message_start",
+            "message": {"id": "m1", "usage": {"input_tokens": 3, "cache_read_input_tokens": 9000}},
+        }
+    )
+    clock.stream({"type": "content_block_start", "content_block": {"type": "text"}})
+    clock.stream({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hi"}})
+    clock_time.advance(0.8)
+    clock.stream({"type": "content_block_stop"})
+    clock.stream({"type": "message_delta", "usage": {"output_tokens": 40}})
+    clock.stream({"type": "message_stop"})
+    clock_time.advance(0.1)
+    clock.tool("Edit")
+    clock_time.advance(0.7)
+    clock.stream({"type": "message_start", "message": {"id": "m2", "usage": {}}})
+
+    first, second = clock.summary()["requests"]
+    assert first["waitMs"] == 1200
+    assert first["generateMs"] == 800 and first["tokensPerS"] == 50.0
+    assert first["blocks"] == [{"type": "text", "ms": 800}]
+    assert first["cacheReadTokens"] == 9000
+    assert second["waitMs"] == 700  # from the tool result, not the end of m1
