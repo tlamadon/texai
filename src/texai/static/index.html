@@ -152,10 +152,14 @@
         </div>
         <span id="agent-status" class="agent-status">checking&hellip;</span>
         <div class="spacer"></div>
-        <button id="attach-terminal" type="button" class="ghost" hidden
-                title="Copy a command that attaches your terminal to this same session">
-          Attach terminal
-        </button>
+        <div class="session-wrap">
+          <button id="session-button" type="button" class="ghost session-button"
+                  aria-haspopup="menu" aria-expanded="false">
+            <span id="session-label" class="session-label">New conversation</span>
+            <span class="session-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <div id="session-menu" class="editor-menu session-menu" role="menu" hidden></div>
+        </div>
         <button id="interrupt" type="button" class="danger" hidden>Stop</button>
       </header>
 

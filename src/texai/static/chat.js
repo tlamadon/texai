@@ -8,6 +8,7 @@
 import { getJSON, postJSON } from './api.js';
 import { markChosen, renderOffer } from './options.js';
 import { ProgressBar, progressLabels } from './progress.js';
+import { SessionMenu, pastConversation } from './sessions.js';
 import { showToast } from './toast.js';
 
 const MAX_CHIP_TEXT = 90;
@@ -51,8 +52,9 @@ export class ChatPanel {
       tabTranscript: document.getElementById('tab-transcript'),
       tabSource: document.getElementById('tab-source'),
       editorPane: document.getElementById('editor-pane'),
-      attach: document.getElementById('attach-terminal'),
     };
+    this.sessions = new SessionMenu();
+    this.sessions.onCopyResume = (command) => this.copyResumeCommand(command);
 
     this.chips = [];
     this.cards = new Map(); // turnId -> {root, body, badge, footer}
@@ -60,6 +62,8 @@ export class ChatPanel {
     this.busy = false;
     this.lastEventId = 0;
     this.view = 'chat';
+    // The conversation the last drawn turn ran in, so a change shows as a rule.
+    this.lastSession = undefined;
     this.lastTranscriptTurn = null;
     this.onTurnFinished = null;
     this.onAgentEntry = null; // (turnId, entry) for each step of a running turn
@@ -82,7 +86,6 @@ export class ChatPanel {
     this.els.tabChat.addEventListener('click', () => this.setView('chat'));
     this.els.tabTranscript.addEventListener('click', () => this.setView('transcript'));
     this.els.tabSource.addEventListener('click', () => this.setView('source'));
-    this.els.attach.addEventListener('click', () => this.copyResumeCommand());
     this.els.input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -108,14 +111,15 @@ export class ChatPanel {
       const info = await getJSON('/api/info');
       this.agent = info.agent || { available: false, reason: 'unknown' };
       this._renderStatus();
-      this._renderAttach();
     } catch {
       this._renderStatus();
     }
+    await this.sessions.refresh();
 
     try {
       const history = await getJSON('/api/turns');
       for (const turn of history.turns) {
+        this._noteTurnSession(turn);
         if (turn.status === 'running') {
           // Still going: drawn the way live events draw it, and the stream
           // carries on from where this snapshot stops.
@@ -138,8 +142,61 @@ export class ChatPanel {
     } catch {
       /* no history yet */
     }
+    // Resumed at launch, or switched since the last turn: say so, and what
+    // was said there before.
+    const current = this.agent.sessionId || null;
+    if (current !== (this.lastSession ?? null)) this._showSession(current);
 
     this._connect();
+  }
+
+  /* ---------------- which conversation ---------------- */
+
+  /**
+   * A turn's conversation, drawn as a rule when it is not the one before.
+   * A new conversation learns its id during its first turn; that is not a
+   * change worth a rule.
+   */
+  _noteTurnSession(turn) {
+    const id = turn.sessionId;
+    if (!id || id === this.lastSession) return;
+    if (this.lastSession) this._sessionRule(id);
+    this.lastSession = id;
+  }
+
+  _sessionRule(sessionId) {
+    if (this.els.placeholder) this.els.placeholder.remove();
+    const known = this.sessions.state?.sessions?.find((s) => s.id === sessionId);
+    const label = sessionId
+      ? `Now in: ${known?.title || `conversation ${sessionId.slice(0, 8)}`}`
+      : 'New conversation — the agent starts fresh';
+    const rule = el('div', 'session-rule', label);
+    if (sessionId) rule.title = sessionId;
+    this.els.messages.append(rule);
+    this.els.transcript.append(
+      el('span', 't-rule', `\n════ ${sessionId ? `conversation ${sessionId}` : 'new conversation'} ════\n`),
+    );
+    this.lastTranscriptTurn = null;
+    this._scroll();
+    return rule;
+  }
+
+  /** Switched (here, in another tab, or at launch): a rule, then the past. */
+  async _showSession(sessionId) {
+    this.lastSession = sessionId;
+    this.agent = { ...this.agent, sessionId };
+    await this.sessions.refresh();
+    const rule = this._sessionRule(sessionId);
+    if (!sessionId) return;
+    try {
+      const past = await pastConversation(sessionId);
+      if (past) {
+        rule.after(past);
+        this._scroll();
+      }
+    } catch (err) {
+      showToast(`Could not read the earlier conversation: ${err.message || err}`, { type: 'error' });
+    }
   }
 
   /* ---------------- selection chips ---------------- */
@@ -282,8 +339,7 @@ export class ChatPanel {
     }
   }
 
-  async copyResumeCommand() {
-    const command = this.agent.resumeCommand;
+  async copyResumeCommand(command = this.agent.resumeCommand) {
     if (!command) return;
     try {
       await navigator.clipboard.writeText(command);
@@ -297,6 +353,7 @@ export class ChatPanel {
     this.busy = busy;
     this.els.send.disabled = busy;
     this.els.interrupt.hidden = !busy;
+    this.sessions.setBusy(busy);
     this._renderStatus();
   }
 
@@ -314,12 +371,6 @@ export class ChatPanel {
       status.textContent = 'ready';
       status.classList.add('ok');
     }
-  }
-
-  _renderAttach() {
-    const command = this.agent.resumeCommand;
-    this.els.attach.hidden = !command;
-    if (command) this.els.attach.title = `Copy: ${command}`;
   }
 
   /* ---------------- event stream ---------------- */
@@ -361,6 +412,7 @@ export class ChatPanel {
         this.onBuild?.(event);
         break;
       case 'turn_finished':
+        this._noteTurnSession(event.turn);
         this._finishCard(event.turn);
         this._appendTurnRule(event.turn);
         this._setBusy(false);
@@ -389,7 +441,10 @@ export class ChatPanel {
           sessionId: event.sessionId,
           resumeCommand: event.resumeCommand,
         };
-        this._renderAttach();
+        this.sessions.noteSession(event.sessionId);
+        break;
+      case 'session_switched':
+        this._showSession(event.sessionId ?? null);
         break;
       default:
         break;

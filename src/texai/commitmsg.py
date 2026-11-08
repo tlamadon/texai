@@ -90,6 +90,7 @@ async def _ask(config: AppConfig, diff: str, model: str | None, agent: str = "cl
         disallowed_tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch"],
         max_turns=1,
         setting_sources=[],  # hermetic: no project settings, no CLAUDE.md
+        extra_args={"no-session-persistence": None},  # nothing to resume
         **({"model": model} if model else {}),
     )
 

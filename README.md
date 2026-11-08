@@ -126,8 +126,8 @@ uvx 'texai[codex]' main.tex --agent codex
 
 It uses whatever `codex login` already set up, ChatGPT sign-in or API key.
 Everything else works the same: the chat panel, the inline changes, revert,
-`show_in_pdf`, commit messages. **Attach terminal** copies `codex resume <id>`
-instead of `claude --resume`. `--model` is passed through, so `--model gpt-5.4`
+`show_in_pdf`, commit messages, switching conversations. **Copy terminal
+command** gives `codex resume <id>` instead of `claude --resume`. `--model` is passed through, so `--model gpt-5.4`
 picks the Codex model.
 
 One thing is looser (see [Safety](#safety)): Codex has no files-only mode, so it
@@ -384,10 +384,35 @@ Full output is kept only for failures — a successful `Read` would otherwise
 paste the whole file into the transcript, which is exactly what a terminal does
 *not* show you. SDK bookkeeping (init handshakes, token tallies) is filtered.
 
+### Which conversation
+
+Each launch starts a new agent conversation unless you say otherwise, and the
+chat header names the one the panel is talking to. Its menu lists every
+conversation saved for this project and switches to any of them:
+
+- **Earlier in texai** — the ones texai ran, by the first thing you asked,
+  with how many turns each took. `texai --resume` picks up the most recent at
+  launch; `texai --resume <id>` a particular one.
+- **From Claude Code in a terminal** (or Codex) — conversations started outside
+  texai in this directory. Switching takes one over: the agent carries on with
+  everything it was told there.
+- **Start a new conversation** — the agent forgets; the review does not.
+
+A switch takes effect with the next message, and the chat marks where it
+happened, with what was said there before folded underneath. Pending changes
+are untouched either way: they are measured from the files, not from what a
+conversation remembers. The one limit is that turns run outside texai left no
+snapshots, so a conversation taken over from a terminal can be read and carried
+on, but its earlier edits cannot be reverted from here.
+
+texai remembers its own conversations in `.texai/sessions.json`. Its side calls
+— the quick editor, commit messages — are not saved as conversations, so they
+never clutter the list.
+
 ### Attaching a real terminal
 
 The panel is not an emulator, and a real terminal is better at being one. Once a
-turn has run, **Attach terminal** copies:
+turn has run, **Copy terminal command** in the conversation menu copies:
 
 ```bash
 claude --resume <session-id>
@@ -396,6 +421,8 @@ claude --resume <session-id>
 Run that in your project directory and Claude Code picks up the *same*
 conversation — full TUI, slash commands, everything. Drive one at a time: the
 browser panel and a terminal both writing to one session will confuse both.
+Coming back works too: pick the conversation from the menu and texai carries
+on where the terminal left off.
 
 ### Down to the word
 
@@ -767,6 +794,7 @@ unavailable it falls back to `Update sections/model.tex, ...` and says so.
 | `--build-dir` | the root `.tex` file's directory | where to run the build |
 | `--agent` | `claude` | `claude` or `codex` (needs `texai[codex]`) |
 | `--model` | the agent's default | model for the agent |
+| `--resume` [*id*] | a new conversation | carry on the last conversation texai had here, or the one given |
 | `--port` | `8765` | port on `127.0.0.1`; the next free one is used if busy |
 | `--synctex` | `synctex` | path to the `synctex` executable |
 | `--open` | off | open the viewer in your browser |
@@ -918,6 +946,7 @@ src/texai/
   models.py      request validation
   events.py      pub/sub bus + SSE framing with replay
   agent.py       the Claude Agent SDK session
+  sessions.py    which conversations exist here, and texai's record of its own
   transcript.py  one entry stream, rendered as chat or as a terminal log
   prompt.py      passages + instructions -> a prompt
   build.py       compiling, and reading errors out of the log
@@ -937,8 +966,8 @@ src/texai/
                   editor.js is the Source tab, outline.js parses and draws
                   both tables of contents, project.js assembles the document
                   from its \input tree, jump.js is the go-to palette,
-                  sync.js keeps the two panes on the same passage, and
-                  git.js the git panel)
+                  sync.js keeps the two panes on the same passage,
+                  sessions.js the conversation menu, and git.js the git panel)
 ```
 
 ## Not built yet

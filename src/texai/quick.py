@@ -246,6 +246,9 @@ class QuickSession(AgentSession):
             setting_sources=[],
             system_prompt=SYSTEM_PROMPT,
             effort=self.effort,
+            # Not a conversation anyone returns to: kept out of the sessions
+            # the panel offers to resume.
+            extra_args={"no-session-persistence": None},
             **({"model": self.model} if self.model else {}),
         )
 

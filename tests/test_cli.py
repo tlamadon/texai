@@ -223,3 +223,24 @@ def test_main_explains_an_ambiguous_directory(tmp_path: Path, monkeypatch, capsy
     monkeypatch.chdir(tmp_path)
     assert main([]) == 2
     assert "several documents" in capsys.readouterr().err
+
+
+def test_resume_picks_up_the_last_conversation_here(project: Path, monkeypatch):
+    import uvicorn
+
+    from texai.sessions import remember
+
+    resumed = []
+    monkeypatch.setattr(
+        uvicorn.Server, "run", lambda self: resumed.append(self.config.app.state.agent._resume)
+    )
+    fake_build(project, "printf '%%PDF-1.4\\n' > main.pdf")
+    remember(project, "claude", "older")
+    remember(project, "claude", "newest")
+    build = ["--build-cmd", f"{project / 'fake-build.sh'}"]
+
+    # The document may follow --resume without being taken for a session id.
+    assert main(["--resume", str(project / "main.tex"), *build]) == 0
+    assert main([str(project / "main.tex"), "--resume", "older", *build]) == 0
+    assert main([str(project / "main.tex"), *build]) == 0
+    assert resumed == ["newest", "older", None]

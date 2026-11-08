@@ -126,6 +126,14 @@ class PickRequest(BaseModel):
     option: int = Field(ge=0, le=10)
 
 
+class SessionSwitch(BaseModel):
+    """The agent conversation to talk to from the next turn; null for a new one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str | None = Field(default=None, alias="sessionId", max_length=200)
+
+
 class SourceLocation(BaseModel):
     file: str
     line: int

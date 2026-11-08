@@ -38,6 +38,8 @@ from .quick import (
     quick_eligible,
 )
 from .selection import atomic_write_text
+from .sessions import load as load_sessions
+from .sessions import remember as remember_session
 from .console import note
 from .timing import Stopwatch, estimate_turn, record, seconds
 from .snapshots import Snapshot, diff_against, hunks_against, read_pair, restore, take_snapshot
@@ -85,6 +87,8 @@ class Turn:
     event_id: int = 0
     # Where the turn's time went, phase by phase (see texai.timing).
     timing: dict[str, Any] = field(default_factory=dict)
+    # The agent conversation it ran in; None for one the agent never saw.
+    session_id: str | None = None
     watch: Stopwatch = field(default_factory=Stopwatch, repr=False)
 
     def as_dict(self, *, include_diff: bool = False) -> dict[str, Any]:
@@ -113,6 +117,7 @@ class Turn:
             "error": self.error,
             "reverted": self.reverted,
             "timing": self.timing,
+            "sessionId": self.session_id,
         }
 
 
@@ -394,6 +399,15 @@ class TurnController:
 
     async def _ask_agent(self, turn: Turn, prompt: str | None = None) -> None:
         outcome = await self.agent.run_turn(prompt or turn.prompt, turn.id)
+        turn.session_id = getattr(self.agent, "session_id", None)
+        if turn.session_id:
+            remember_session(
+                self.config.root,
+                getattr(self.agent, "kind", "claude"),
+                turn.session_id,
+                title=turn.message or turn.prompt,
+                turned=True,
+            )
         if outcome.timing:
             turn.timing["agentCalls"].append(outcome.timing)
         turn.agent_text = outcome.text
@@ -617,6 +631,28 @@ class TurnController:
         await self._rebuild_quietly()
         self.bus.publish("turn_finished", turn=turn.as_dict())
         return turn
+
+    # ------------------------------------------------- the conversation
+
+    async def switch_session(self, session_id: str | None) -> None:
+        """Talk to another agent conversation from the next turn (None: a new one).
+
+        The review is untouched: pending changes are measured from the files,
+        not from what any conversation remembers doing.
+        """
+        if self.busy:
+            raise TurnBusy("an agent turn is running; stop it or wait before switching")
+        await self.agent.switch(session_id)
+        if session_id is not None:
+            # Taken over from a terminal, it is texai's from here on, but its
+            # title stays the one it was started with.
+            remember_session(
+                self.config.root,
+                getattr(self.agent, "kind", "claude"),
+                session_id,
+                imported=not any(e["id"] == session_id for e in load_sessions(self.config.root)),
+            )
+        self.bus.publish("session_switched", sessionId=session_id)
 
     # ------------------------------------------------- the review session
 

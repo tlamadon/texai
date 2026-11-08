@@ -271,6 +271,19 @@ def _block_kind(content: list[Any], thinking: type, tool_use: type) -> str:
     return "text"
 
 
+def _message_text(content: Any) -> str:
+    """The prose of a saved message: its text blocks, not its tool traffic."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "\n\n".join(
+        str(block.get("text") or "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
 def _init_facts(data: Any) -> dict[str, Any]:
     """What the session start-up says about the request size: model and tool surface."""
     if not isinstance(data, dict):
@@ -327,6 +340,8 @@ class AgentSession:
         self._lock = asyncio.Lock()
         self._started = False
         self._session_id: str | None = None
+        # The conversation the next start picks up, rather than a fresh one.
+        self._resume: str | None = None
 
     @property
     def running(self) -> bool:
@@ -334,6 +349,55 @@ class AgentSession:
 
     def status(self) -> tuple[bool, str | None]:
         return sdk_status()
+
+    def resume(self, session_id: str | None) -> None:
+        """Make the next start continue this conversation (None: a new one)."""
+        self._resume = session_id
+        self._session_id = session_id
+
+    async def switch(self, session_id: str | None) -> None:
+        """Leave the current conversation for another, or for a fresh one.
+
+        The new one starts lazily, with the next turn, like the first did.
+        """
+        await self.stop()
+        self.resume(session_id)
+        self.bus.publish(
+            "agent_session", sessionId=session_id, resumeCommand=self.resume_command()
+        )
+
+    async def saved_sessions(self) -> list[dict[str, Any]] | None:
+        """Claude Code's saved conversations for this project, newest first."""
+        try:
+            from claude_agent_sdk import list_sessions
+
+            found = await asyncio.to_thread(
+                list_sessions, directory=str(self.config.root), include_worktrees=False
+            )
+        except Exception:  # noqa: BLE001 - texai's own record stands in
+            return None
+        return [
+            {
+                "id": s.session_id,
+                "title": s.summary,
+                "customTitle": s.custom_title,
+                "createdAt": s.created_at,
+                "updatedAt": s.last_modified,
+            }
+            for s in found
+        ]
+
+    async def past_messages(self, session_id: str) -> list[dict[str, Any]]:
+        """What was said in a saved conversation, as ``{role, text}``."""
+        from claude_agent_sdk import get_session_messages
+
+        found = await asyncio.to_thread(
+            get_session_messages, session_id, directory=str(self.config.root)
+        )
+        return [
+            {"role": m.type, "text": _message_text((m.message or {}).get("content"))}
+            for m in found
+        ]
 
     @property
     def session_id(self) -> str | None:
@@ -395,6 +459,7 @@ class AgentSession:
             },
             **({"model": self.model} if self.model else {}),
             **({"effort": self.effort} if self.effort else {}),
+            **({"resume": self._resume} if self._resume else {}),
         )
 
     async def run_turn(self, prompt: str, turn_id: str) -> TurnOutcome:
@@ -490,6 +555,7 @@ class AgentSession:
                         new_session = getattr(message, "session_id", None)
                         if self.primary and new_session and new_session != self._session_id:
                             self._session_id = new_session
+                            self._resume = new_session  # a restart carries on here
                             # Lets the UI offer `claude --resume <id>` right away.
                             self.bus.publish(
                                 "agent_session",

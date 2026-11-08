@@ -24,6 +24,7 @@ from .paths import PathOutsideRootError
 from .server import create_app
 from .synctex import synctex_data_file
 from .quick import QuickSession
+from .sessions import last_session
 from .timing import timings_path
 
 __all__ = ["main", "build_parser", "build_missing_pdf", "pending_work"]
@@ -31,6 +32,10 @@ __all__ = ["main", "build_parser", "build_missing_pdf", "pending_work"]
 HOST = "127.0.0.1"  # loopback only, never configurable
 DEFAULT_PORT = 8765
 PORT_SCAN = 20
+
+
+# `--resume` on its own: whichever conversation texai had here last.
+LAST_SESSION = "last"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -113,6 +118,17 @@ def build_parser() -> argparse.ArgumentParser:
             "the quick editor that answers them in one model call (Claude only)"
         ),
     )
+    parser.add_argument(
+        "--resume",
+        nargs="?",
+        const=LAST_SESSION,
+        default=None,
+        metavar="SESSION",
+        help=(
+            "carry on an earlier agent conversation instead of starting a new one: "
+            "the last one texai had here, or the Claude Code / Codex session id given"
+        ),
+    )
     parser.add_argument("--open", action="store_true", help="open the viewer in a browser")
     parser.add_argument("--version", action="version", version=f"texai {__version__}")
     return parser
@@ -176,6 +192,9 @@ def build_missing_pdf(config: AppConfig) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.resume and args.document is None and Path(args.resume).exists():
+        # `texai --resume main.tex`: the optional id swallowed the document.
+        args.document, args.resume = args.resume, LAST_SESSION
     levels = CODEX_EFFORT_LEVELS if args.agent == "codex" else EFFORT_LEVELS
     if args.effort and args.effort not in levels:
         parser.error(f"--effort for {args.agent} must be one of: {', '.join(levels)}")
@@ -229,6 +248,13 @@ def main(argv: list[str] | None = None) -> int:
         if why:
             build += f"  ({why})"
 
+    resume = args.resume
+    if resume == LAST_SESSION:
+        resume = last_session(config.root, args.agent)
+        if resume is None:
+            warn("warning: no earlier conversation here to resume; starting a new one.")
+    session = f"resuming {resume}" if resume else "new (switch from the chat panel)"
+
     # flush: agents commonly start this with stdout redirected to a log.
     banner = "\n".join(
         [
@@ -240,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  build:     {build}",
             f"  agent:     {args.agent}{_agent_settings(args)} — "
             f"{'ready' if available else f'disabled: {reason}'}",
+            f"  session:   {session}",
             f"  timings:   {timings_path(config.root)}",
             f"  viewer:    {url}",
             "  Cmd/Ctrl-click a passage, write an instruction, send. Ctrl-C to stop.",
@@ -260,6 +287,8 @@ def main(argv: list[str] | None = None) -> int:
         tools_url=tools_url(HOST, port),
         effort=args.effort,
     )
+    if resume:
+        agent.resume(resume)
     quick = None
     if args.agent == "claude" and not args.no_quick:
         quick = QuickSession(config, agent.bus, model=args.model, effort=args.effort)

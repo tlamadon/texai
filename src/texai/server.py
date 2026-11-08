@@ -40,6 +40,7 @@ from .models import (
     PickRequest,
     SelectRequest,
     SelectResponse,
+    SessionSwitch,
     SourceMerge,
     SourceWrite,
 )
@@ -47,6 +48,7 @@ from .navigate import LocateError, locate, locate_forward, locate_range
 from .paragraphs import paragraph_bars
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .selection import atomic_write_json, build_selection
+from .sessions import catalogue, conversation
 from .source import (
     NoParagraph,
     SourceConflict,
@@ -422,6 +424,50 @@ def create_app(
         except AgentUnavailable as exc:
             raise _error(503, "agent_unavailable", str(exc)) from exc
         return {"ok": True}
+
+    async def known_sessions() -> list[dict[str, Any]]:
+        """Every conversation the panel could talk to, the current one marked."""
+        lister = getattr(agent_session, "saved_sessions", None)
+        saved = await lister() if lister is not None else None
+        return catalogue(config.root, agent_kind, saved, agent_session.session_id)
+
+    @app.get("/api/sessions")
+    async def list_sessions() -> dict[str, Any]:
+        return {
+            "agent": agent_kind,
+            "name": getattr(agent_session, "name", "Claude"),
+            "current": agent_session.session_id,
+            "resumeCommand": agent_session.resume_command(),
+            "busy": controller.busy,
+            "sessions": await known_sessions(),
+        }
+
+    @app.post("/api/sessions/switch")
+    async def switch_session(request: SessionSwitch) -> dict[str, Any]:
+        target = request.session_id
+        if target is not None and target == agent_session.session_id:
+            return {"ok": True, "sessionId": target}
+        if target is not None and not any(s["id"] == target for s in await known_sessions()):
+            raise _error(404, "session_not_found", f"No saved conversation {target} here.")
+        try:
+            await controller.switch_session(target)
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
+        return {"ok": True, "sessionId": target}
+
+    @app.get("/api/sessions/{session_id}/messages")
+    async def session_messages(session_id: str) -> dict[str, Any]:
+        """What was said in a saved conversation, for reading it back."""
+        reader = getattr(agent_session, "past_messages", None)
+        if reader is None:
+            return {"messages": []}
+        if not any(s["id"] == session_id for s in await known_sessions()):
+            raise _error(404, "session_not_found", f"No saved conversation {session_id} here.")
+        try:
+            messages = conversation(await reader(session_id))
+        except Exception as exc:  # noqa: BLE001 - surfaced to the UI verbatim
+            raise _error(502, "session_unreadable", f"Could not read it: {exc}") from exc
+        return {"messages": messages}
 
     @app.get("/api/turns")
     async def list_turns() -> dict[str, Any]:

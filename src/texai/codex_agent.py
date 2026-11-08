@@ -83,6 +83,8 @@ def _dump(payload: Any) -> dict[str, Any]:
     """A notification payload as plain JSON data, whatever the SDK typed it as."""
     if hasattr(payload, "model_dump"):
         return payload.model_dump(mode="json", exclude_none=True)
+    if isinstance(payload, dict):
+        return payload
     params = getattr(payload, "params", None)  # UnknownNotification
     return params if isinstance(params, dict) else {}
 
@@ -270,6 +272,9 @@ class CodexSession:
         self._lock = asyncio.Lock()
         self._started = False
         self._session_id: str | None = None
+        # The thread the next start picks up, rather than a fresh one.
+        self._resume: str | None = None
+        self._codex: Any = None
 
     @property
     def running(self) -> bool:
@@ -285,6 +290,77 @@ class CodexSession:
     def status(self) -> tuple[bool, str | None]:
         return codex_status()
 
+    def resume(self, session_id: str | None) -> None:
+        """Make the next start continue this thread (None: a new one)."""
+        self._resume = session_id
+        self._session_id = session_id
+
+    async def switch(self, session_id: str | None) -> None:
+        """Leave the current thread for another, or for a fresh one."""
+        await self.stop()
+        self.resume(session_id)
+        self.bus.publish(
+            "agent_session", sessionId=session_id, resumeCommand=self.resume_command()
+        )
+
+    async def _with_codex(self, work: Any) -> Any:
+        """Run ``work(codex)`` on the session's app server, or a short-lived one."""
+        if self._codex is not None:
+            return await work(self._codex)
+        from openai_codex import AsyncCodex
+
+        async with AsyncCodex() as codex:
+            return await work(codex)
+
+    async def saved_sessions(self) -> list[dict[str, Any]] | None:
+        """Codex's saved threads for this project, newest first."""
+        if not self.status()[0]:
+            return None
+
+        async def listed(codex: Any) -> Any:
+            return await codex.thread_list(cwd=str(self.config.root), limit=50)
+
+        try:
+            found = await self._with_codex(listed)
+        except Exception:  # noqa: BLE001 - texai's own record stands in
+            return None
+        threads = [_dump(t) for t in getattr(found, "data", None) or []]
+        return [
+            {
+                "id": t["id"],
+                "title": t.get("preview"),
+                "customTitle": t.get("name"),
+                # Codex counts in seconds; the panel, like Claude, in ms.
+                "createdAt": int(t["created_at"]) * 1000 if t.get("created_at") else None,
+                "updatedAt": int(t["updated_at"]) * 1000 if t.get("updated_at") else None,
+            }
+            for t in threads
+            # A sub-agent's thread is part of another conversation.
+            if t.get("id") and not t.get("parent_thread_id") and not t.get("ephemeral")
+        ]
+
+    async def past_messages(self, session_id: str) -> list[dict[str, Any]]:
+        """What was said in a saved thread, as ``{role, text}``."""
+        from openai_codex import AsyncThread
+
+        async def read(codex: Any) -> Any:
+            return await AsyncThread(codex, session_id).read(include_turns=True)
+
+        thread = _dump(getattr(await self._with_codex(read), "thread", None))
+        messages: list[dict[str, Any]] = []
+        for turn in thread.get("turns") or []:
+            for item in turn.get("items") or []:
+                if item.get("type") == "userMessage":
+                    text = "\n\n".join(
+                        str(part.get("text") or "")
+                        for part in item.get("content") or []
+                        if part.get("type") == "text"
+                    )
+                    messages.append({"role": "user", "text": text})
+                elif item.get("type") == "agentMessage":
+                    messages.append({"role": "assistant", "text": str(item.get("text") or "")})
+        return messages
+
     async def start(self) -> None:
         """Start the thread. Raises :class:`AgentUnavailable` if it cannot."""
         if self._started:
@@ -298,7 +374,7 @@ class CodexSession:
         stack = AsyncExitStack()
         try:
             codex = await stack.enter_async_context(AsyncCodex())
-            self._thread = await codex.thread_start(
+            settings: dict[str, Any] = dict(
                 cwd=str(self.config.root),
                 sandbox=Sandbox.workspace_write,
                 approval_mode=ApprovalMode.deny_all,
@@ -306,15 +382,20 @@ class CodexSession:
                 config=_thread_config(self.tools_url, self.effort),
                 **({"model": self.model} if self.model else {}),
             )
+            if self._resume:
+                self._thread = await codex.thread_resume(self._resume, **settings)
+            else:
+                self._thread = await codex.thread_start(**settings)
         except Exception as exc:  # noqa: BLE001 - surfaced to the UI verbatim
             await stack.aclose()
             raise AgentUnavailable(f"Could not start the Codex session: {exc}") from exc
 
         self._stack = stack
+        self._codex = codex
         self._started = True
         # Codex names the thread up front, so the terminal can attach before
         # the first turn rather than after it.
-        self._session_id = self._thread.id
+        self._session_id = self._resume = self._thread.id
         self.bus.publish(
             "agent_session", sessionId=self._session_id, resumeCommand=self.resume_command()
         )
@@ -391,6 +472,7 @@ class CodexSession:
             except Exception:  # noqa: BLE001 - shutdown is best effort
                 pass
         self._stack = None
+        self._codex = None
         self._thread = None
         self._started = False
 

@@ -1603,3 +1603,94 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
 }
 .progress-label { margin-top: 3px; font-size: 11px; color: var(--muted); }
 .turn > .progress { margin: 4px 10px 8px; }
+
+/* ---------------- which conversation ----------------
+   The header names the agent conversation the panel is talking to; its menu
+   lists the others saved for this project (see sessions.js). */
+.session-wrap { position: relative; display: flex; min-width: 0; }
+
+.session-button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 220px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.session-button.on,
+.session-button:hover { color: var(--fg); }
+.session-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-caret { flex: none; font-size: 10px; }
+
+.session-menu {
+  width: 320px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.session-menu .menu-item { white-space: normal; }
+.session-menu .menu-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-menu .menu-item:disabled { opacity: 0.5; cursor: default; }
+.session-current {
+  padding: 6px 8px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.session-kicker,
+.session-section {
+  color: var(--muted);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.session-section {
+  padding: 8px 8px 3px;
+  margin-top: 4px;
+  border-top: 1px solid var(--panel-border);
+}
+.session-current + .session-section { border-top: 0; margin-top: 0; }
+.session-title { font-weight: 600; overflow-wrap: anywhere; }
+.session-empty { padding: 6px 8px; }
+
+/* Where the conversation changed, between one turn and the next. */
+.session-rule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.session-rule::before,
+.session-rule::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--panel-border);
+}
+
+/* What was said in a resumed conversation before texai joined it. */
+.session-past {
+  border: 1px dashed var(--panel-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--muted);
+}
+.session-past summary { cursor: pointer; font-size: 12px; }
+.session-past[open] summary { margin-bottom: 6px; }
+.session-msg { padding: 4px 0; border-top: 1px solid var(--panel-border); }
+.session-role { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+.session-msg.user .session-text { color: var(--fg); }
+.session-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 16em;
+  overflow-y: auto;
+}
