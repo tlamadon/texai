@@ -1585,3 +1585,21 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
   padding: 0 4px;
   font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* A running turn's progress, filled against how long such turns take. */
+.progress { margin: 6px 0 2px; }
+.progress-track {
+  height: 3px;
+  background: var(--panel-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+.progress-label { margin-top: 3px; font-size: 11px; color: var(--muted); }
+.turn > .progress { margin: 4px 10px 8px; }

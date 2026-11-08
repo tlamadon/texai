@@ -27,6 +27,7 @@
 
 import { postJSON } from './api.js';
 import { markChosen, renderOffer } from './options.js';
+import { ProgressBar, progressLabels } from './progress.js';
 import { showToast } from './toast.js';
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
@@ -323,6 +324,7 @@ export class PageAsk {
       if (this.ask !== a) return;
       a.turnId = response.turn.id;
       a.where = `${source.file}:${source.line}`;
+      this._startProgress(response.turn);
     } catch (err) {
       if (this.ask !== a) return;
       this._setState('compose');
@@ -359,6 +361,32 @@ export class PageAsk {
     if (line) this._setStatus(line.trim(), 'busy');
   }
 
+  /** A bar for the turn just started, filled against how long such turns take. */
+  _startProgress(turn) {
+    const a = this.ask;
+    this._stopProgress();
+    if (!turn.timing?.estimate) return;
+    a.progress = new ProgressBar(progressLabels(turn));
+    a.status.after(a.progress.el);
+    a.progress.start(turn.timing.estimate);
+  }
+
+  _stopProgress() {
+    const a = this.ask;
+    if (!a?.progress) return;
+    a.progress.stop();
+    a.progress.el.remove();
+    a.progress = null;
+  }
+
+  /** The running turn's build began or ended: move the bar along. */
+  buildEvent(event) {
+    const a = this.ask;
+    if (!a?.progress || a.turnId !== event.turnId) return;
+    if (event.type === 'build_started') a.progress.phase('compiling');
+    else if (!event.ok) a.progress.retry();
+  }
+
   turnFinished(turn) {
     const a = this.ask;
     if (!a) return;
@@ -367,6 +395,7 @@ export class PageAsk {
       return;
     }
     if (a.turnId !== turn.id) return;
+    this._stopProgress();
 
     const changes = turn.reverted ? [] : turn.changes || [];
     if (!changes.length && turn.status === 'answered' && turn.offers?.length) {
@@ -427,6 +456,7 @@ export class PageAsk {
       const response = await postJSON(`/api/turns/${a.offerTurn}/pick`, { offer, option });
       if (this.ask !== a) return;
       a.turnId = response.turn.id;
+      this._startProgress(response.turn);
     } catch (err) {
       if (this.ask !== a) return;
       markChosen(a.offersEl.children[offer], -1);
@@ -519,6 +549,7 @@ export class PageAsk {
   close() {
     const a = this.ask;
     if (!a) return;
+    a.progress?.stop();
     // Closing the box does not stop the agent: the turn is in the chat either
     // way, and its edits still arrive as markers.
     for (const node of a.highlights) node.remove();

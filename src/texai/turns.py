@@ -39,7 +39,7 @@ from .quick import (
 )
 from .selection import atomic_write_text
 from .console import note
-from .timing import Stopwatch, record, seconds
+from .timing import Stopwatch, estimate_turn, record, seconds
 from .snapshots import Snapshot, diff_against, hunks_against, read_pair, restore, take_snapshot
 from .transcript import build_entry, notice_entry, text_entry, user_entry
 
@@ -214,7 +214,15 @@ class TurnController:
         prompt = compose_turn_prompt(message, selections, self.config.pdf_rel)
         if passage is None:
             prompt = self._with_news(prompt)
-        turn = self._start_turn(message, prompt, [s.model_dump() for s in selections])
+        route = "quick" if passage is not None else "agent"
+        versions = any((s.alternatives or 0) > 1 for s in selections)
+        turn = self._start_turn(
+            message,
+            prompt,
+            [s.model_dump() for s in selections],
+            route=route,
+            versions=versions,
+        )
         turn.watch = watch  # the turn's clock starts with the agent start-up
         turn.timing["phases"].update(phases)
         if passage is not None:
@@ -223,10 +231,8 @@ class TurnController:
             async def quick_edit(turn: Turn) -> None:
                 await self._ask_quick(turn, passage, selection)
 
-            turn.timing["route"] = "quick"
             self._task = asyncio.create_task(self._run(turn, quick_edit, phase="quickMs"))
         else:
-            turn.timing["route"] = "agent"
             self._task = asyncio.create_task(self._run(turn, self._ask_agent))
         return turn
 
@@ -326,6 +332,7 @@ class TurnController:
             f"Use “{option['label']}” ({option_index + 1} of {len(offer['options'])})",
             f"{picked[0].upper()}{picked[1:]}:\n\n{option['text']}",
             source.selections,
+            route="pick",
         )
 
         async def put_in_place(turn: Turn) -> None:
@@ -344,8 +351,6 @@ class TurnController:
             self._emit(turn, notice_entry(f"Put option {option_index + 1} in place at {where}."))
             self._news.append(f"(Since your last turn: {picked}, and texai put it in place.)")
 
-        turn.timing["route"] = "pick"
-
         async def run() -> None:
             await self._run(turn, put_in_place, phase="pickMs")
             if turn.status == "applied":
@@ -357,7 +362,14 @@ class TurnController:
         self._task = asyncio.create_task(run())
         return turn
 
-    def _start_turn(self, message: str, prompt: str, selections: list[dict[str, Any]]) -> Turn:
+    def _start_turn(
+        self,
+        message: str,
+        prompt: str,
+        selections: list[dict[str, Any]],
+        route: str = "agent",
+        versions: bool = False,
+    ) -> Turn:
         turn = Turn(
             id=self._new_turn_id(),
             created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -365,7 +377,15 @@ class TurnController:
             prompt=prompt,
             selections=selections,
         )
-        turn.timing = {"phases": {}, "builds": [], "agentCalls": []}
+        turn.timing = {
+            "route": route,
+            "versions": versions,
+            # What the page's progress bar fills towards (see estimate_turn).
+            "estimate": estimate_turn(self.config.root, route, versions),
+            "phases": {},
+            "builds": [],
+            "agentCalls": [],
+        }
         self.turns.append(turn)
         turn.event_id = self.bus.publish("turn_started", turn=turn.as_dict()).id
         # After turn_started, so the chat card exists before entries arrive.

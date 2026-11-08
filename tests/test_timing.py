@@ -200,3 +200,28 @@ def test_the_raw_stream_splits_a_request_into_wait_and_generation(
     assert first["blocks"] == [{"type": "text", "ms": 800}]
     assert first["cacheReadTokens"] == 9000
     assert second["waitMs"] == 700  # from the tool result, not the end of m1
+
+
+def test_the_estimate_follows_recent_turns_that_went_the_same_way(tmp_path: Path):
+    from texai.timing import DEFAULT_BUILD_MS, DEFAULT_WORK_MS, estimate_turn
+
+    fresh = estimate_turn(tmp_path, "quick")
+    assert fresh["phases"] == [
+        {"name": "writing", "ms": DEFAULT_WORK_MS[("quick", False)]},
+        {"name": "compiling", "ms": DEFAULT_BUILD_MS},
+    ]
+    assert fresh["samples"] == 0
+
+    def turn(route, work, build, versions=False):
+        phase = {"quick": "quickMs", "agent": "agentMs"}[route]
+        return {"kind": "turn", "route": route, "versions": versions, "status": "applied",
+                "phases": {phase: work}, "builds": [{"attempt": 1, "ms": build, "ok": True}]}
+
+    for entry in [turn("quick", 3000, 500), turn("quick", 2000, 700), turn("quick", 4000, 600),
+                  turn("agent", 9000, 800), turn("quick", 9999, 600, versions=True)]:
+        record(tmp_path, entry)
+
+    quick = estimate_turn(tmp_path, "quick")
+    assert quick["phases"] == [{"name": "writing", "ms": 3000}, {"name": "compiling", "ms": 600}]
+    assert quick["samples"] == 3
+    assert estimate_turn(tmp_path, "pick")["phases"] == [{"name": "compiling", "ms": 600}]

@@ -29,7 +29,15 @@ from typing import Any
 
 from .selection import SELECTION_DIRNAME
 
-__all__ = ["TIMINGS_FILENAME", "AgentClock", "Stopwatch", "record", "timings_path", "seconds"]
+__all__ = [
+    "TIMINGS_FILENAME",
+    "AgentClock",
+    "Stopwatch",
+    "estimate_turn",
+    "record",
+    "timings_path",
+    "seconds",
+]
 
 TIMINGS_FILENAME = "timings.jsonl"
 
@@ -50,6 +58,82 @@ def record(root: Path, entry: dict[str, Any]) -> None:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+# What a turn takes before there is any history to go on: texai's own speed
+# tests on a short paper (sentence and paragraph edits, versions, Opus 5).
+DEFAULT_WORK_MS = {
+    ("quick", False): 3_000,
+    ("quick", True): 4_500,
+    ("agent", False): 8_000,
+    ("agent", True): 14_000,
+    ("pick", False): 0,
+}
+DEFAULT_BUILD_MS = 2_000
+DEFAULT_FIX_MS = 8_000
+# Recent turns are what predicts the next one: the same paper, model and machine.
+RECENT = 15
+SCANNED_LINES = 400
+_WORK_PHASE = {"quick": "quickMs", "agent": "agentMs", "pick": "pickMs"}
+
+
+def _median(values: list[int]) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) // 2
+
+
+def _recent_turns(root: Path) -> list[dict[str, Any]]:
+    try:
+        lines = timings_path(root).read_text(encoding="utf-8").splitlines()[-SCANNED_LINES:]
+    except OSError:
+        return []
+    turns = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get("kind") == "turn":
+            turns.append(entry)
+    return turns
+
+
+def estimate_turn(root: Path, route: str, versions: bool = False) -> dict[str, Any]:
+    """How long a turn on ``route`` should take, phase by phase, for a progress bar.
+
+    The median of the recent turns that went the same way (quick or agent,
+    asking for versions or not) for the model's part, and of recent first
+    builds for the compile; texai's measured defaults until there are some.
+    """
+    history = _recent_turns(root)
+    phase = _WORK_PHASE.get(route, "agentMs")
+    same = [
+        t for t in history
+        if t.get("route") == route
+        and bool(t.get("versions")) == versions
+        and t.get("status") in ("applied", "answered")
+        and isinstance((t.get("phases") or {}).get(phase), int)
+    ][-RECENT:]
+    builds = [t["builds"][0]["ms"] for t in history if t.get("builds") and t["builds"][0].get("ok")]
+    fixes = [t["phases"]["fixMs"] for t in history if isinstance((t.get("phases") or {}).get("fixMs"), int)]
+
+    work = _median([t["phases"][phase] for t in same])
+    if work is None:
+        work = DEFAULT_WORK_MS.get((route, versions), DEFAULT_WORK_MS.get((route, False), 8_000))
+    build = _median(builds[-RECENT:]) or DEFAULT_BUILD_MS
+    phases = [{"name": "compiling", "ms": build}]
+    if route != "pick":
+        phases.insert(0, {"name": "writing", "ms": work})
+    return {
+        "phases": phases,
+        "fixMs": _median(fixes[-RECENT:]) or DEFAULT_FIX_MS,
+        "samples": len(same),
+    }
 
 
 def seconds(ms: int | float | None) -> str:

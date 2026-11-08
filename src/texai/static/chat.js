@@ -7,6 +7,7 @@
 
 import { getJSON, postJSON } from './api.js';
 import { markChosen, renderOffer } from './options.js';
+import { ProgressBar, progressLabels } from './progress.js';
 import { showToast } from './toast.js';
 
 const MAX_CHIP_TEXT = 90;
@@ -62,6 +63,7 @@ export class ChatPanel {
     this.lastTranscriptTurn = null;
     this.onTurnFinished = null;
     this.onAgentEntry = null; // (turnId, entry) for each step of a running turn
+    this.onBuild = null; // (event) when a turn's build starts or finishes
     this.onChangesUpdated = null;
     this.onGoTo = null;      // click a file:line reference
     this.onEdit = null;      // open a marked passage in the editor
@@ -346,12 +348,17 @@ export class ChatPanel {
     switch (event.type) {
       case 'turn_started':
         this._setBusy(true);
-        this._cardFor(event.turn);
+        this._cardFor(event.turn, Date.now());
         break;
       case 'agent_entry':
         this._appendTranscript(event.turnId, event.entry);
         this._appendToCard(event.turnId, event.entry);
         this.onAgentEntry?.(event.turnId, event.entry);
+        break;
+      case 'build_started':
+      case 'build_finished':
+        this._buildProgress(event);
+        this.onBuild?.(event);
         break;
       case 'turn_finished':
         this._finishCard(event.turn);
@@ -473,7 +480,11 @@ export class ChatPanel {
 
   /* ---------------- chat cards ---------------- */
 
-  _cardFor(turn) {
+  /**
+   * `startedAt` is when a live turn's start reached the page; a turn found
+   * running on load falls back to its creation time, to the second.
+   */
+  _cardFor(turn, startedAt = Date.parse(turn.createdAt) || Date.now()) {
     if (this.cards.has(turn.id)) return this.cards.get(turn.id);
     if (this.els.placeholder) this.els.placeholder.remove();
 
@@ -504,6 +515,11 @@ export class ChatPanel {
     this.els.messages.append(root);
 
     const card = { root, body, footer, badge };
+    if (turn.status === 'running' && turn.timing?.estimate) {
+      card.progress = new ProgressBar(progressLabels(turn));
+      root.append(card.progress.el);
+      card.progress.start(turn.timing.estimate, startedAt);
+    }
     this.cards.set(turn.id, card);
     this._scroll();
     return card;
@@ -555,9 +571,22 @@ export class ChatPanel {
     card.badge.title = reviewed ? `applied, then ${turn.review}` : '';
   }
 
+  /** A build began or ended: move the running card's bar along. */
+  _buildProgress(event) {
+    const progress = this.cards.get(event.turnId)?.progress;
+    if (!progress) return;
+    if (event.type === 'build_started') progress.phase('compiling');
+    else if (!event.ok) progress.retry();
+  }
+
   _finishCard(turn) {
     const card = this.cards.get(turn.id) || this._cardFor(turn);
     this._badge(card, turn);
+    if (card.progress) {
+      card.progress.stop();
+      card.progress.el.remove();
+      card.progress = null;
+    }
 
     card.footer.replaceChildren();
 
@@ -667,3 +696,4 @@ function renderDiff(changes) {
   }
   return pre;
 }
+

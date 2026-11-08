@@ -180,6 +180,7 @@ ask = new PageAsk({
 });
 chat.onTurnFinished = (turn) => ask.turnFinished(turn);
 chat.onAgentEntry = (turnId, entry) => ask.agentEntry(turnId, entry);
+chat.onBuild = (event) => ask.buildEvent(event);
 
 // Scrolling one pane scrolls the other, when asked for. Created after the
 // editor, whose scroll events it listens to.
