@@ -129,6 +129,16 @@ class ProposalRequest(BaseModel):
     option: int | None = Field(default=None, ge=0, le=10)
 
 
+class ProvenanceRequest(BaseModel):
+    """A ``%@src`` to resolve: taken apart already, as the page has it from
+    ``/api/paragraphs``, or as the text after ``%@src``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: dict[str, Any] | None = None
+    spec: str = Field(default="", max_length=4000)
+
+
 class KeepRequest(BaseModel):
     """An offer to keep in the source as a proposal, among those a turn made."""
 

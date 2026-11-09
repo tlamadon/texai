@@ -40,6 +40,7 @@ from .models import (
     KeepRequest,
     PickRequest,
     ProposalRequest,
+    ProvenanceRequest,
     SelectRequest,
     SelectResponse,
     SessionSwitch,
@@ -50,7 +51,7 @@ from .macros import document_macros
 from .navigate import LocateError, locate, locate_forward, locate_range
 from .paragraphs import paragraph_bars
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
-from .provenance import ProvenanceError, resolve_source, serve_path
+from .provenance import ProvenanceError, resolve_source, serve_path, source_from_dict
 from .selection import atomic_write_json, build_selection
 from .sessions import catalogue, conversation
 from .source import (
@@ -518,12 +519,14 @@ def create_app(
         against the build inside; the first request after a rebuild pays for it."""
         return await asyncio.to_thread(paragraph_bars, config)
 
-    @app.get("/api/provenance")
-    async def provenance(spec: str) -> dict[str, Any]:
+    @app.post("/api/provenance")
+    async def provenance(payload: ProvenanceRequest) -> dict[str, Any]:
         """What a `%@src` annotation points at, for the peek: which view shows
-        it, and where in it to look. `spec` is the annotation's text after `%@src`."""
+        it, and where in it to look. The page sends the source as it already
+        has it, parsed; `spec`, the text after `%@src`, does as well."""
         try:
-            return await asyncio.to_thread(resolve_source, config, spec)
+            source = source_from_dict(payload.source) if payload.source else payload.spec
+            return await asyncio.to_thread(resolve_source, config, source)
         except ProvenanceError as exc:
             raise _error(400, "bad_source", str(exc)) from exc
 

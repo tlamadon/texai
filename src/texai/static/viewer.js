@@ -170,7 +170,9 @@ export class PdfViewer {
   }
 
   async _renderPage(entry) {
-    if (entry.rendered || entry.task) return;
+    // A page still loading has no size yet: a scroll during load() reaches it
+    // before _applyScale() does.
+    if (entry.rendered || entry.task || !entry.viewport) return;
     const { viewport } = entry;
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
 

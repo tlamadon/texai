@@ -45,6 +45,7 @@ __all__ = [
     "file_sha",
     "parse_source",
     "resolve_source",
+    "source_from_dict",
     "source_ref",
     "serve_path",
 ]
@@ -280,15 +281,46 @@ def _find_by_sha(folder: Path, prefix: str) -> Path | None:
     return None
 
 
-def resolve_source(config: AppConfig, text: str) -> dict[str, Any]:
+def source_from_dict(data: Mapping[str, Any]) -> SourceRef:
+    """A source as the page has it (``SourceRef.as_dict``), checked."""
+    kind = data.get("type")
+    target = data.get("target")
+    if kind not in ("label", "file", "paper") or not isinstance(target, str) or not target:
+        raise ProvenanceError("This %@src names nothing: start it with #label, @key or a path.")
+
+    def number(name: str) -> int | None:
+        value = data.get(name)
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+    def text(name: str) -> str:
+        value = data.get(name)
+        return value if isinstance(value, str) else ""
+
+    sha = text("sha").lower()
+    return SourceRef(
+        kind,
+        target,
+        start=number("start"),
+        end=number("end"),
+        page=number("page"),
+        quote=text("quote"),
+        sha=sha if _SHA.match(sha) else "",
+        note=text("note"),
+    )
+
+
+def resolve_source(config: AppConfig, source: str | SourceRef) -> dict[str, Any]:
     """Everything the peek needs to show what a ``%@src`` points at.
+
+    ``source`` is the annotation's text after ``%@src``, or the source already
+    taken apart, as the page has it.
 
     ``view`` says how: ``pdf`` (with a ``url``, and a ``page`` or ``boxes`` for
     where to look), ``text`` (the file's contents), ``image``, or ``missing``
     with a ``problem`` saying why. A ``problem`` can also come with a view, as a
     warning: a paper that has changed since it was quoted still opens.
     """
-    ref = parse_source(text)
+    ref = parse_source(source) if isinstance(source, str) else source
     if ref is None:
         raise ProvenanceError("This %@src names nothing: start it with #label, @key or a path.")
     resolver = {"label": _resolve_label, "file": _resolve_file, "paper": _resolve_paper}[ref.type]

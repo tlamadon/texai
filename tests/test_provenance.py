@@ -211,14 +211,36 @@ def test_the_endpoints(config, project):
     (project / "papers" / "card2018.pdf").write_bytes(PDF_BYTES)
     client = TestClient(create_app(config), base_url="http://127.0.0.1")
 
-    answer = client.get("/api/provenance", params={"spec": "@card2018"}).json()
+    answer = client.post("/api/provenance", json={"spec": "@card2018"}).json()
     assert answer["view"] == "pdf"
     served = client.get(answer["url"])
     assert served.status_code == 200
     assert served.headers["content-type"] == "application/pdf"
     assert served.content == PDF_BYTES
 
-    assert client.get("/api/provenance", params={"spec": "-- nothing"}).status_code == 400
+    assert client.post("/api/provenance", json={"spec": "-- nothing"}).status_code == 400
+    assert client.post("/api/provenance", json={"source": {"type": "nope"}}).status_code == 400
     assert client.get("/api/project-file", params={"path": "../x"}).status_code == 403
     assert client.get("/api/project-file", params={"path": ".texai/x"}).status_code == 403
     assert client.get("/api/project-file", params={"path": "papers/none.pdf"}).status_code == 404
+
+
+def test_what_the_margin_has_is_enough_to_peek(config, project, tmp_path):
+    """The page peeks with the item /api/paragraphs gave it. A %@src with a
+    quote and no note has empty free text, so the parsed source is what must
+    travel, not the annotation's text."""
+    (project / "materials").mkdir()
+    (project / "materials" / "Norwich_JMP.pdf").write_bytes(PDF_BYTES)
+    path = tmp_path / "s.tex"
+    path.write_text(
+        '%@src materials/Norwich_JMP.pdf "Firms in our sample are small" sha:e760a4e2\n'
+        "Our firms are small.\n"
+    )
+    _, (item,) = _map_file(path, "s.tex", {("s.tex", 2): {1: [100.0, 100.0]}}, 72.0, 540.0)
+    assert item["text"] == ""  # no note: the old peek sent this, and failed
+
+    client = TestClient(create_app(config), base_url="http://127.0.0.1")
+    answer = client.post("/api/provenance", json={"source": item["source"]}).json()
+    assert (answer["view"], answer["path"]) == ("pdf", "materials/Norwich_JMP.pdf")
+    assert answer["source"]["quote"] == "Firms in our sample are small"
+    assert answer["source"]["sha"] == "e760a4e2"

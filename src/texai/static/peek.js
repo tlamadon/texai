@@ -11,7 +11,7 @@
 // A `%@propose` choice opens here too: its versions side by side, the words
 // each would change marked, to pick one or dismiss them all.
 
-import { getJSON, postJSON } from './api.js';
+import { postJSON } from './api.js';
 import { describeSource, sourceTarget } from './annotations.js';
 import { markChosen, renderOffer } from './options.js';
 import { PdfViewer } from './viewer.js';
@@ -94,7 +94,9 @@ export class PeekPanel {
     this._status('Looking it up…');
     let answer;
     try {
-      answer = await getJSON(`/api/provenance?spec=${encodeURIComponent(item.text)}`);
+      // The source as the margin already has it, parsed by the server: the
+      // annotation's own text is only its free-text note.
+      answer = await postJSON('/api/provenance', { source });
     } catch (err) {
       if (token !== this.token) return;
       this._only(null);
