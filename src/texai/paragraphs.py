@@ -87,6 +87,8 @@ _SP_PER_PT = 65536.0
 # How much of the sentence a source backs travels with it, to tell one source
 # in a paragraph's list from the next.
 _BACKS_CHARS = 120
+# How long a sentence's last word is taken to be, when the page cannot say.
+_LAST_WORD_PT = 20.0
 
 _cache: dict[str, tuple[str, dict[str, Any]]] = {}
 
@@ -141,9 +143,16 @@ def _project_file(config: AppConfig, path: str) -> str | None:
         return None
 
 
+# Roughly where a source line's words fall on each rendered line it reaches:
+# (page, baseline) -> [first word start, last word start]. Only roughly — a word
+# can be tagged with the line after the one it is on — so this says which
+# rendered lines a sentence is on, and the page finds its words in its text.
+Words = dict[tuple[str, int], dict[tuple[int, float], list[float]]]
+
+
 def _parse_synctex(
     config: AppConfig,
-) -> tuple[dict[tuple[str, int], dict[int, list[float]]], float, float]:
+) -> tuple[dict[tuple[str, int], dict[int, list[float]]], float, float, Words]:
     """Where each source line landed, read straight from the ``.synctex.gz``.
 
     Returns two things in PDF points from the top-left of the page — the same
@@ -157,10 +166,12 @@ def _parse_synctex(
       glyph, so a centred equation or an indented one-liner still gets a bar in
       the margin instead of one floating over the middle of the page.
     * ``right_margin`` — the right edge of the text column, found the same way.
+    * ``words`` — for each source line, on each rendered line it reached, where
+      its words start and end (see :data:`Words`).
     """
     data = synctex_data_file(config.pdf_path)
     if data is None:
-        return {}, 0.0, 0.0
+        return {}, 0.0, 0.0, {}
 
     tag_files: dict[int, str | None] = {}
     unit = 1.0
@@ -168,6 +179,7 @@ def _parse_synctex(
     x_offset_sp = 0.0
     y_offset_sp = 0.0
     index: dict[tuple[str, int], dict[int, list[float]]] = {}
+    words: Words = {}
     left_votes: dict[int, Counter[int]] = {}
     right_votes: Counter[int] = Counter()
     page = 0
@@ -227,7 +239,15 @@ def _parse_synctex(
             if file is None:
                 continue
 
+            x = (float(glyph.group(3)) + x_offset_sp) * scale
             y = (float(glyph.group(4)) + y_offset_sp) * scale
+            runs = words.setdefault((file, int(glyph.group(2))), {})
+            run = runs.get((page, round(y, 2)))
+            if run is None:
+                runs[(page, round(y, 2))] = [x, x]
+            else:
+                run[0] = min(run[0], x)
+                run[1] = max(run[1], x)
             key = (file, int(glyph.group(2)))
             pages = index.setdefault(key, {})
             slot = pages.get(page)
@@ -246,7 +266,7 @@ def _parse_synctex(
         total.update(votes)
     left_margin = float(total.most_common(1)[0][0]) if total else 0.0
     right_margin = float(right_votes.most_common(1)[0][0]) if right_votes else 0.0
-    return index, left_margin, right_margin
+    return index, left_margin, right_margin, words
 
 
 def _header_number(line: str, default: float) -> float:
@@ -272,9 +292,11 @@ def _map_file(
     line_index: dict[tuple[str, int], dict[int, list[float]]],
     left_margin: float,
     right_margin: float,
+    words: Words | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Every paragraph bar one file contributes, one per page it touches, and
-    the annotations it carries, each placed beside the paragraph it belongs to."""
+    the annotations it carries, each placed beside the paragraph it belongs to.
+    A source also carries where the sentence it backs is, to be underlined."""
     text = path.read_text(encoding="utf-8", errors="replace")
     body_start = body_start_line(text)
     ranges = paragraph_ranges(text)
@@ -339,7 +361,13 @@ def _map_file(
             if ref is None:
                 continue
             item["source"] = ref.as_dict()
-            item["backs"] = _backed_line(lines, note.end)
+            backed, item["backs"] = _backed_line(lines, note.end)
+            if backed:
+                item["sentence"] = backed
+                item["sentenceText"] = lines[backed - 1].strip()
+                segments = _segments((words or {}).get((relative, backed)), right_margin)
+                if segments:
+                    item["segments"] = segments
         items.append((note.line, note.end, note.place, item))
     for choice in proposals_in(text, annotations):
         item = {"kind": PROPOSE, "place": "proposal", **choice.as_dict()}
@@ -387,17 +415,47 @@ def _map_file(
     return bars, notes
 
 
-def _backed_line(lines: list[str], end: int) -> str:
+def _backed_line(lines: list[str], end: int) -> tuple[int, str]:
     """The first line of text below an annotation ending at line ``end``: with
-    one sentence per line, the sentence it is about. Shortened, as written."""
-    for line in lines[end:]:
+    one sentence per line, the sentence it is about. Its number, and its text
+    shortened, as written; ``(0, "")`` when the paragraph ends first."""
+    for number in range(end + 1, len(lines) + 1):
+        line = lines[number - 1]
         if not line.strip():
-            return ""  # the paragraph ended first
+            return 0, ""
         if is_annotation_line(line):
             continue
         text = " ".join(line.split())
-        return text if len(text) <= _BACKS_CHARS else text[: _BACKS_CHARS - 1].rstrip() + "…"
-    return ""
+        short = text if len(text) <= _BACKS_CHARS else text[: _BACKS_CHARS - 1].rstrip() + "…"
+        return number, short
+    return 0, ""
+
+
+def _segments(
+    runs: dict[tuple[int, float], list[float]] | None, right_margin: float
+) -> list[dict[str, Any]]:
+    """Roughly where a source line is on the page: one segment per rendered
+    line it reaches, from its first word's start to its last word's start, or
+    to the margin on a line it runs on from. The page finds the sentence's own
+    words in its text near here (``sentenceText``) and underlines those; this is
+    what it underlines when it cannot."""
+    if not runs:
+        return []
+    keys = sorted(runs)
+    segments = []
+    for i, (page, base) in enumerate(keys):
+        first_word, last_word = runs[(page, base)]
+        final = i == len(keys) - 1
+        segments.append(
+            {
+                "page": page,
+                "top": round(base - _ASCENT_PT, 2),
+                "base": round(base, 2),
+                "x0": round(first_word, 2),
+                "x1": round(last_word + _LAST_WORD_PT if final else right_margin, 2),
+            }
+        )
+    return segments
 
 
 def _signature(config: AppConfig, sources: list[Path]) -> str:
@@ -444,7 +502,7 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
     if cached is not None and cached[0] == signature:
         return cached[1]
 
-    line_index, left_margin, right_margin = _parse_synctex(config)
+    line_index, left_margin, right_margin, words = _parse_synctex(config)
     # Only files that actually rendered are worth reading back for paragraphs.
     present = {file for file, _line in line_index}
 
@@ -454,7 +512,9 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
         relative = to_project_relative(path, config.root)
         if relative not in present:
             continue
-        file_bars, file_notes = _map_file(path, relative, line_index, left_margin, right_margin)
+        file_bars, file_notes = _map_file(
+            path, relative, line_index, left_margin, right_margin, words
+        )
         bars.extend(file_bars)
         notes.extend(file_notes)
 

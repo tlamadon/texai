@@ -318,8 +318,22 @@ button.ghost { background: transparent; }
   margin-left: 0.5px;
 }
 
-/* The list a source icon opens: what each source links to, its quote or note,
-   and the sentence it backs. In the scroll area rather than on a page, so the
+/* A sourced sentence: a faint dotted underline, from its first word to its
+   last; solid, with a light wash over the words, while its mark is pointed at
+   or its list is open. Never in the way of a click or a selection. */
+.note-layer .source-underline {
+  position: absolute;
+  pointer-events: none;
+  border-bottom: 1px dotted rgba(31, 111, 235, 0.45);
+  border-radius: 1px;
+}
+.note-layer .source-underline.hot {
+  border-bottom: 1.5px solid rgba(31, 111, 235, 0.9);
+  background: rgba(31, 111, 235, 0.08);
+}
+
+/* The list a sentence's mark opens, when it has several sources: what each
+   links to, and its quote or note. In the scroll area rather than on a page, so the
    page's own re-renders leave it be. */
 .source-popup {
   position: absolute;

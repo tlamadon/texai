@@ -2374,6 +2374,38 @@ if (canLocate) {
   check('what KaTeX cannot parse stays as written', typeset.broken === '$\\notamacro{x}$', typeset.broken);
 }
 
+// ---------------------------------------------------------------- sources
+
+// A sourced sentence is found in the page's text by the words its LaTeX
+// renders as, with gaps where it renders math or a reference instead.
+{
+  const words = await cdp.json(`(async () => {
+    const { texTokens, stopsAt, GAP } = await import('/static/annotations.js');
+    const show = (tex) => texTokens(tex).map((t) => (t === GAP ? '|' : t)).join(' ');
+    const raw = (text) => [...text].map((ch) => [{}, 0, ch]);
+    const stops = (text) => raw(text).map((_, i, all) => (stopsAt(all, i) ? i : -1)).filter((i) => i >= 0);
+    return {
+      plain: show('A \\\\emph{really} large effect~\\\\cite{card2018}.'),
+      math: show('Our estimate of $\\\\hat{\\\\alpha} = 0.34$ sits inside that band.'),
+      refs: show('As Table~\\\\ref{tab:main}\\\\label{x} shows, it is \\\\%5. % a comment'),
+      accents: show("Erd\\\\H{o}s and G\\\\'{e}rard's view"),
+      citeStop: stops('large (Card et al., 2018). Next'),
+      bracketStop: stops('points [?]. 5.2 Transition'),
+      noStop: stops('Card et al. (2018) find'),
+    };
+  })()`);
+  check('a sentence is the words it renders as', words.plain === 'a really large effect |', words.plain);
+  check('math and references are gaps, not words',
+    words.math === 'our estimate of | sits inside that band' && words.refs === 'as table | shows it is 5',
+    `${words.math} / ${words.refs}`);
+  check("accents written as LaTeX fold like the PDF's", words.accents === 'erdos and gerards view',
+    words.accents);
+  check('a citation\'s "al." is not the end of the sentence',
+    JSON.stringify(words.citeStop) === '[25]' && JSON.stringify(words.bracketStop) === '[10]'
+      && JSON.stringify(words.noStop) === '[]',
+    JSON.stringify([words.citeStop, words.bracketStop, words.noStop]));
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

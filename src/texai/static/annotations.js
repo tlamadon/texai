@@ -13,12 +13,14 @@
 // too, saying how many versions of the line are on offer; clicking it opens them
 // in the Peek tab, to pick from.
 //
-// A `%@src` is provenance rather than a note. A paragraph's sources share one
-// small icon in the right margin, level with the first sentence they back, with
-// a count when there are several. Clicking it lists them in a popup — what each
-// links to, its quote or note, and the sentence it backs — and clicking one of
-// those peeks at it; Alt-click edits its annotation instead. Sources have their
-// own toggle, since a well-sourced paper carries dozens.
+// A `%@src` is provenance rather than a note. The sentence it backs gets a faint
+// dotted underline, from where the build says it starts to where it ends, and a
+// small mark in the right margin, level with the line it ends on; sentences
+// ending on one line put their marks side by side. Pointing at a mark lights up
+// its sentence. Clicking it opens the source in the Peek tab, or, for a sentence
+// with several, lists them in a popup — what each links to, its quote or note —
+// to pick from; Alt-click edits the annotation instead. Sources have their own
+// toggle, since a well-sourced paper carries dozens.
 //
 // Like the bars, they live in an overlay every page render wipes, so `draw()`
 // reruns cheaply on any scroll or zoom; the data arrives with the bars.
@@ -98,6 +100,215 @@ export function describeSource(source) {
   return lines.join('\n');
 }
 
+
+/* ---------------- finding a sentence in the page's text ---------------- */
+
+// What survives any PDF's text extraction: letters and digits, lower-cased,
+// accents and ligatures unfolded. The same folding as peek.js and papers.py.
+const foldChar = (ch) =>
+  ch
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+
+export const GAP = '\u0000'; // where the source has math or a reference: rendered, but not as these words
+
+/**
+ * A sentence's LaTeX as the words it renders as, folded, with a GAP wherever
+ * it renders something its source does not spell out: math, a citation, a
+ * reference. Other commands vanish and leave their arguments.
+ */
+export function texTokens(tex) {
+  let text = tex.replace(/(^|[^\\])%.*$/, '$1');
+  text = text.replace(/\$\$[\s\S]*?\$\$|\$[^$]*\$|\\\([\s\S]*?\\\)/g, ` ${GAP} `);
+  text = text.replace(/\\label\*?\{[^}]*\}/g, ' ');
+  text = text.replace(
+    /\\(?:[a-zA-Z]*cite[a-zA-Z]*|ref|eqref|autoref|cref|Cref|pageref|footnote|footnotemark)\*?(?:\[[^\]]*\])*\{[^}]*\}/g,
+    ` ${GAP} `
+  );
+  // A command on an argument leaves the argument, joined to its word (an
+  // accent: Erd\H{o}s); one on its own is a break between words, as is a
+  // control symbol, unless it is an accent (G\'erard).
+  text = text.replace(/\\[a-zA-Z]+\*?(?=\{)/g, '').replace(/\\[a-zA-Z]+\*?/g, ' ');
+  text = text.replace(/\\['`^"~=.]/g, '').replace(/\\./g, ' ');
+  text = text.replace(/[{}]/g, '').replace(/~/g, ' ');
+  const tokens = [];
+  for (const word of text.split(/\s+/)) {
+    if (!word) continue;
+    if (word === GAP) {
+      if (tokens[tokens.length - 1] !== GAP) tokens.push(GAP);
+      continue;
+    }
+    const folded = [...word].map(foldChar).join('');
+    if (folded) tokens.push(folded);
+  }
+  return tokens;
+}
+
+const textIndexes = new WeakMap(); // text layer -> its index
+
+/** A page's drawn text, folded, with where each folded character came from. */
+function textIndex(entry) {
+  const layer = entry.el.querySelector('.textLayer');
+  if (!layer || !layer.querySelector('span')) return null;
+  const cached = textIndexes.get(layer);
+  if (cached) return cached;
+  const raw = []; // [text node, offset, character]
+  let folded = '';
+  const toRaw = []; // folded index -> raw index
+  const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent;
+    for (let i = 0; i < text.length; i += 1) {
+      raw.push([node, i, text[i]]);
+      for (const c of foldChar(text[i])) {
+        folded += c;
+        toRaw.push(raw.length - 1);
+      }
+    }
+    raw.push([null, 0, ' ']); // between runs of text, as a space
+  }
+  const index = { raw, folded, toRaw };
+  textIndexes.set(layer, index);
+  return index;
+}
+
+/**
+ * Whether a sentence stops at raw character `i`: a full stop, question or
+ * exclamation mark, then a space or the end of the text, then a capital, a
+ * digit (a section number) or nothing. So "et al., 2018)." stops at its last full stop and not at "al.",
+ * and "Card et al. (2018)" does not stop at all.
+ */
+export function stopsAt(raw, i) {
+  if (!/[.?!]/.test(raw[i]?.[2] || '')) return false;
+  const next = raw[i + 1];
+  if (next && next[0] && !/\s/.test(next[2])) return false;
+  for (let j = i + 1; j < raw.length && j <= i + 4; j += 1) {
+    const ch = raw[j][2];
+    if (/\s/.test(ch) || !raw[j][0]) continue;
+    return /[\p{Lu}\p{N}]/u.test(ch);
+  }
+  return true;
+}
+
+// How far apart, in letters, two runs of a sentence's words may be when its
+// source has something between them that renders as other text.
+const MAX_GAP = 80;
+// How far past its last word a sentence ending in math or a citation may run
+// to reach its full stop.
+const MAX_TAIL = 160;
+
+/**
+ * Find the sentence's words, run by run, in order, in the page's text; of the
+ * places it is found, take the one nearest where the build put it. Returns
+ * its lines as rectangles in PDF points.
+ */
+function matchSentence(index, tokens, entry, viewer, hints) {
+  const runs = [];
+  let current = '';
+  for (const token of tokens) {
+    if (token === GAP) {
+      if (current) runs.push(current);
+      current = '';
+      runs.push(GAP);
+    } else {
+      current += token;
+    }
+  }
+  if (current) runs.push(current);
+  const words = runs.filter((run) => run !== GAP);
+  if (!words.length || words.join('').length < 3) return null;
+
+  const { folded, toRaw, raw } = index;
+  const matches = [];
+  for (let at = folded.indexOf(words[0]); at !== -1; at = folded.indexOf(words[0], at + 1)) {
+    let position = at + words[0].length;
+    let ok = true;
+    let gap = false;
+    for (const run of runs.slice(runs.indexOf(words[0]) + 1)) {
+      if (run === GAP) {
+        gap = true;
+        continue;
+      }
+      const next = folded.indexOf(run, position);
+      if (next === -1 || next - position > (gap ? MAX_GAP : 0)) {
+        ok = false;
+        break;
+      }
+      position = next + run.length;
+      gap = false;
+    }
+    if (ok) matches.push([at, position - 1]);
+    if (matches.length > 20) break;
+  }
+  if (!matches.length) return null;
+
+  // Nearest the build's guess: its first line, by height, then along.
+  const hint = hints[0];
+  const distance = ([start]) => {
+    const [node, offset] = raw[toRaw[start]];
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    const box = range.getBoundingClientRect();
+    const point = viewer.clientPointToPdf(entry, box.left, box.top + box.height / 2);
+    return Math.abs(point.y - (hint.base - 3)) * 4 + Math.abs(point.x - hint.x0);
+  };
+  matches.sort((a, b) => distance(a) - distance(b));
+  let [start, end] = matches[0];
+  start = toRaw[start];
+  end = toRaw[end];
+
+  // Its edges, as the page has them: back over math or a citation it opens
+  // with, to where the sentence before it stopped; forward over the
+  // punctuation its last word carries, or the math or citation it ends with,
+  // to its full stop.
+  const leadsWithGap = tokens[0] === GAP;
+  const endsWithGap = tokens[tokens.length - 1] === GAP;
+  if (leadsWithGap) {
+    let i = start - 1;
+    while (i > 0 && start - i < MAX_TAIL && !stopsAt(raw, i)) i -= 1;
+    if (stopsAt(raw, i)) {
+      i += 1;
+      while (i < start && (!raw[i][0] || /\s/.test(raw[i][2]))) i += 1;
+      start = i;
+    }
+  }
+  if (endsWithGap) {
+    let i = end + 1;
+    while (i < raw.length - 1 && i - end < MAX_TAIL && !stopsAt(raw, i)) i += 1;
+    if (stopsAt(raw, i)) end = i;
+  } else {
+    while (end + 1 < raw.length && raw[end + 1][0] && /\S/.test(raw[end + 1][2])) end += 1;
+  }
+
+  // The characters' boxes, gathered into one rectangle per rendered line.
+  const lines = [];
+  for (let i = start; i <= end; i += 1) {
+    const [node, offset, ch] = raw[i];
+    if (!node || /\s/.test(ch)) continue;
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    const box = range.getBoundingClientRect();
+    if (!box.width || !box.height) continue;
+    const middle = box.top + box.height / 2;
+    const line = lines.find((l) => Math.abs(l.middle - middle) < box.height / 2);
+    if (line) {
+      line.left = Math.min(line.left, box.left);
+      line.right = Math.max(line.right, box.right);
+      line.top = Math.min(line.top, box.top);
+      line.bottom = Math.max(line.bottom, box.bottom);
+    } else {
+      lines.push({ middle, left: box.left, right: box.right, top: box.top, bottom: box.bottom });
+    }
+  }
+  if (!lines.length) return null;
+  lines.sort((a, b) => a.top - b.top);
+  return lines.map((line) => viewer.clientRectToPdf(entry, line));
+}
+
 export class AnnotationLayer {
   constructor({ viewer, button, sourcesButton }) {
     this.viewer = viewer;
@@ -127,6 +338,7 @@ export class AnnotationLayer {
 
   set(items) {
     const all = items || [];
+    this._matches = new Map(); // sentence@page -> its lines in PDF points, or null
     this.items = all.filter((item) => item.place !== 'marker');
     this.sources = all.filter((item) => item.place === 'marker' && item.source);
     this._reflect();
@@ -349,55 +561,145 @@ export class AnnotationLayer {
     return slip.entry;
   }
 
-  /** A paragraph's sources, by paragraph and page, in source order. */
+  /** Sources by the sentence they back, in source order, each group placed
+   * where its sentence ends: its last underline segment, or failing that the
+   * line the annotation was placed beside. */
   _sourceGroups() {
     const groups = new Map();
     for (const item of this.sources) {
-      const key = `${item.file}#${item.index}#${item.page}`;
+      const key = `${item.file}#${item.sentence || `a${item.line}`}`;
       const group = groups.get(key);
       if (group) group.items.push(item);
       else groups.set(key, { key, items: [item] });
     }
     for (const group of groups.values()) {
       group.items.sort((a, b) => a.line - b.line);
-      // Level with the first sentence they back on this page.
-      group.anchor = group.items.reduce((top, item) => (item.y < top.y ? item : top));
+      const [first] = group.items;
+      group.segments = first.segments || [];
+      const last = group.segments[group.segments.length - 1];
+      group.anchor = last ? { ...first, page: last.page, y: last.top } : first;
     }
     return groups;
   }
 
-  /** One icon per paragraph, just right of the text, with a count if several. */
+  /** Underlines for each sourced sentence, and a mark in the margin for each. */
   _drawSources() {
     const groups = this._sourceGroups();
+    const taken = new Map(); // page#top -> marks already on that line
     for (const group of groups.values()) {
-      const placed = this._place(group.anchor);
-      if (!placed) continue;
-      const { entry, rect } = placed;
+      const lines = this._underline(group);
+      // Level with the line the sentence ends on: the last underline drawn,
+      // or failing that where the build placed the annotation.
+      const last = lines[lines.length - 1];
+      const entry = last ? last.entry : this.viewer.pageEntry(group.anchor.page);
+      if (!entry?.viewport) continue;
+      const column = this.viewer.pdfRectToPageRect(entry, {
+        x: group.anchor.x,
+        y: 0,
+        width: Math.max(group.anchor.right - group.anchor.x, 1),
+        height: 1,
+      });
+      const top = last ? last.rect.top : this._place(group.anchor)?.rect.top;
+      if (top == null) continue;
+      const slot = `${entry.num}#${Math.round(top)}`;
+      const nth = taken.get(slot) || 0;
+      taken.set(slot, nth + 1);
+
       const count = group.items.length;
+      const [only] = group.items;
       const node = el('button', 'note-source');
       node.type = 'button';
       node.dataset.key = group.key;
-      node.append(svgIcon('sources'));
+      node.append(svgIcon(count > 1 ? 'sources' : only.source.type));
       if (count > 1) node.append(el('span', 'note-source-count', String(count)));
-      node.title = `${count} source${count > 1 ? 's' : ''} for this paragraph \u2014 click to list`;
-      node.style.left = `${rect.left + rect.width + 2}px`;
-      node.style.top = `${rect.top + 1}px`;
+      node.title =
+        count > 1
+          ? `${count} sources for this sentence \u2014 click to list`
+          : `${describeSource(only.source)}\nClick to open \u00b7 Alt-click to edit`;
+      node.style.left = `${column.left + column.width + 2 + nth * (SOURCE_GUTTER + 2)}px`;
+      node.style.top = `${top + 1}px`;
       node.classList.toggle('open', this.popup?.key === group.key);
+      // Pointing at the mark shows which words it is about.
+      const nodes = lines.map((line) => line.node);
+      node.addEventListener('mouseenter', () => nodes.forEach((line) => line.classList.add('hot')));
+      node.addEventListener('mouseleave', () => {
+        if (this.popup?.key !== group.key) nodes.forEach((line) => line.classList.remove('hot'));
+      });
       node.addEventListener('click', (event) => {
         event.stopPropagation();
+        if (count === 1) {
+          if (event.altKey) this.onEdit?.(only.file, only.line);
+          else this.onPeek?.(only);
+          return;
+        }
         if (this.popup?.key === group.key) this.closePopup();
         else this._openPopup(group, node, entry);
       });
       this._layerFor(entry).append(node);
     }
 
-    // The open list follows its icon through zooms; it goes if its paragraph did.
+    // The open list follows its mark through zooms; it goes if its sentence did.
     if (this.popup) {
       const group = groups.get(this.popup.key);
       const icon = this._iconFor(this.popup.key);
       if (!group) this.closePopup();
       else if (icon) this._positionPopup(icon.node, icon.entry);
     }
+  }
+
+  /**
+   * A sentence's underline, one piece per rendered line: its own words, found
+   * in the page's text, when they can be; else where the build says it is.
+   */
+  _underline(group) {
+    const lines = [];
+    const pages = [...new Set(group.segments.map((segment) => segment.page))];
+    for (const number of pages) {
+      const entry = this.viewer.pageEntry(number);
+      if (!entry?.viewport) continue;
+      const hints = group.segments.filter((segment) => segment.page === number);
+      const found = this._sentenceOn(group, entry, hints);
+      const rects = found
+        ? found.map((r) => this.viewer.pdfRectToPageRect(entry, r))
+        : hints.map((segment) =>
+            this.viewer.pdfRectToPageRect(entry, {
+              x: segment.x0,
+              y: segment.top,
+              width: Math.max(segment.x1 - segment.x0, 1),
+              height: segment.base - segment.top + 2.5,
+            })
+          );
+      for (const rect of rects) {
+        const node = el('div', 'source-underline');
+        node.dataset.key = group.key;
+        node.style.left = `${rect.left}px`;
+        node.style.top = `${rect.top}px`;
+        node.style.width = `${rect.width}px`;
+        node.style.height = `${rect.height}px`;
+        if (this.popup?.key === group.key) node.classList.add('hot');
+        this._layerFor(entry).append(node);
+        lines.push({ entry, rect, node });
+      }
+    }
+    return lines;
+  }
+
+  /**
+   * Where a sentence's own words are on a page, as one rectangle per rendered
+   * line in PDF points; `null` when they cannot be found (or the page's text is
+   * not drawn yet). Found once per page and remembered, so zooming is free.
+   */
+  _sentenceOn(group, entry, hints) {
+    const id = `${group.key}@${entry.num}`;
+    if (this._matches.has(id)) return this._matches.get(id);
+    const index = textIndex(entry);
+    if (!index) return null; // try again when the text is there
+    const tokens = texTokens(group.items[0].sentenceText || '');
+    const found = tokens.some((t) => t !== GAP)
+      ? matchSentence(index, tokens, entry, this.viewer, hints)
+      : null;
+    this._matches.set(id, found);
+    return found;
   }
 
   _iconFor(key) {
@@ -430,6 +732,9 @@ export class AnnotationLayer {
     this.viewer.container.append(node);
     this.popup = { key: group.key, node };
     icon.classList.add('open');
+    document
+      .querySelectorAll(`.source-underline[data-key="${CSS.escape(group.key)}"]`)
+      .forEach((line) => line.classList.add('hot'));
     this._positionPopup(icon, entry);
     document.addEventListener('mousedown', this._closeOnOutside);
     document.addEventListener('keydown', this._closeOnEscape);
@@ -456,12 +761,13 @@ export class AnnotationLayer {
     if (!this.popup) return;
     this.popup.node.remove();
     document.querySelectorAll('.note-source.open').forEach((icon) => icon.classList.remove('open'));
+    document.querySelectorAll('.source-underline.hot').forEach((line) => line.classList.remove('hot'));
     this.popup = null;
     document.removeEventListener('mousedown', this._closeOnOutside);
     document.removeEventListener('keydown', this._closeOnEscape);
   }
 
-  /** One source in the list: what it links to, what it says, what it backs. */
+  /** One source in the list: what it links to, and what it says. */
   _sourceEntry(item) {
     const { source, bib } = item;
     const row = el('button', `source-entry s-${source.type}`);
@@ -487,7 +793,6 @@ export class AnnotationLayer {
     body.append(el('div', 'source-entry-meta', meta.join(' \u00b7 ')));
     if (source.quote) body.append(el('div', 'source-entry-quote', `\u201c${source.quote}\u201d`));
     if (source.note) body.append(el('div', 'source-entry-note', source.note));
-    if (item.backs) body.append(el('div', 'source-entry-backs', `\u21b3 ${item.backs}`));
     row.append(body);
 
     row.addEventListener('click', (event) => {

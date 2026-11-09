@@ -278,3 +278,24 @@ def test_bib_entries_reads_only_the_keys_asked_for(config):
         }
     }
     assert bib_entries(config, set()) == {}
+
+
+def test_a_source_says_where_its_sentence_is_for_the_page_to_underline(tmp_path):
+    from texai.paragraphs import _segments
+
+    path = tmp_path / "s.tex"
+    path.write_text(
+        "Before.\n"  # 1
+        "%@src @a2020\n"  # 2
+        "A sentence that wraps onto a second rendered line.\n"  # 3
+    )
+    index = {("s.tex", 1): {1: [100.0, 100.0]}, ("s.tex", 3): {1: [100.0, 112.0]}}
+    words = {("s.tex", 3): {(1, 100.0): [150.0, 500.0], (1, 112.0): [72.0, 200.0]}}
+    _, (item,) = _map_file(path, "s.tex", index, 72.0, 540.0, words)
+    assert item["sentence"] == 3
+    assert item["sentenceText"] == "A sentence that wraps onto a second rendered line."
+    first, last = item["segments"]
+    # A line it runs on from is full; the last ends a word past its last word's start.
+    assert (first["x0"], first["x1"], first["base"]) == (150.0, 540.0, 100.0)
+    assert (last["x0"], last["x1"]) == (72.0, 220.0)
+    assert _segments(None, 540.0) == []

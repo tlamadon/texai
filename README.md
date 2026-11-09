@@ -617,7 +617,7 @@ We find a value close to one.
 |---|---|---|
 | `%@intent` | a few words naming what the paragraph is *for* | left margin, beside the paragraph's colour bar, in its colour |
 | `%@comment`, `%@todo`, `%@question`, any other word | a note on the line below | a slip in the right margin, clamped to three lines until hovered |
-| `%@src` | what backs the sentence below | one icon per paragraph, listing its sources (see *Provenance*) |
+| `%@src` | what backs the sentence below | a dotted underline on the sentence, and a mark in the margin (see *Provenance*) |
 | `%@propose` | a version of the line below | a blue slip saying how many versions there are (see *Proposals*) |
 
 **Notes, comments and todos**
@@ -731,18 +731,23 @@ After the target, in any order:
 - `sha:` gives the first hex digits of the PDF's SHA-256.
 - `-- ...` is a note.
 
-A paragraph's sources share one small grey icon in the right margin, level
-with the first sentence they back, with a count when there are several. Click
-it for the list. Each entry shows:
+Each sourced sentence gets a faint dotted underline from its first word to its
+last, and a small mark in the right margin, level with the line it ends on.
 
-- what the source links to: the paper's title and authors from your `.bib`, a
-  file and its lines, or a label in this paper;
-- its quote or note;
-- the start of the sentence it backs.
-
-Click an entry to open that source in the **Peek** tab beside the page;
-Alt-click opens its annotation in the editor. **Sources** in the toolbar hides
-and shows the icons.
+- **How the underline is placed:** SyncTeX only roughly says which words a
+  source line produced, so the build gives the rough place, and the page finds
+  the sentence's own words in its text there.
+  - Math and references in the sentence are matched as gaps.
+  - A trailing citation runs on to the sentence's full stop.
+  - Where the words cannot be found, the underline falls back to the rough
+    place.
+- **Pointing at a mark** turns its sentence's underline solid and tints it.
+- **Clicking a mark** opens the source in the **Peek** tab beside the page, or,
+  for a sentence with several sources, lists them first. Each entry in the list
+  shows what it links to (the paper's title and authors from your `.bib`, a
+  file and its lines, or a label in this paper) and its quote or note.
+- **Alt-click** opens the annotation in the editor.
+- **Sources** in the toolbar hides and shows the underlines and marks.
 
 - **A paper or a project PDF** opens in a viewer of its own. The page you are
   reading stays where it was.
