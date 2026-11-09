@@ -2312,6 +2312,68 @@ if (canLocate) {
   check('opening a source brings the panel back', reopened.pane > 200, `${reopened.pane}px`);
 }
 
+// ---------------------------------------------------------------- Markdown
+
+// The agent writes Markdown; the chat renders it, without mangling the LaTeX
+// replies are full of and without ever parsing a reply as HTML.
+{
+  const md = await cdp.json(`(async () => {
+    const { renderMarkdown } = await import('/static/markdown.js');
+    const html = (t, opts) => {
+      const d = document.createElement('div');
+      d.append(renderMarkdown(t, opts));
+      return d.innerHTML;
+    };
+    return {
+      list: html('Notes:\\n- **A:** one\\n- two\\n  - nested\\n\\nAfter.'),
+      latex: html('$x_1$ and $y_2$, $K^*$ and K^*, snake_case and *real* emphasis'),
+      code: html('see \\x60sections/model.tex:12\\x60 and \\x60notes.md:3\\x60', { onRef: () => {} }),
+      unsafe: html('<img src=x onerror=alert(1)> [x](javascript:alert(1))'),
+    };
+  })()`);
+  check('Markdown lists render as lists, nested ones inside their item',
+    md.list === '<p>Notes:</p><ul class="md-list"><li><strong>A:</strong> one</li><li>two'
+      + '<ul class="md-list"><li>nested</li></ul></li></ul><p>After.</p>', md.list);
+  check('LaTeX in a reply is never taken for emphasis',
+    (md.latex.match(/<em>/g) || []).length === 1 && md.latex.includes('<em>real</em>')
+      && md.latex.includes('K^*, snake_case'), md.latex);
+  check('its math is picked out for typesetting', (md.latex.match(/class="md-math"/g) || []).length === 3,
+    md.latex);
+  check('a .tex reference in code becomes a link, anything else stays code',
+    md.code.includes('class="md-inline file ref"') && md.code.includes('<code class="md-inline">notes.md:3</code>'),
+    md.code);
+  check('a reply is never parsed as HTML', !md.unsafe.includes('<img') && !md.unsafe.includes('<a '), md.unsafe);
+
+  // Typeset, in the page: KaTeX loads on first use, with the paper's macros.
+  const typeset = await cdp.json(`(async () => {
+    const { renderMarkdown } = await import('/static/markdown.js');
+    const box = document.createElement('div');
+    box.className = 'agent-text';
+    document.body.append(box);
+    box.append(renderMarkdown([
+      'Inline $\\\\alpha + \\\\beta$ costs $5 and $10.',
+      '$$',
+      'Y_t = A_t K_t^{\\\\alpha}',
+      '$$',
+      'Broken $\\\\notamacro{x}$ stays.',
+    ].join('\\n')));
+    for (let i = 0; i < 50 && !box.querySelector('.katex'); i++) await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
+    const out = {
+      inline: box.querySelectorAll('.md-math:not(.md-math-block) .katex').length,
+      display: box.querySelectorAll('.md-math-block .katex-display').length,
+      money: box.textContent.includes('costs $5 and $10'),
+      broken: [...box.querySelectorAll('.md-math')].find((n) => !n.classList.contains('md-math-done'))?.textContent,
+    };
+    box.remove();
+    return out;
+  })()`);
+  check('math is typeset with KaTeX, inline and displayed', typeset.inline === 1 && typeset.display === 1,
+    JSON.stringify(typeset));
+  check('a dollar amount is not math', typeset.money, JSON.stringify(typeset));
+  check('what KaTeX cannot parse stays as written', typeset.broken === '$\\notamacro{x}$', typeset.broken);
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

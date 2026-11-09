@@ -44,6 +44,7 @@ from .models import (
     SourceMerge,
     SourceWrite,
 )
+from .macros import document_macros
 from .navigate import LocateError, locate, locate_forward, locate_range
 from .paragraphs import paragraph_bars
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
@@ -500,6 +501,12 @@ def create_app(
             return await asyncio.to_thread(locate, config, file, line)
         except LocateError as exc:
             raise _error(404, "not_locatable", str(exc)) from exc
+
+    @app.get("/api/macros")
+    async def macros() -> dict[str, Any]:
+        """The paper's simple macros, so math in the agent's replies renders
+        with the paper's own notation (see texai.macros)."""
+        return {"macros": await asyncio.to_thread(document_macros, config)}
 
     @app.get("/api/paragraphs")
     async def paragraphs() -> dict[str, Any]:

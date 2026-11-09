@@ -6,6 +6,7 @@
 // cannot show something the chat quietly dropped.
 
 import { getJSON, postJSON } from './api.js';
+import { renderMarkdown } from './markdown.js';
 import { markChosen, renderOffer } from './options.js';
 import { ProgressBar, progressLabels } from './progress.js';
 import { SessionMenu, pastConversation } from './sessions.js';
@@ -586,7 +587,7 @@ export class ChatPanel {
     if (!card) return;
 
     if (entry.kind === 'text') {
-      if (entry.text.trim()) card.body.append(el('div', 'agent-text', entry.text));
+      if (entry.text.trim()) card.body.append(this._agentText(entry.text));
     } else if (entry.kind === 'tool_use') {
       this._activity(card, entry.verb, entry.text, entry.isError ? 'bad' : '');
     } else if (entry.kind === 'build') {
@@ -609,7 +610,7 @@ export class ChatPanel {
 
   _renderCompletedTurn(turn) {
     const card = this._cardFor(turn);
-    if (turn.agentText) card.body.append(el('div', 'agent-text', turn.agentText));
+    if (turn.agentText) card.body.append(this._agentText(turn.agentText));
     this._finishCard(turn);
   }
 
@@ -624,6 +625,13 @@ export class ChatPanel {
     card.badge.className = `badge ${label}`;
     card.badge.textContent = label;
     card.badge.title = reviewed ? `applied, then ${turn.review}` : '';
+  }
+
+  /** What the agent said, rendered from its Markdown, with source references live. */
+  _agentText(text) {
+    const node = el('div', 'agent-text');
+    node.append(renderMarkdown(text, { onRef: (file, line) => this.onGoTo?.(file, line) }));
+    return node;
   }
 
   /** A build began or ended: move the running card's bar along. */

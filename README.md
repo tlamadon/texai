@@ -909,7 +909,7 @@ the pipeline before committing to a version number.
 
 ## Third-party code
 
-`src/texai/static/vendor/` holds pinned copies of two libraries, vendored so
+`src/texai/static/vendor/` holds pinned copies of three libraries, vendored so
 nothing is fetched from a CDN at runtime:
 
 - `pdfjs/` — [PDF.js](https://github.com/mozilla/pdf.js) 5.4.149 (Apache-2.0),
@@ -917,6 +917,9 @@ nothing is fetched from a CDN at runtime:
 - `codemirror/` — [CodeMirror](https://codemirror.net/5/) 5.65.21 (MIT), which
   is the Source tab. Version 5 rather than 6 because it ships plain UMD files
   and this project has no build step.
+- `katex/` — [KaTeX](https://katex.org) 0.19.1 (MIT), which typesets the math
+  in the agent's replies. Its ES module build, stylesheet and woff2 fonts only;
+  the module loads the first time a reply has math.
 
 Each licence travels with its directory. Everything else here is MIT — see
 `LICENSE`.
@@ -960,7 +963,7 @@ src/texai/
   git.py         root-scoped status, commit, pull --rebase, push
   commitmsg.py   the agent's one-shot commit message, with a fallback
   server.py      FastAPI routes
-  static/        vanilla two-panel UI + vendored PDF.js and CodeMirror
+  static/        vanilla two-panel UI + vendored PDF.js, CodeMirror and KaTeX
                  (marks.js draws the inline change markers,
                   history.js is the back/forward list of places,
                   editor.js is the Source tab, outline.js parses and draws

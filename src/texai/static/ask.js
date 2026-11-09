@@ -26,6 +26,7 @@
 // have moved, which is why the highlight goes once the answer is in.
 
 import { postJSON } from './api.js';
+import { renderMarkdown } from './markdown.js';
 import { markChosen, renderOffer } from './options.js';
 import { ProgressBar, progressLabels } from './progress.js';
 import { showToast } from './toast.js';
@@ -423,7 +424,7 @@ export class PageAsk {
     // ("I'll read the passage first").
     const text = a.lastText || (turn.agentText || '').trim();
     a.body.hidden = !text;
-    a.body.textContent = text;
+    a.body.replaceChildren(renderMarkdown(text));
     this._setState('done');
     this.place();
   }

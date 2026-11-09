@@ -402,7 +402,46 @@ kbd {
 
 .turn-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 
-.agent-text { white-space: pre-wrap; }
+.agent-text { overflow-wrap: anywhere; }
+
+/* The agent's Markdown (see markdown.js), in the chat and the page's ask box. */
+:is(.agent-text, .ask-reply) > :first-child { margin-top: 0; }
+:is(.agent-text, .ask-reply) > :last-child { margin-bottom: 0; }
+:is(.agent-text, .ask-reply) p { margin: 0 0 0.6em; }
+:is(.agent-text, .ask-reply) .md-list { margin: 0 0 0.6em; padding-left: 1.4em; }
+:is(.agent-text, .ask-reply) .md-list .md-list { margin: 0.15em 0 0; }
+:is(.agent-text, .ask-reply) li { margin: 0.15em 0; }
+:is(.agent-text, .ask-reply) .md-h { font-weight: 600; margin: 0.8em 0 0.4em; }
+:is(.agent-text, .ask-reply) .md-h1 { font-size: 1.1em; }
+.md-inline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+  padding: 0.05em 0.3em;
+  border-radius: 3px;
+  background: var(--panel-2);
+}
+.md-code {
+  margin: 0 0 0.6em;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: var(--panel-2);
+  font-size: 0.88em;
+  white-space: pre;
+}
+.md-quote {
+  margin: 0 0 0.6em;
+  padding-left: 8px;
+  border-left: 2px solid var(--panel-border);
+  color: var(--muted);
+}
+.md-rule { border: 0; border-top: 1px solid var(--panel-border); margin: 0.6em 0; }
+.md-link { color: var(--accent); }
+/* Math in replies (KaTeX): a touch smaller than KaTeX's default, which is
+   sized for body text, and displays that scroll rather than overflow. */
+:is(.agent-text, .ask-reply) .katex { font-size: 1.05em; }
+.md-math-block { margin: 0 0 0.6em; overflow-x: auto; overflow-y: hidden; }
+.md-math:not(.md-math-done) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
 
 .activity {
   color: var(--muted);
@@ -839,7 +878,6 @@ button.toggle.active {
 .ask-reply {
   max-height: 180px;
   overflow: auto;
-  white-space: pre-wrap;
   padding-top: 6px;
   border-top: 1px solid var(--panel-border);
 }
