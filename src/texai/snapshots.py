@@ -30,7 +30,9 @@ __all__ = [
 
 # Text inputs a LaTeX build reads. Deliberately excludes images and build
 # output — we snapshot what the agent might edit, not what latexmk regenerates.
-SOURCE_SUFFIXES = frozenset({".tex", ".bib", ".cls", ".sty", ".bbx", ".cbx", ".lco"})
+# .jsonl is annotations.jsonl (see texai.records): snapshotted with the markers
+# that point into it, so undoing a turn undoes both.
+SOURCE_SUFFIXES = frozenset({".tex", ".bib", ".cls", ".sty", ".bbx", ".cbx", ".lco", ".jsonl"})
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_FILES = 2000

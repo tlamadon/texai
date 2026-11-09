@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, Sequence
 
 from .models import SelectionRef
 
@@ -62,6 +62,16 @@ How the loop works:
   `%@src` once you have found the passage that supports it; say so if nothing
   does, rather than citing loosely. When asked to check sources, read each one
   and report claims it does not support.
+- Records. A sentence's sources and comments may live in `annotations.jsonl`,
+  next to the root .tex, one JSON record a line; the sentence then ends with
+  a marker naming its record, ` %#k3f9q`, after a space. A marker alone on
+  its line is about the next line. When you rewrite, split or move a sentence,
+  keep its marker at the end of the sentence it belongs to; never invent,
+  copy or retype one. Read what is attached with the `annotations` tool, add
+  a source with `add_source` (it checks the quote against the PDF and fills
+  in the page and hash) and comment or reply with `comment`, rather than
+  editing annotations.jsonl or writing `%@src` lines yourself. A marked
+  passage lists what is attached to it under "Attached".
 - Proposals. Consecutive `%@propose` lines with the same `id:` are one choice
   between versions of the lines directly below them (one line, or `lines:N`);
   each version's text is its `%>` lines, in full, and the user picks one in
@@ -112,18 +122,30 @@ def _format_selection(index: int, selection: SelectionRef) -> str:
 
 
 def compose_turn_prompt(
-    message: str, selections: Iterable[SelectionRef], pdf_rel: str
+    message: str,
+    selections: Iterable[SelectionRef],
+    pdf_rel: str,
+    attached: Sequence[str] | None = None,
 ) -> str:
-    """Build the user turn from the composer's message and its selection chips."""
+    """Build the user turn from the composer's message and its selection chips.
+
+    ``attached`` says, per selection, what is attached to the sentence it is on
+    (see :func:`texai.records.attached_summary`), so the agent sees a passage's
+    sources and comments without looking them up.
+    """
     marked = list(selections)
     parts: list[str] = []
 
     if marked:
         noun = "passage" if len(marked) == 1 else "passages"
-        parts.append(
-            f"The user marked {len(marked)} {noun} while reading `{pdf_rel}`:\n\n"
-            + "\n\n".join(_format_selection(i, s) for i, s in enumerate(marked, start=1))
-        )
+        formatted = []
+        for i, selection in enumerate(marked, start=1):
+            block = _format_selection(i, selection)
+            note = attached[i - 1] if attached and i - 1 < len(attached) else ""
+            if note:
+                block += f"\n    Attached: {note}"
+            formatted.append(block)
+        parts.append(f"The user marked {len(marked)} {noun} while reading `{pdf_rel}`:\n\n" + "\n\n".join(formatted))
 
     text = message.strip()
     if text:

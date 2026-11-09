@@ -37,6 +37,7 @@ export class SourceEditor {
       picker: document.getElementById('editor-file'),
       save: document.getElementById('editor-save'),
       revert: document.getElementById('editor-revert'),
+      externalize: document.getElementById('editor-externalize'),
       menu: document.getElementById('editor-menu'),
       menuPop: document.getElementById('editor-menu-pop'),
       suggest: document.getElementById('editor-suggest'),
@@ -113,6 +114,10 @@ export class SourceEditor {
       this.reload({ force: true });
     });
     this.els.merged?.addEventListener('click', () => this._visitMerged());
+    this.els.externalize?.addEventListener('click', () => {
+      this._menu(false);
+      this.onExternalize?.();
+    });
 
     this.els.menu?.addEventListener('click', () => this._menu(this.els.menuPop.hidden));
     // Click-away and Escape, as the git panel closes.

@@ -29,6 +29,14 @@ from .events import EventBus
 from .navigate import LocateError, locate
 from .options import OFFER_OPTIONS_DESCRIPTION, OFFER_OPTIONS_SCHEMA, offer_options
 from .papers import READ_PAPER_DESCRIPTION, READ_PAPER_SCHEMA, read_paper
+from .record_tools import (
+    ADD_SOURCE_DESCRIPTION,
+    ANNOTATIONS_DESCRIPTION,
+    COMMENT_DESCRIPTION,
+    add_source,
+    annotations_for,
+    comment,
+)
 from .prompt import SYSTEM_PROMPT_APPEND
 
 __all__ = [
@@ -74,6 +82,10 @@ ALLOWED_TOOLS = [
     "mcp__texai__offer_options",
     # A PDF as text, and where a quote is in it (see texai.papers).
     "mcp__texai__read_paper",
+    # Records in annotations.jsonl: read them, add a source, comment.
+    "mcp__texai__annotations",
+    "mcp__texai__add_source",
+    "mcp__texai__comment",
 ]
 DISALLOWED_TOOLS = ["Bash", "WebFetch", "WebSearch", "Task", "KillShell", "BashOutput"]
 
@@ -272,8 +284,83 @@ def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
         )
         return {"content": [{"type": "text", "text": text}]}
 
+    @tool(
+        "annotations",
+        ANNOTATIONS_DESCRIPTION,
+        {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string"},
+                "line": {"type": "integer"},
+                "to_line": {"type": "integer"},
+            },
+            "required": ["file", "line"],
+        },
+    )
+    async def attached(args: dict[str, Any]) -> dict[str, Any]:
+        text = await asyncio.to_thread(
+            annotations_for, config, args.get("file", ""), args.get("line", 1), args.get("to_line")
+        )
+        return {"content": [{"type": "text", "text": text}]}
+
+    @tool(
+        "add_source",
+        ADD_SOURCE_DESCRIPTION,
+        {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string"},
+                "line": {"type": "integer"},
+                "target": {"type": "string"},
+                "page": {"type": "integer"},
+                "quote": {"type": "string"},
+                "note": {"type": "string"},
+            },
+            "required": ["file", "line", "target"],
+        },
+    )
+    async def source(args: dict[str, Any]) -> dict[str, Any]:
+        text = await asyncio.to_thread(
+            add_source,
+            config,
+            args.get("file", ""),
+            args.get("line", 0),
+            args.get("target", ""),
+            args.get("page"),
+            args.get("quote", "") or "",
+            args.get("note", "") or "",
+        )
+        return {"content": [{"type": "text", "text": text}]}
+
+    @tool(
+        "comment",
+        COMMENT_DESCRIPTION,
+        {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string"},
+                "line": {"type": "integer"},
+                "text": {"type": "string"},
+                "reply_to": {"type": "string"},
+            },
+            "required": ["file", "text"],
+        },
+    )
+    async def note(args: dict[str, Any]) -> dict[str, Any]:
+        text = await asyncio.to_thread(
+            comment,
+            config,
+            args.get("file", ""),
+            args.get("line", 0),
+            args.get("text", ""),
+            args.get("reply_to", "") or "",
+        )
+        return {"content": [{"type": "text", "text": text}]}
+
     return create_sdk_mcp_server(
-        name="texai", version="1.0.0", tools=[show_in_pdf, offer, paper]
+        name="texai",
+        version="1.0.0",
+        tools=[show_in_pdf, offer, paper, attached, source, note],
     )
 
 

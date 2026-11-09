@@ -18,6 +18,15 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .agent import AgentSession, AgentUnavailable
 from .agent_tools import TOOLS_MOUNT, build_tools_server
+from .records import (
+    RecordError,
+    apply_comment,
+    externalize,
+    load_records,
+    records_path,
+    save_records,
+)
+from .snapshots import iter_source_files
 from .comments import (
     CommentError,
     add_comment,
@@ -716,6 +725,8 @@ def create_app(
         except SourceError as exc:
             raise _error(404, "source_missing", str(exc)) from exc
         text, by = source["text"], comment_author(config.root)
+        if payload.action == "add" or payload.record:
+            return await _record_comment(payload, source["file"], by)
         try:
             if payload.action == "add":
                 new, _ = add_comment(text, payload.line, payload.text, by)
@@ -730,6 +741,64 @@ def create_app(
             raise _error(409, "comment_conflict", str(exc)) from exc
         atomic_write_text(config.root / source["file"], new)
         return {"ok": True, "file": source["file"], "build": await _saved_by_hand(source["file"])}
+
+    @app.post("/api/annotations/externalize")
+    async def externalize_annotations() -> dict[str, Any]:
+        """Move every inline `%@src` and comment into annotations.jsonl, each
+        sentence's into one record, with a marker on the sentence. Intents and
+        proposals stay. Lines go, so the paper is rebuilt."""
+        if controller.busy:
+            raise _error(409, "agent_busy", "The agent is editing right now; try again in a moment.")
+
+        def move() -> tuple[list[str], int]:
+            records = json.loads(json.dumps(load_records(config)))
+            changed: list[str] = []
+            count = 0
+            for path in iter_source_files(config.root):
+                if path.suffix.lower() != ".tex":
+                    continue
+                new, moved = externalize(config, path, records)
+                if moved:
+                    atomic_write_text(path, new)
+                    changed.append(to_project_relative(path, config.root))
+                    count += moved
+            if count:
+                save_records(config, records)
+            return changed, count
+
+        changed, count = await asyncio.to_thread(move)
+        if not count:
+            return {"ok": True, "moved": 0, "files": [], "build": None}
+        controller.absorb_manual_edit(to_project_relative(records_path(config), config.root))
+        for file in changed[:-1]:
+            controller.absorb_manual_edit(file)
+        build = await _saved_by_hand(changed[-1])
+        return {"ok": True, "moved": count, "files": changed, "build": build}
+
+    async def _record_comment(payload: CommentRequest, file: str, by: str) -> dict[str, Any]:
+        """A comment kept in annotations.jsonl. Its marker never moves a line,
+        so the PDF and SyncTeX stay true and nothing is rebuilt: the page is
+        told to read its margins again."""
+        try:
+            done = await asyncio.to_thread(
+                apply_comment,
+                config,
+                file,
+                payload.action,
+                line=payload.line,
+                text=payload.text,
+                record_id=payload.record,
+                comment_id=payload.target,
+                by=by,
+            )
+        except RecordError as exc:
+            raise _error(409, "comment_conflict", str(exc)) from exc
+        controller.absorb_manual_edit(to_project_relative(records_path(config), config.root))
+        if done["shifted"]:
+            return {"ok": True, "file": file, **done, "build": await _saved_by_hand(file)}
+        controller.absorb_manual_edit(file)
+        bus.publish("annotations_changed", file=file)
+        return {"ok": True, "file": file, **done, "build": None}
 
     @app.get("/api/paragraph")
     async def get_paragraph(file: str, line: int) -> dict[str, Any]:

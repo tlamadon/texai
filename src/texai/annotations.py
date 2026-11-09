@@ -210,9 +210,14 @@ def parse_body(kind: str, body: str) -> dict[str, Any]:
     }
 
 
+# A record marker with its line to itself (see texai.records).
+_MARKER_LINE = re.compile(r"^\s*%#[a-z0-9]{4,16}\s*$")
+
+
 def is_annotation_line(line: str) -> bool:
-    """Whether a source line is part of an annotation: a ``%@`` or a ``%>``."""
-    return bool(_ANNOTATION.match(line) or _CONTINUATION.match(line))
+    """Whether a source line is all annotation: a ``%@``, a ``%>``, or a
+    record marker alone on its line."""
+    return bool(_ANNOTATION.match(line) or _CONTINUATION.match(line) or _MARKER_LINE.match(line))
 
 
 def parse_annotations(text: str) -> list[Annotation]:

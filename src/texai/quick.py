@@ -84,7 +84,9 @@ cannot do)
 Rules:
 - Your text replaces the passage's lines as a whole, so it must contain
   everything that should stay: comment lines, `%@` annotations, labels and
-  citations, unless the request is about them.
+  citations, unless the request is about them. A ` %#id` at the end of a line
+  marks what is attached to that sentence: keep it at the end of the same
+  sentence, exactly as written.
 - Keep the document's conventions: its macros, notation and citation style, and
   how it wraps lines (similar line lengths, breaks where the original has them).
 - Make the change the request asks for, in full, and nothing beyond it. Asked

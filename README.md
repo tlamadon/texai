@@ -703,6 +703,55 @@ We find that the elasticity, across all of our specifications, is about 0.3.
   rebuilds the document, because the extra lines move SyncTeX's line numbers.
   That is why an offer stays out of the file until you ask to keep it.
 
+### Records: annotations beside the paper
+
+A sentence's sources and comments can outgrow the comment lines above it: a
+claim backed by five papers, each with a quote and a page, and a conversation
+about it. So they can live in `annotations.jsonl`, next to the root `.tex`, and
+the sentence carries only a marker naming its record:
+
+```latex
+We find a large elasticity. %#k3f9q
+```
+```json
+{"id": "k3f9q", "sources": [{"type": "paper", "target": "card2018", "page": 14, "quote": "…", "sha": "1a2b3c4d"}],
+ "comments": [{"id": "c1", "kind": "comment", "by": "TL", "text": "…", "replies": [{"id": "c2", "by": "agent", "text": "…"}]}]}
+```
+
+- **The marker anchors the record.** It is part of the sentence's line, so any
+  edit carries it along: yours, the agent's, a merge.
+- **Adding a marker moves no line.** It goes at the end of the line, after a
+  space, so the PDF and SyncTeX stay valid. Comments kept this way are
+  instant: adding, replying, resolving and deleting never rebuild.
+- **A marker alone on its line** is about the next line of text, like the `%@`
+  annotations.
+- **The file:** one record a line, sorted by ID. IDs are random, so two people
+  adding records on two branches do not collide, and git merges the file like
+  prose.
+- **Undo:** it is snapshotted with the source, so undoing a turn undoes its
+  records too. You can open it in the Source tab.
+- **What is kept there:** comments written from the page go into records.
+  Intents and proposals stay inline.
+- **Moving existing papers over:** **Move annotations to annotations.jsonl**,
+  in the Source tab's ⋮ menu, moves every inline `%@src` and comment into
+  records, one per sentence, and leaves a marker. Threads keep their replies
+  and status.
+- **Inline forms stay valid:** a `%@src` line written by hand still works
+  beside the records.
+- **Detached entries:** `/api/paragraphs` reports records no marker points at,
+  and markers whose record is missing, under `detached`.
+
+The agent works with records through texai rather than editing the file:
+
+- **`annotations(file, line)`** lists what is attached to a passage. A marked
+  passage also lists its sources and comments in the turn, under "Attached".
+- **`add_source`** records what backs a sentence. It checks the source as it
+  goes: the label exists, the file is there, and a quote is in the paper word
+  for word. It fills in the page and the hash itself, and refuses a misquote
+  with the closest match.
+- **`comment`** leaves a comment or answers one.
+- **When it rewrites a sentence,** it is told to keep the marker at its end.
+
 ### Provenance: what backs a sentence
 
 A `%@src` annotation records where a claim comes from. Write the paper one
@@ -1057,11 +1106,17 @@ absent.
   write only inside the project (and temp directories) and has no network, and
   with approvals denied, so it never stops to ask. It is told not to compile,
   but nothing prevents it.
-- The agent gets three tools of our own, none of which writes anything:
+- The agent gets six tools of our own:
   - `show_in_pdf` scrolls your view.
   - `offer_options` shows you versions of a passage to pick from.
   - `read_paper` reads a PDF inside the project as text. It reads only PDFs, and
     applies the same path checks as everything else.
+  - `annotations` reads what is attached to a passage.
+  - `add_source` and `comment` write to `annotations.jsonl` and put a marker on
+    the sentence, inside the project, within the turn, so the turn's snapshot
+    can undo them.
+
+  The first four write nothing.
 
   Claude calls them in-process. Codex calls them over MCP on texai's own
   loopback port, which only exists when Codex is the agent.

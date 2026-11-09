@@ -105,9 +105,15 @@ def test_the_endpoint_writes_and_rebuilds(config):
     client = TestClient(create_app(config), base_url="http://127.0.0.1")
     assert client.get("/api/info").json()["author"] == "TL"
 
+    # A new comment goes into a record, its marker on the sentence: no line
+    # moves, so nothing is rebuilt.
     added = client.post("/api/comments", json={"action": "add", "file": "main.tex", "line": 5, "text": "Which checks?"})
-    assert added.status_code == 200 and added.json()["build"]["ok"] is True
-    assert "%@comment id:c1 by:TL Which checks?\nIt survives" in (config.root / "main.tex").read_text()
+    assert added.status_code == 200 and added.json()["build"] is None
+    record = added.json()["record"]
+    assert (config.root / "main.tex").read_text().endswith(f"It survives every check. %#{record}\n")
+    assert '"text": "Which checks?"' in (config.root / "annotations.jsonl").read_text()
+
+    # An inline todo is still resolved in place, and rebuilt.
 
     resolved = client.post(
         "/api/comments",

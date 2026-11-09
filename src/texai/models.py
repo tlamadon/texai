@@ -146,6 +146,9 @@ class CommentRequest(BaseModel):
     text: str = Field(default="", max_length=20000)
     kind: str = Field(default="comment", max_length=100)
     said: str = Field(default="", max_length=20000)
+    # A comment kept in annotations.jsonl: its record, and its ID there.
+    record: str = Field(default="", max_length=32)
+    target: str = Field(default="", max_length=32)
 
 
 class ProvenanceRequest(BaseModel):

@@ -419,6 +419,35 @@ chat.onNavigate = (event) => {
   if (event.why) showToast(event.why);
 };
 
+// Inline sources and comments, moved into annotations.jsonl in one go. The
+// source loses their lines, so it is saved over what the editor holds only
+// with nothing unsaved there, and the paper is rebuilt.
+editor.onExternalize = async () => {
+  if (editor.dirty) {
+    showToast('Save or discard your edits first.', { type: 'error' });
+    return;
+  }
+  if (!window.confirm('Move every %@src and comment into annotations.jsonl, leaving a marker on each sentence?')) return;
+  try {
+    const done = await postJSON('/api/annotations/externalize', {});
+    if (!done.moved) {
+      showToast('No inline sources or comments to move.');
+      return;
+    }
+    editor.reload({ force: true });
+    showToast(`Moved ${done.moved} annotation${done.moved > 1 ? 's' : ''} from ${done.files.join(', ')}.`);
+  } catch (err) {
+    showToast(err.message || String(err), { type: 'error' });
+  }
+};
+
+// A comment kept in annotations.jsonl changed without a rebuild: read the
+// margins again, and take the marker into the editor if it was added there.
+chat.onAnnotationsChanged = () => {
+  paraGuide.refresh();
+  editor.reload();
+};
+
 // Changes accumulate across turns until accepted, so any of these just means
 // "the pending set moved".
 chat.onChangesUpdated = () => {

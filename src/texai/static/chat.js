@@ -76,6 +76,7 @@ export class ChatPanel {
     this.onEdit = null;      // open a marked passage in the editor
     this.onNavigate = null;  // the agent moved the view itself
     this.onViewChange = null; // chat / transcript / source / peek
+    this.onAnnotationsChanged = null; // a record changed: redraw the margins
 
     this._wire();
   }
@@ -427,6 +428,10 @@ export class ChatPanel {
       case 'agent_ready':
         this.agent = { ...this.agent, available: true, reason: null };
         this._renderStatus();
+        break;
+      case 'annotations_changed':
+        // A comment kept beside the paper: the margins, not the PDF, changed.
+        this.onAnnotationsChanged?.(event);
         break;
       case 'changes_updated':
         this.onChangesUpdated?.();

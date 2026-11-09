@@ -54,9 +54,10 @@ CODEX_INSTRUCTIONS = (
 You are running under Codex. Edit files with apply_patch. Shell commands are
 fine for finding your way around (rg, sed -n, cat), but never run latexmk,
 pdflatex, or anything else that compiles or writes build output: texai owns the
-build and runs it when you finish. The `show_in_pdf`, `offer_options` and
-`read_paper` tools live on the `texai` MCP server; read PDFs with `read_paper`,
-since nothing in the shell can open them.
+build and runs it when you finish. The `show_in_pdf`, `offer_options`,
+`read_paper`, `annotations`, `add_source` and `comment` tools live on the
+`texai` MCP server; read PDFs with `read_paper`, since nothing in the shell
+can open them.
 
 Your replies are shown as plain text, not rendered markdown. Refer to places as
 `file:line` relative to the project root (sections/model.tex:12), never as a
@@ -243,6 +244,9 @@ def _thread_config(tools_url: str | None, effort: str | None = None) -> dict[str
                     "show_in_pdf": {"approval_mode": "approve"},
                     "offer_options": {"approval_mode": "approve"},
                     "read_paper": {"approval_mode": "approve"},
+                    "annotations": {"approval_mode": "approve"},
+                    "add_source": {"approval_mode": "approve"},
+                    "comment": {"approval_mode": "approve"},
                 },
             }
         }

@@ -237,6 +237,8 @@ export class CommentBox {
         line: message.line,
         kind: message.kind,
         said: message.text,
+        // Kept in annotations.jsonl: named by its record, not its words.
+        ...(message.record ? { record: message.record, target: message.cid } : {}),
         ...extra,
       });
       this.close();

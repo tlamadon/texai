@@ -21,6 +21,14 @@ from .config import AppConfig
 from .events import EventBus
 from .options import OFFER_OPTIONS_DESCRIPTION, offer_options
 from .papers import READ_PAPER_DESCRIPTION, read_paper
+from .record_tools import (
+    ADD_SOURCE_DESCRIPTION,
+    ANNOTATIONS_DESCRIPTION,
+    COMMENT_DESCRIPTION,
+    add_source,
+    annotations_for,
+    comment,
+)
 
 __all__ = ["TOOLS_MOUNT", "TOOLS_PATH", "build_tools_server", "tools_url"]
 
@@ -83,6 +91,20 @@ def build_tools_server(config: AppConfig, bus: EventBus) -> Any:
     @server.tool(name="read_paper", description=READ_PAPER_DESCRIPTION)
     async def paper(target: str, pages: str = "", find: str = "") -> str:
         return await asyncio.to_thread(read_paper, config, target, pages, find)
+
+    @server.tool(name="annotations", description=ANNOTATIONS_DESCRIPTION)
+    async def attached(file: str, line: int, to_line: int | None = None) -> str:
+        return await asyncio.to_thread(annotations_for, config, file, line, to_line)
+
+    @server.tool(name="add_source", description=ADD_SOURCE_DESCRIPTION)
+    async def source(
+        file: str, line: int, target: str, page: int | None = None, quote: str = "", note: str = ""
+    ) -> str:
+        return await asyncio.to_thread(add_source, config, file, line, target, page, quote, note)
+
+    @server.tool(name="comment", description=COMMENT_DESCRIPTION)
+    async def note(file: str, text: str, line: int = 0, reply_to: str = "") -> str:
+        return await asyncio.to_thread(comment, config, file, line, text, reply_to)
 
     return server
 

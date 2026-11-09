@@ -30,6 +30,7 @@ from .options import OfferError, OfferStale, apply_option, offer_options, propos
 from .proposals import ProposalError, apply_proposal, dismiss_proposal, find_proposal
 from .source import SourceError, read_source
 from .prompt import compose_build_failure_prompt, compose_turn_prompt
+from .records import attached_summary
 from .quick import (
     QuickSession,
     QuickStale,
@@ -218,7 +219,8 @@ class TurnController:
             )
             phases["baselineMs"] = watch.lap()
 
-        prompt = compose_turn_prompt(message, selections, self.config.pdf_rel)
+        attached = [attached_summary(self.config, s.file, s.line) for s in selections]
+        prompt = compose_turn_prompt(message, selections, self.config.pdf_rel, attached)
         if passage is None:
             prompt = self._with_news(prompt)
         route = "quick" if passage is not None else "agent"

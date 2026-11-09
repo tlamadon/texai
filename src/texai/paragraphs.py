@@ -36,11 +36,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .annotations import PROPOSE, SOURCE, is_annotation_line, parse_annotations
+from .annotations import PROPOSE, SOURCE, is_annotation_line, kind_of, parse_annotations
 from .config import AppConfig
 from .paths import to_project_relative
 from .proposals import proposals_in
-from .provenance import bib_entries, source_ref
+from .provenance import ProvenanceError, bib_entries, source_from_dict, source_ref
+from .records import load_records, markers_in, records_path, sentence_line
 from .snapshots import iter_source_files
 from .synctex import synctex_data_file
 
@@ -87,6 +88,9 @@ _SP_PER_PT = 65536.0
 # How much of the sentence a source backs travels with it, to tell one source
 # in a paragraph's list from the next.
 _BACKS_CHARS = 120
+# A comment runs from an unescaped % to the end of its line: a record's marker,
+# say, which is not part of the sentence it sits on.
+_COMMENT = re.compile(r"(?<!\\)%.*$")
 # How long a sentence's last word is taken to be, when the page cannot say.
 _LAST_WORD_PT = 20.0
 
@@ -293,6 +297,7 @@ def _map_file(
     left_margin: float,
     right_margin: float,
     words: Words | None = None,
+    records: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Every paragraph bar one file contributes, one per page it touches, and
     the annotations it carries, each placed beside the paragraph it belongs to.
@@ -355,20 +360,56 @@ def _map_file(
             continue
         item = note.as_dict()
         if note.kind == SOURCE:
-            # A provenance marker: listed under its paragraph's icon, opened in
-            # the peek. The start of the sentence it backs goes with it.
+            # A provenance mark: an underline on the sentence it backs, and a
+            # mark in the margin that opens it in the peek.
             ref = source_ref(note)
             if ref is None:
                 continue
             item["source"] = ref.as_dict()
-            backed, item["backs"] = _backed_line(lines, note.end)
-            if backed:
-                item["sentence"] = backed
-                item["sentenceText"] = lines[backed - 1].strip()
-                segments = _segments((words or {}).get((relative, backed)), right_margin)
-                if segments:
-                    item["segments"] = segments
+            backed, _ = _backed_line(lines, note.end)
+            item.update(_sentence(lines, backed, relative, words, right_margin))
         items.append((note.line, note.end, note.place, item))
+
+    # Records in annotations.jsonl, by the markers on their sentences: drawn
+    # exactly as the inline annotations are, and placed beside the sentence.
+    for marker, record_id, alone in markers_in(text):
+        record = (records or {}).get(record_id)
+        about = sentence_line(lines, marker, alone)
+        if record is None or not about:
+            continue
+        common = {"line": marker, "end": marker, "record": record_id}
+        sentence = _sentence(lines, about, relative, words, right_margin)
+        for source in record.get("sources", []):
+            try:
+                ref = source_from_dict(source)
+            except ProvenanceError:
+                continue
+            item = {"kind": SOURCE, "place": "marker", "text": ref.note, "source": ref.as_dict()}
+            items.append((about, about - 1, "marker", {**item, **common, **sentence}))
+        for comment in record.get("comments", []):
+            kind = comment.get("kind") or "comment"
+            thread_id = f"{record_id}:{comment.get('id')}"
+            items.append((about, about - 1, kind_of(kind).place, {
+                **common,
+                "kind": kind,
+                "place": kind_of(kind).place,
+                "id": thread_id,
+                "cid": comment.get("id"),
+                "by": comment.get("by", ""),
+                "status": comment.get("status", ""),
+                "text": comment.get("text", ""),
+            }))
+            for reply in comment.get("replies", []):
+                items.append((about, about - 1, "note", {
+                    **common,
+                    "kind": "comment",
+                    "place": "note",
+                    "id": f"{record_id}:{reply.get('id')}",
+                    "cid": reply.get("id"),
+                    "re": thread_id,
+                    "by": reply.get("by", ""),
+                    "text": reply.get("text", ""),
+                }))
     for choice in proposals_in(text, annotations):
         item = {"kind": PROPOSE, "place": "proposal", **choice.as_dict()}
         items.append((choice.line, choice.end, "proposal", item))
@@ -413,6 +454,28 @@ def _map_file(
             }
         )
     return bars, notes
+
+
+def _sentence(
+    lines: list[str],
+    backed: int,
+    relative: str,
+    words: Words | None,
+    right_margin: float,
+) -> dict[str, Any]:
+    """What a source carries about the sentence it backs: its line and text,
+    the start of it to show, and roughly where it is, for the underline."""
+    if not backed:
+        return {"backs": ""}
+    text = _COMMENT.sub("", lines[backed - 1]).strip()
+    short = " ".join(text.split())
+    if len(short) > _BACKS_CHARS:
+        short = short[: _BACKS_CHARS - 1].rstrip() + "\u2026"
+    fields: dict[str, Any] = {"sentence": backed, "sentenceText": text, "backs": short}
+    segments = _segments((words or {}).get((relative, backed)), right_margin)
+    if segments:
+        fields["segments"] = segments
+    return fields
 
 
 def _backed_line(lines: list[str], end: int) -> tuple[int, str]:
@@ -497,12 +560,13 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
     bibs = [path for path in every if path.suffix.lower() == ".bib"]
 
     key = str(config.pdf_path)
-    signature = _signature(config, [*sources, *bibs])
+    signature = _signature(config, [*sources, *bibs, records_path(config)])
     cached = _cache.get(key)
     if cached is not None and cached[0] == signature:
         return cached[1]
 
     line_index, left_margin, right_margin, words = _parse_synctex(config)
+    records = load_records(config)
     # Only files that actually rendered are worth reading back for paragraphs.
     present = {file for file, _line in line_index}
 
@@ -513,7 +577,7 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
         if relative not in present:
             continue
         file_bars, file_notes = _map_file(
-            path, relative, line_index, left_margin, right_margin, words
+            path, relative, line_index, left_margin, right_margin, words, records
         )
         bars.extend(file_bars)
         notes.extend(file_notes)
@@ -531,6 +595,25 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
         if source and source["type"] == "paper" and source["target"] in entries:
             note["bib"] = entries[source["target"]]
 
-    answer = {"palette": PARAGRAPH_PALETTE, "bars": bars, "annotations": notes}
+    # Records and markers that have lost each other: a sentence deleted with
+    # its marker, a marker copied without its record, a merge half resolved.
+    pointed: dict[str, list[str]] = {}
+    for path in sources:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for line, record_id, _alone in markers_in(text):
+            pointed.setdefault(record_id, []).append(f"{to_project_relative(path, config.root)}:{line}")
+    detached = {
+        "records": sorted(record_id for record_id in records if record_id not in pointed),
+        "markers": sorted(
+            where for record_id, places in pointed.items() if record_id not in records for where in places
+        ),
+    }
+
+    answer = {
+        "palette": PARAGRAPH_PALETTE,
+        "bars": bars,
+        "annotations": notes,
+        "detached": detached,
+    }
     _cache[key] = (signature, answer)
     return answer

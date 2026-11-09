@@ -268,7 +268,9 @@ def test_codex_reaches_show_in_pdf_on_texais_own_server(config):
 
         _, listed = _rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, session_id)
         names = [tool["name"] for tool in listed["result"]["tools"]]
-        assert names == ["show_in_pdf", "offer_options", "read_paper"]
+        assert names == [
+            "show_in_pdf", "offer_options", "read_paper", "annotations", "add_source", "comment"
+        ]
 
         _, called = _rpc(
             client,
