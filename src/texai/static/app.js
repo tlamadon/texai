@@ -5,6 +5,7 @@
 import { getJSON, postJSON } from './api.js';
 import { PageAsk } from './ask.js';
 import { ChatPanel } from './chat.js';
+import { CommentBox } from './comments.js';
 import { GitPanel } from './git.js';
 import { InlineEditor } from './inline.js';
 import { ViewHistory } from './history.js';
@@ -55,6 +56,7 @@ let notes = null;
 let viewHistory = null;
 let inline = null;
 let ask = null;
+let comments = null;
 
 const viewer = new PdfViewer({
   container: els.container,
@@ -70,6 +72,7 @@ const viewer = new PdfViewer({
     notes?.draw();
     inline?.place();
     ask?.place();
+    comments?.place();
   },
   // Following a link moves the page; the arrow back has to know from where.
   onBeforeJump: () => viewHistory?.mark(),
@@ -173,11 +176,19 @@ inline = new InlineEditor({
 // Select a passage and ask for a change right there: a button at the end of the
 // selection opens a request box, the request goes to the agent as a turn, and
 // its edits come back as markers on the page — no need for the chat panel.
+// Comments, written on a selection or answered from the margin. Saved as the
+// reader's own edits, so they wait only for nothing else to be editing.
+comments = new CommentBox({ viewer });
+comments.onEdit = (file, line) => editAt(file, line);
+notes.onThread = (item, items, anchor) => comments.thread(item, items, anchor);
+
 ask = new PageAsk({
   viewer,
   container: els.container,
   select: (passage) => recordSelection(passage),
   available: () => chat.agent.available && !chat.busy,
+  onComment: (passage) => comments.compose(passage),
+  canComment: () => !chat.busy,
   onChanges: () => marks.reveal(),
   onOpenChat: () => {
     setPanelVisible(true);

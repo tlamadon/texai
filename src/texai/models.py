@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -127,6 +127,25 @@ class ProposalRequest(BaseModel):
     id: str = Field(default="", max_length=100)
     line: int | None = Field(default=None, ge=1)  # for a choice written without an id
     option: int | None = Field(default=None, ge=0, le=10)
+
+
+class CommentRequest(BaseModel):
+    """A comment written from the page.
+
+    ``add`` puts a new comment above source line ``line``. The others act on the
+    annotation the page showed at ``line``, which said ``said`` and was of kind
+    ``kind``: ``reply`` answers it, ``resolve`` and ``reopen`` set its status,
+    ``delete`` removes it with its replies.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["add", "reply", "resolve", "reopen", "delete"]
+    file: str = Field(min_length=1, max_length=1000)
+    line: int = Field(ge=1)
+    text: str = Field(default="", max_length=20000)
+    kind: str = Field(default="comment", max_length=100)
+    said: str = Field(default="", max_length=20000)
 
 
 class ProvenanceRequest(BaseModel):

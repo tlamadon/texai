@@ -45,6 +45,7 @@ __all__ = [
     "file_sha",
     "parse_source",
     "resolve_source",
+    "bib_entries",
     "source_from_dict",
     "source_ref",
     "serve_path",
@@ -343,6 +344,23 @@ def _bib_entry(config: AppConfig, key: str) -> dict[str, str] | None:
             if entry.group(2) == key:
                 return _bib_fields(text, entry.end())
     return None
+
+
+def bib_entries(config: AppConfig, keys: set[str]) -> dict[str, dict[str, str]]:
+    """Title, author and year for each of ``keys`` found in the project's
+    ``.bib`` files, in one pass; the first file to define a key wins."""
+    found: dict[str, dict[str, str]] = {}
+    if not keys:
+        return found
+    for path in iter_source_files(config.root):
+        if path.suffix.lower() != ".bib":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for entry in _ENTRY.finditer(text):
+            key = entry.group(2)
+            if key in keys and key not in found:
+                found[key] = _bib_fields(text, entry.end())
+    return found
 
 
 def _bib_fields(text: str, at: int) -> dict[str, str]:

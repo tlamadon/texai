@@ -12,7 +12,7 @@
 // each would change marked, to pick one or dismiss them all.
 
 import { postJSON } from './api.js';
-import { describeSource, sourceTarget } from './annotations.js';
+import { describeSource, shortAuthors, sourceTarget } from './annotations.js';
 import { markChosen, renderOffer } from './options.js';
 import { PdfViewer } from './viewer.js';
 
@@ -496,15 +496,4 @@ function userRectToPage(entry, [x1, y1, x2, y2]) {
     width: Math.abs(c - a),
     height: Math.abs(d - b),
   };
-}
-
-/** "Card, David and Kluve, Jochen and Weber, Andrea" -> "Card, Kluve & Weber". */
-function shortAuthors(field) {
-  const names = field.split(/\s+and\s+/i).map((name) => {
-    const trimmed = name.trim();
-    return trimmed.includes(',') ? trimmed.split(',')[0].trim() : trimmed.split(/\s+/).pop();
-  });
-  if (names.length > 3) return `${names[0]} et al.`;
-  if (names.length === 1) return names[0];
-  return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`;
 }

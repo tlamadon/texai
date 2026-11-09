@@ -250,6 +250,11 @@ button.ghost { background: transparent; }
   font-weight: 600;
   color: #6b6b6b;
 }
+.note-card .note-replies {
+  margin-left: 4px;
+  font-weight: 600;
+  color: #6b6b6b;
+}
 .note-card .note-re {
   margin-right: 3px;
   color: #8a8a8a;
@@ -276,23 +281,28 @@ button.ghost { background: transparent; }
   background: #e0b000;
 }
 
-/* A %@src marker: a small grey glyph hard against the end of the line it backs.
-   Quiet until pointed at, so a well-sourced page does not read as cluttered. */
+/* A paragraph's %@src sources: one small grey glyph just right of the text,
+   level with the first sentence they back, a count beside it when there are
+   several. Quiet until pointed at, so a well-sourced page does not read as
+   cluttered. */
 .note-layer .note-source,
 .note-layer .note-source:hover:not(:disabled) {
-  width: 11px;
+  display: flex;
+  align-items: flex-start;
   height: 11px;
   border-radius: 2px;
   color: #8b929c;
   opacity: 0.7;
 }
-.note-layer .note-source:hover:not(:disabled) {
+.note-layer .note-source:hover:not(:disabled),
+.note-layer .note-source.open {
   opacity: 1;
   color: #1f6feb;
   background: rgba(31, 111, 235, 0.1);
 }
 .note-source svg {
   display: block;
+  flex: 0 0 auto;
   width: 11px;
   height: 11px;
   fill: none;
@@ -300,6 +310,92 @@ button.ghost { background: transparent; }
   stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+.note-source .note-source-count {
+  font-size: 7.5px;
+  font-weight: 700;
+  line-height: 1;
+  margin-left: 0.5px;
+}
+
+/* The list a source icon opens: what each source links to, its quote or note,
+   and the sentence it backs. In the scroll area rather than on a page, so the
+   page's own re-renders leave it be. */
+.source-popup {
+  position: absolute;
+  z-index: 20;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font: 12px/1.4 system-ui, sans-serif;
+}
+.source-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 4px 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.source-popup-head button { padding: 0 6px; font-size: 14px; line-height: 1; }
+.source-entry {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.source-entry:hover:not(:disabled) { background: var(--panel-2); }
+.source-entry + .source-entry { border-top: 1px solid var(--panel-border); }
+.source-entry svg {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.source-entry:hover svg { stroke: var(--accent); }
+.source-entry-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.source-entry-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-entry-meta { color: var(--muted); font-size: 11px; }
+.source-entry-quote {
+  font-style: italic;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.source-entry-note { color: var(--muted); }
+.source-entry-backs {
+  color: #7d8590;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The document's own links, over the text layer so they can be clicked, but
@@ -858,6 +954,17 @@ button.toggle.active {
   cursor: pointer;
 }
 .ask-button:hover { filter: brightness(1.15); }
+/* Its neighbour, for a comment rather than a request: quieter, since it needs
+   no agent and does nothing on its own. */
+.ask-button.comment-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  color: var(--fg);
+  border-color: var(--panel-border);
+}
+.ask-button.comment-button svg { display: block; }
 
 /* The passage being asked about, kept visible once the selection is gone. */
 .ask-highlight {
@@ -1923,3 +2030,87 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
   font-size: 11.5px;
   color: var(--muted);
 }
+
+/* ---------------- comments: writing one, and a thread ---------------- */
+
+.comment-box {
+  position: absolute;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 8px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  font: 12px/1.45 system-ui, sans-serif;
+}
+.comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.comment-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comment-head button { padding: 0 6px; font-size: 14px; line-height: 1; }
+.comment-quote { color: var(--muted); font-style: italic; }
+.comment-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 40vh;
+  overflow: auto;
+}
+.comment-message + .comment-message {
+  padding-left: 10px;
+  border-left: 2px solid var(--panel-border);
+}
+.comment-message.done .comment-text { color: var(--muted); }
+.comment-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.comment-by { font-weight: 700; }
+.comment-kind,
+.comment-state {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.comment-state { color: var(--ok); }
+.comment-remove { margin-left: auto; padding: 0 5px; line-height: 1; }
+.comment-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-compose { display: flex; flex-direction: column; gap: 4px; }
+.comment-input {
+  width: 100%;
+  resize: none;
+  padding: 5px 7px;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+}
+.comment-bar { display: flex; align-items: center; gap: 8px; }
+.comment-status { flex: 1; color: var(--muted); font-size: 11px; }
+.comment-status.busy { color: var(--accent); }
+.comment-status.err { color: var(--err); }
+.comment-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--panel-border);
+}
+.comment-tools button { padding: 2px 8px; font-size: 11.5px; }
+.comment-tools button.confirm { color: var(--err); border-color: var(--err); }

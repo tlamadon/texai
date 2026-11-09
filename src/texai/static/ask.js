@@ -62,15 +62,19 @@ export class PageAsk {
    * `select({ page, point, word, selectedText })` resolves the passage to a
    * source location (and records it, as a Cmd-click does). `available()` says whether
    * the agent can take a request at all. `onChanges()` brings the markers up;
-   * `onOpenChat()` shows the turn in the chat panel.
+   * `onOpenChat()` shows the turn in the chat panel. `onComment(passage)`, when
+   * given, puts a second button beside the ✦, to leave a comment instead; it
+   * needs no agent, only that nothing is editing the source (`canComment()`).
    */
-  constructor({ viewer, container, select, available, onChanges, onOpenChat }) {
+  constructor({ viewer, container, select, available, onChanges, onOpenChat, onComment, canComment }) {
     this.viewer = viewer;
     this.container = container;
     this.select = select;
     this.available = available;
     this.onChanges = onChanges;
     this.onOpenChat = onOpenChat;
+    this.onComment = onComment;
+    this.canComment = canComment || (() => true);
 
     // What is on offer: the passage under the button, before anything is asked.
     this.offer = null;
@@ -92,6 +96,23 @@ export class PageAsk {
     this.button.addEventListener('click', () => this.open());
     container.append(this.button);
 
+    this.commentButton = el('button', 'ask-button comment-button');
+    this.commentButton.type = 'button';
+    this.commentButton.title = 'Comment on this passage';
+    this.commentButton.innerHTML =
+      '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="none" ' +
+      'stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" ' +
+      'd="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>';
+    this.commentButton.hidden = true;
+    this.commentButton.addEventListener('mousedown', (event) => event.preventDefault());
+    this.commentButton.addEventListener('click', () => {
+      const passage = this.offer;
+      if (!passage) return;
+      this._hideOffer();
+      this.onComment?.(passage);
+    });
+    if (onComment) container.append(this.commentButton);
+
     document.addEventListener('mouseup', (event) => {
       // After the browser has settled the selection this release made.
       setTimeout(() => this._afterRelease(event), 0);
@@ -99,7 +120,7 @@ export class PageAsk {
     document.addEventListener(
       'mousedown',
       (event) => {
-        if (event.target === this.button) return;
+        if (event.target === this.button || this.commentButton.contains(event.target)) return;
         this._hideOffer();
         const a = this.ask;
         // An empty box is not worth keeping open; one with a request typed in,
@@ -148,13 +169,17 @@ export class PageAsk {
   /** Put the button at the end of the current selection, if it is a passage on the page. */
   _offerSelection() {
     this._hideOffer();
-    if (!this.available() || this.ask?.state === 'sending' || this.ask?.state === 'working') return;
+    const asking = this.ask?.state === 'sending' || this.ask?.state === 'working';
+    const canAsk = this.available() && !asking;
+    const canComment = !!this.onComment && this.canComment() && !asking;
+    if (!canAsk && !canComment) return;
     const info = this.viewer.getSelectionInfo();
     if (!info) return;
     const passage = this._capture(info);
     if (!passage) return;
     this.offer = passage;
-    this.button.hidden = false;
+    this.button.hidden = !canAsk;
+    this.commentButton.hidden = !canComment;
     this._placeButton();
   }
 
@@ -187,6 +212,7 @@ export class PageAsk {
   _hideOffer() {
     this.offer = null;
     this.button.hidden = true;
+    this.commentButton.hidden = true;
   }
 
   /** A rectangle of the passage, in the scroll container's coordinates. */
@@ -204,6 +230,10 @@ export class PageAsk {
     // cover on its own line.
     this.button.style.left = `${last.left + last.width}px`;
     this.button.style.top = `${last.top - 3}px`;
+    // The comment button just after the ✦, or in its place when there is none.
+    const step = this.button.hidden ? 0 : 26;
+    this.commentButton.style.left = `${last.left + last.width + step}px`;
+    this.commentButton.style.top = `${last.top - 3}px`;
   }
 
   /* ---------------- asking ---------------- */
@@ -211,7 +241,7 @@ export class PageAsk {
   /** Open the request box on the passage on offer. */
   open() {
     const passage = this.offer;
-    if (!passage) return;
+    if (!passage || this.button.hidden) return;
     this._hideOffer();
     this.close();
     window.getSelection()?.removeAllRanges();

@@ -36,11 +36,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .annotations import PROPOSE, SOURCE, parse_annotations
+from .annotations import PROPOSE, SOURCE, is_annotation_line, parse_annotations
 from .config import AppConfig
 from .paths import to_project_relative
 from .proposals import proposals_in
-from .provenance import source_ref
+from .provenance import bib_entries, source_ref
 from .snapshots import iter_source_files
 from .synctex import synctex_data_file
 
@@ -83,6 +83,10 @@ _SHEET = re.compile(r"^\{(\d+)")
 # One SyncTeX small point is 1/65536 pt; magnification and unit scale that, and
 # the parse fills them in from the header before any record is read.
 _SP_PER_PT = 65536.0
+
+# How much of the sentence a source backs travels with it, to tell one source
+# in a paragraph's list from the next.
+_BACKS_CHARS = 120
 
 _cache: dict[str, tuple[str, dict[str, Any]]] = {}
 
@@ -320,6 +324,7 @@ def _map_file(
                 break
 
     annotations = parse_annotations(text)
+    lines = text.split("\n")
     # Each annotation is one item on the page, except proposals: the versions
     # of one choice are drawn, and picked from, together.
     items: list[tuple[int, int, str, dict[str, Any]]] = []
@@ -328,11 +333,13 @@ def _map_file(
             continue
         item = note.as_dict()
         if note.kind == SOURCE:
-            # A provenance marker: drawn as an icon, opened in the peek.
+            # A provenance marker: listed under its paragraph's icon, opened in
+            # the peek. The start of the sentence it backs goes with it.
             ref = source_ref(note)
             if ref is None:
                 continue
             item["source"] = ref.as_dict()
+            item["backs"] = _backed_line(lines, note.end)
         items.append((note.line, note.end, note.place, item))
     for choice in proposals_in(text, annotations):
         item = {"kind": PROPOSE, "place": "proposal", **choice.as_dict()}
@@ -380,6 +387,19 @@ def _map_file(
     return bars, notes
 
 
+def _backed_line(lines: list[str], end: int) -> str:
+    """The first line of text below an annotation ending at line ``end``: with
+    one sentence per line, the sentence it is about. Shortened, as written."""
+    for line in lines[end:]:
+        if not line.strip():
+            return ""  # the paragraph ended first
+        if is_annotation_line(line):
+            continue
+        text = " ".join(line.split())
+        return text if len(text) <= _BACKS_CHARS else text[: _BACKS_CHARS - 1].rstrip() + "…"
+    return ""
+
+
 def _signature(config: AppConfig, sources: list[Path]) -> str:
     """What the cached answer depends on: the SyncTeX data, and the source text.
 
@@ -412,14 +432,14 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
     if synctex_data_file(config.pdf_path) is None:
         return {"palette": PARAGRAPH_PALETTE, "bars": [], "annotations": []}
 
-    sources = [
-        path
-        for path in iter_source_files(config.root)
-        if path.suffix.lower() in _PROSE_SUFFIXES
-    ]
+    every = iter_source_files(config.root)
+    sources = [path for path in every if path.suffix.lower() in _PROSE_SUFFIXES]
+    # The .bib files only name the papers sources cite, but a renamed title
+    # should still reach the margin without a rebuild.
+    bibs = [path for path in every if path.suffix.lower() == ".bib"]
 
     key = str(config.pdf_path)
-    signature = _signature(config, sources)
+    signature = _signature(config, [*sources, *bibs])
     cached = _cache.get(key)
     if cached is not None and cached[0] == signature:
         return cached[1]
@@ -437,6 +457,19 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
         file_bars, file_notes = _map_file(path, relative, line_index, left_margin, right_margin)
         bars.extend(file_bars)
         notes.extend(file_notes)
+
+    # Papers by their bib entry, so a paragraph's list of sources can say what
+    # each one is rather than give its key.
+    keys = {
+        note["source"]["target"]
+        for note in notes
+        if note.get("source", {}).get("type") == "paper"
+    }
+    entries = bib_entries(config, keys)
+    for note in notes:
+        source = note.get("source")
+        if source and source["type"] == "paper" and source["target"] in entries:
+            note["bib"] = entries[source["target"]]
 
     answer = {"palette": PARAGRAPH_PALETTE, "bars": bars, "annotations": notes}
     _cache[key] = (signature, answer)

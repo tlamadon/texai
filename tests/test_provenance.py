@@ -244,3 +244,37 @@ def test_what_the_margin_has_is_enough_to_peek(config, project, tmp_path):
     assert (answer["view"], answer["path"]) == ("pdf", "materials/Norwich_JMP.pdf")
     assert answer["source"]["quote"] == "Firms in our sample are small"
     assert answer["source"]["sha"] == "e760a4e2"
+
+
+def test_a_source_carries_the_start_of_the_sentence_it_backs(tmp_path):
+    path = tmp_path / "s.tex"
+    long = "word " * 40
+    path.write_text(
+        "%@src @a2020\n"  # 1
+        "%@src #tab:main\n"  # 2
+        "  The   first claim.\n"  # 3
+        "%@src @b2021\n"  # 4
+        f"{long}\n"  # 5
+        "%@src @c2022\n"  # 6
+        "\n"  # 7: the paragraph ends before any sentence
+    )
+    index = {("s.tex", 3): {1: [100.0, 100.0]}, ("s.tex", 5): {1: [112.0, 112.0]}}
+    _, notes = _map_file(path, "s.tex", index, 72.0, 540.0)
+    backs = [note["backs"] for note in notes]
+    assert backs[:2] == ["The first claim.", "The first claim."]
+    assert backs[2].endswith("…") and len(backs[2]) == 120
+    assert backs[3] == ""
+
+
+def test_bib_entries_reads_only_the_keys_asked_for(config):
+    from texai.provenance import bib_entries
+
+    assert bib_entries(config, {"card2018", "missing"}) == {
+        "card2018": {
+            "title": "What Works? A Meta Analysis",
+            "author": "Card, David and Kluve, Jochen and Weber, Andrea",
+            "year": "2018",
+            "journal": "JEEA",
+        }
+    }
+    assert bib_entries(config, set()) == {}

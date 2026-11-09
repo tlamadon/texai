@@ -18,6 +18,14 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .agent import AgentSession, AgentUnavailable
 from .agent_tools import TOOLS_MOUNT, build_tools_server
+from .comments import (
+    CommentError,
+    add_comment,
+    comment_author,
+    delete_annotation,
+    reply_to,
+    set_status,
+)
 from .commitmsg import propose_message
 from .complete import MODEL as COMPLETION_MODEL
 from .complete import CompletionUnavailable, complete_text, completion_status
@@ -34,6 +42,7 @@ from .git import scoped_diff
 from .merge import merge3, normalize_newlines
 from .models import (
     ChatRequest,
+    CommentRequest,
     CommitRequest,
     CompleteRequest,
     ParagraphWrite,
@@ -52,7 +61,7 @@ from .navigate import LocateError, locate, locate_forward, locate_range
 from .paragraphs import paragraph_bars
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .provenance import ProvenanceError, resolve_source, serve_path, source_from_dict
-from .selection import atomic_write_json, build_selection
+from .selection import atomic_write_json, atomic_write_text, build_selection
 from .sessions import catalogue, conversation
 from .source import (
     NoParagraph,
@@ -242,6 +251,8 @@ def create_app(
                 "available": complete_available,
                 "reason": complete_reason,
             },
+            # Who comments written on the page are signed by.
+            "author": comment_author(config.root),
         }
 
     @app.get("/api/status")
@@ -693,6 +704,32 @@ def create_app(
         bus.publish("build_finished", turnId=None, attempt=1, ok=build["ok"],
                     errors=build["errors"], summary=build["summary"])
         return build
+
+    @app.post("/api/comments")
+    async def comments(payload: CommentRequest) -> dict[str, Any]:
+        """Add a comment above a source line, or reply to, resolve, reopen or
+        delete one: the reader's own edit, saved like one, then rebuilt."""
+        if controller.busy:
+            raise _error(409, "agent_busy", "The agent is editing right now; try again in a moment.")
+        try:
+            source = read_source(config, payload.file)
+        except SourceError as exc:
+            raise _error(404, "source_missing", str(exc)) from exc
+        text, by = source["text"], comment_author(config.root)
+        try:
+            if payload.action == "add":
+                new, _ = add_comment(text, payload.line, payload.text, by)
+            elif payload.action == "reply":
+                new = reply_to(text, payload.line, payload.kind, payload.said, payload.text, by)
+            elif payload.action == "delete":
+                new = delete_annotation(text, payload.line, payload.kind, payload.said)
+            else:
+                status = "done" if payload.action == "resolve" else ""
+                new = set_status(text, payload.line, payload.kind, payload.said, status)
+        except CommentError as exc:
+            raise _error(409, "comment_conflict", str(exc)) from exc
+        atomic_write_text(config.root / source["file"], new)
+        return {"ok": True, "file": source["file"], "build": await _saved_by_hand(source["file"])}
 
     @app.get("/api/paragraph")
     async def get_paragraph(file: str, line: int) -> dict[str, Any]:

@@ -617,7 +617,7 @@ We find a value close to one.
 |---|---|---|
 | `%@intent` | a few words naming what the paragraph is *for* | left margin, beside the paragraph's colour bar, in its colour |
 | `%@comment`, `%@todo`, `%@question`, any other word | a note on the line below | a slip in the right margin, clamped to three lines until hovered |
-| `%@src` | what backs the sentence below | a small icon at the end of the line (see *Provenance*) |
+| `%@src` | what backs the sentence below | one icon per paragraph, listing its sources (see *Provenance*) |
 | `%@propose` | a version of the line below | a blue slip saying how many versions there are (see *Proposals*) |
 
 **Notes, comments and todos**
@@ -634,9 +634,25 @@ We find a value close to one.
 - `%@intent` is about its paragraph. Every other kind is placed beside the
   first line below it that typesets something.
 
+**Commenting from the page**
+- Select a passage and a comment button appears beside the ✦. It opens a small
+  box: write the comment and press Enter. It goes into the source as
+  `%@comment id:c3 by:you …` on the line above the sentence, and the page
+  rebuilds. No agent is involved, so it works even when the agent is off.
+- Clicking a note in the margin opens its thread: the note, its replies and
+  who wrote each. From there you can reply, resolve or reopen it, delete a
+  reply or the whole thread (deleting asks twice), or open it in the source.
+- Replies fold into the note they answer, which shows how many it has.
+- These are your own edits, saved like a save in the editor: they rebuild the
+  page and do not show up as agent changes waiting for review.
+- Comments are signed with `TEXAI_AUTHOR` if set, else with your git
+  `user.name`. A two-word name is shortened to its initials; a one-word name is
+  used as it is.
+
 **In the app**
-- Clicking a note opens the editor on its line. In the editor, `%@` and `%>`
-  lines are tinted so they stand out from ordinary comments.
+- Alt-click a note to open the editor on its line; clicking an intent always
+  does. In the editor, `%@` and `%>` lines are tinted so they stand out from
+  ordinary comments.
 - **Notes** in the toolbar hides and shows notes and proposals, and **Sources**
   does the same for provenance icons. Each button only appears when the paper
   has something for it.
@@ -715,10 +731,18 @@ After the target, in any order:
 - `sha:` gives the first hex digits of the PDF's SHA-256.
 - `-- ...` is a note.
 
-Each `%@src` shows as a small grey icon at the end of the line it backs. The
-icon's shape says what kind of source it is. **Sources** in the toolbar hides
-and shows them. Click an icon to open the source in the **Peek** tab beside the
-page; Alt-click opens the annotation in the editor.
+A paragraph's sources share one small grey icon in the right margin, level
+with the first sentence they back, with a count when there are several. Click
+it for the list. Each entry shows:
+
+- what the source links to: the paper's title and authors from your `.bib`, a
+  file and its lines, or a label in this paper;
+- its quote or note;
+- the start of the sentence it backs.
+
+Click an entry to open that source in the **Peek** tab beside the page;
+Alt-click opens its annotation in the editor. **Sources** in the toolbar hides
+and shows the icons.
 
 - **A paper or a project PDF** opens in a viewer of its own. The page you are
   reading stays where it was.
