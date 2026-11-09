@@ -7,7 +7,7 @@
 
 import { getJSON, postJSON } from './api.js';
 import { renderMarkdown } from './markdown.js';
-import { markChosen, renderOffer } from './options.js';
+import { markChosen, markKept, renderOffer } from './options.js';
 import { ProgressBar, progressLabels } from './progress.js';
 import { SessionMenu, pastConversation } from './sessions.js';
 import { showToast } from './toast.js';
@@ -52,7 +52,9 @@ export class ChatPanel {
       tabChat: document.getElementById('tab-chat'),
       tabTranscript: document.getElementById('tab-transcript'),
       tabSource: document.getElementById('tab-source'),
+      tabPeek: document.getElementById('tab-peek'),
       editorPane: document.getElementById('editor-pane'),
+      peekPane: document.getElementById('peek'),
     };
     this.sessions = new SessionMenu();
     this.sessions.onCopyResume = (command) => this.copyResumeCommand(command);
@@ -73,7 +75,7 @@ export class ChatPanel {
     this.onGoTo = null;      // click a file:line reference
     this.onEdit = null;      // open a marked passage in the editor
     this.onNavigate = null;  // the agent moved the view itself
-    this.onViewChange = null; // chat / transcript / source
+    this.onViewChange = null; // chat / transcript / source / peek
 
     this._wire();
   }
@@ -87,6 +89,7 @@ export class ChatPanel {
     this.els.tabChat.addEventListener('click', () => this.setView('chat'));
     this.els.tabTranscript.addEventListener('click', () => this.setView('transcript'));
     this.els.tabSource.addEventListener('click', () => this.setView('source'));
+    this.els.tabPeek.addEventListener('click', () => this.setView('peek'));
     this.els.input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
@@ -100,9 +103,11 @@ export class ChatPanel {
     this.els.messages.hidden = view !== 'chat';
     this.els.transcript.hidden = view !== 'transcript';
     this.els.editorPane.hidden = view !== 'source';
+    this.els.peekPane.hidden = view !== 'peek';
     this.els.tabChat.classList.toggle('active', view === 'chat');
     this.els.tabTranscript.classList.toggle('active', view === 'transcript');
     this.els.tabSource.classList.toggle('active', view === 'source');
+    this.els.tabPeek.classList.toggle('active', view === 'peek');
     if (view === 'transcript') this._scrollTranscript();
     this.onViewChange?.(view);
   }
@@ -433,7 +438,16 @@ export class ChatPanel {
       case 'offer_picked': {
         // Picked on the page or here: either way, show which one went in.
         const node = this.cards.get(event.turnId)?.offers?.[event.offer];
-        if (node) markChosen(node, event.option);
+        if (node) {
+          markChosen(node, event.option);
+          markKept(node, '', true);
+        }
+        break;
+      }
+      case 'offer_kept': {
+        // Kept for later (or, with no id, dismissed from the source since).
+        const node = this.cards.get(event.turnId)?.offers?.[event.offer];
+        if (node) markKept(node, event.id);
         break;
       }
       case 'agent_session':
@@ -665,6 +679,13 @@ export class ChatPanel {
         onPick: async (i) => {
           try {
             await postJSON(`/api/turns/${turn.id}/pick`, { offer: k, option: i });
+          } catch (err) {
+            showToast(err.message || String(err), { type: 'error' });
+          }
+        },
+        onKeep: async () => {
+          try {
+            await postJSON(`/api/turns/${turn.id}/keep`, { offer: k });
           } catch (err) {
             showToast(err.message || String(err), { type: 'error' });
           }

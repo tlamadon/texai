@@ -117,6 +117,26 @@ class ChatRequest(BaseModel):
         return self
 
 
+class ProposalRequest(BaseModel):
+    """A ``%@propose`` choice in the source, and what to do with it: put
+    version ``option`` in place, or with no option, dismiss the choice."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = Field(min_length=1, max_length=1000)
+    id: str = Field(default="", max_length=100)
+    line: int | None = Field(default=None, ge=1)  # for a choice written without an id
+    option: int | None = Field(default=None, ge=0, le=10)
+
+
+class KeepRequest(BaseModel):
+    """An offer to keep in the source as a proposal, among those a turn made."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    offer: int = Field(default=0, ge=0, le=100)
+
+
 class PickRequest(BaseModel):
     """The version the user clicked, among those a turn offered."""
 

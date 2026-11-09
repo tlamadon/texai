@@ -28,6 +28,7 @@ from .timing import AgentClock
 from .events import EventBus
 from .navigate import LocateError, locate
 from .options import OFFER_OPTIONS_DESCRIPTION, OFFER_OPTIONS_SCHEMA, offer_options
+from .papers import READ_PAPER_DESCRIPTION, READ_PAPER_SCHEMA, read_paper
 from .prompt import SYSTEM_PROMPT_APPEND
 
 __all__ = [
@@ -71,6 +72,8 @@ ALLOWED_TOOLS = [
     "mcp__texai__show_in_pdf",
     # Versions of a passage for the user to pick from (see texai.options).
     "mcp__texai__offer_options",
+    # A PDF as text, and where a quote is in it (see texai.papers).
+    "mcp__texai__read_paper",
 ]
 DISALLOWED_TOOLS = ["Bash", "WebFetch", "WebSearch", "Task", "KillShell", "BashOutput"]
 
@@ -223,7 +226,8 @@ async def navigate_to(config: AppConfig, bus: EventBus, file: Any, line: Any, wh
 
 def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
     """An in-process MCP server giving the agent texai's own actions: move the
-    view, and offer versions of a passage for the user to pick from.
+    view, offer versions of a passage for the user to pick from, and read a
+    paper's PDF as text.
 
     Runs in this process, so the handler can publish straight onto the event
     bus the browser is already listening to.
@@ -257,7 +261,20 @@ def build_navigation_server(config: AppConfig, bus: EventBus) -> Any:
         )
         return {"content": [{"type": "text", "text": text}]}
 
-    return create_sdk_mcp_server(name="texai", version="1.0.0", tools=[show_in_pdf, offer])
+    @tool("read_paper", READ_PAPER_DESCRIPTION, READ_PAPER_SCHEMA)
+    async def paper(args: dict[str, Any]) -> dict[str, Any]:
+        text = await asyncio.to_thread(
+            read_paper,
+            config,
+            args.get("target", ""),
+            args.get("pages", "") or "",
+            args.get("find", "") or "",
+        )
+        return {"content": [{"type": "text", "text": text}]}
+
+    return create_sdk_mcp_server(
+        name="texai", version="1.0.0", tools=[show_in_pdf, offer, paper]
+    )
 
 
 def _block_kind(content: list[Any], thinking: type, tool_use: type) -> str:

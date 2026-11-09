@@ -123,6 +123,8 @@ async def test_the_tool_answers_the_agent_and_publishes_the_offer(project: Path)
     answer = await offer_options(config, bus, "sections/model.tex", ORIGINAL, OPTIONS)
     assert answer.startswith("Offered 3 options for sections/model.tex:1")
     assert [e.type for e in bus.since(0)] == ["options_offered"]
+    # Offering is free: the file is untouched until a version is picked or kept.
+    assert (project / "sections" / "model.tex").read_text() == MODEL
 
     refused = await offer_options(config, bus, "sections/model.tex", "nowhere", OPTIONS)
     assert refused.startswith("Not offered:")
@@ -149,6 +151,66 @@ async def test_an_offer_is_kept_on_the_turn_and_edits_nothing(project: Path):
     (offer,) = turn.as_dict()["offers"]
     assert offer["file"] == "sections/model.tex" and len(offer["options"]) == 3
     assert (project / "sections" / "model.tex").read_text() == MODEL
+
+
+async def test_keeping_an_offer_writes_it_into_the_source(project: Path):
+    controller, _ = await offered_turn(project)
+    offered = controller.turns[-1]
+
+    kept = await controller.keep_offer(offered.id, 0)
+    await finish(controller)
+    assert kept.status == "applied" and kept.message == "Keep 3 versions as a proposal"
+    text = (project / "sections" / "model.tex").read_text()
+    assert text == (
+        "%@propose id:p1 by:agent lines:2 -- shorter\n"
+        "%> The model has two parts.\n"
+        "%@propose id:p1 by:agent lines:2 -- active\n"
+        "%> We split the model in two.\n"
+        "%@propose id:p1 by:agent lines:2 -- formal\n"
+        "%> The model comprises two components.\n" + MODEL
+    )
+    offer = offered.offers[0]
+    assert (offer["id"], offer["line"]) == ("p1", 7)
+    (event,) = [e for e in controller.bus.since(0) if e.type == "offer_kept"]
+    assert event.data == {"turnId": offered.id, "offer": 0, "id": "p1"}
+    with pytest.raises(OfferError, match="Already kept"):
+        await controller.keep_offer(offered.id, 0)
+
+    # Picking from the turn's card later goes through the kept choice.
+    await controller.pick(offered.id, 0, 1)
+    await finish(controller)
+    assert (project / "sections" / "model.tex").read_text() == (
+        "We split the model in two.\n\nThe data come next.\n"
+    )
+
+
+async def test_a_kept_offer_dismissed_from_the_source_can_be_kept_again(project: Path):
+    controller, _ = await offered_turn(project)
+    offered = controller.turns[-1]
+    await controller.keep_offer(offered.id, 0)
+    await finish(controller)
+
+    await controller.settle_proposal("sections/model.tex", "p1", None, None)
+    await finish(controller)
+    assert (project / "sections" / "model.tex").read_text() == MODEL
+    assert "id" not in offered.offers[0]
+    kept = [e.data for e in controller.bus.since(0) if e.type == "offer_kept"]
+    assert kept[-1] == {"turnId": offered.id, "offer": 0, "id": ""}
+
+
+async def test_a_picked_or_changed_offer_is_not_kept(project: Path):
+    controller, _ = await offered_turn(project)
+    offered = controller.turns[-1]
+    (project / "sections" / "model.tex").write_text("Rewritten by hand.\n")
+    turn = await controller.keep_offer(offered.id, 0)
+    await finish(controller)
+    assert turn.status == "answered" and "id" not in offered.offers[0]
+
+    (project / "sections" / "model.tex").write_text(MODEL)
+    await controller.pick(offered.id, 0, 0)
+    await finish(controller)
+    with pytest.raises(OfferError, match="already in place"):
+        await controller.keep_offer(offered.id, 0)
 
 
 async def test_picking_puts_the_version_in_place_without_the_agent(project: Path):

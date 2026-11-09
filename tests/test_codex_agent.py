@@ -143,6 +143,7 @@ def test_the_thread_is_pointed_at_texai_with_its_tools_pre_approved():
     assert texai["url"].endswith(TOOLS_PATH)
     assert texai["tools"]["show_in_pdf"]["approval_mode"] == "approve"
     assert texai["tools"]["offer_options"]["approval_mode"] == "approve"
+    assert texai["tools"]["read_paper"]["approval_mode"] == "approve"
     assert _thread_config(None) is None
 
 
@@ -267,7 +268,7 @@ def test_codex_reaches_show_in_pdf_on_texais_own_server(config):
 
         _, listed = _rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, session_id)
         names = [tool["name"] for tool in listed["result"]["tools"]]
-        assert names == ["show_in_pdf", "offer_options"]
+        assert names == ["show_in_pdf", "offer_options", "read_paper"]
 
         _, called = _rpc(
             client,

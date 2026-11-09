@@ -57,6 +57,8 @@
           Guides</button>
         <button id="toggle-notes" type="button" class="toggle" aria-pressed="true" hidden
                 title="Show the %@ annotations from the source in the page margins">Notes</button>
+        <button id="toggle-sources" type="button" class="toggle" aria-pressed="true" hidden
+                title="Show the %@src markers: what backs each sentence">Sources</button>
         <button id="toggle-marks" type="button" class="toggle"
                 title="Show what the agent changed, inline on the page">Show changes</button>
         <button id="accept-all" type="button" class="ghost" hidden
@@ -149,6 +151,8 @@
           <button id="tab-transcript" class="tab" type="button" role="tab">Transcript</button>
           <button id="tab-source" class="tab" type="button" role="tab"
                   title="Edit the LaTeX source; saving rebuilds the PDF">Source</button>
+          <button id="tab-peek" class="tab" type="button" role="tab"
+                  title="What backs a sentence: click a source marker in the margin">Peek</button>
         </div>
         <span id="agent-status" class="agent-status">checking&hellip;</span>
         <div class="spacer"></div>
@@ -216,6 +220,34 @@
           <div id="editor-host" class="editor-host"></div>
         </div>
         <div id="editor-status" class="editor-status"></div>
+      </section>
+
+      <section id="peek" class="peek-pane" hidden>
+        <header class="peek-head">
+          <div class="peek-line1">
+            <span id="peek-kind" class="peek-kind"></span>
+            <span id="peek-title" class="peek-title"></span>
+            <div class="spacer"></div>
+            <div id="peek-actions" class="peek-actions"></div>
+          </div>
+          <div id="peek-detail" class="peek-detail"></div>
+          <div id="peek-status" class="peek-status" hidden></div>
+        </header>
+        <div class="peek-body">
+          <div id="peek-empty" class="placeholder">
+            Click a source marker in the page margin to see what backs that sentence,
+            or a proposal to compare its versions.
+            Markers come from <code>%@src</code> lines in the LaTeX: <code>#label</code>
+            for something in this paper, a path for a project file, <code>@key</code>
+            for a paper in <code>papers/</code>.
+          </div>
+          <div id="peek-pdf" class="peek-pdf" hidden>
+            <div id="peek-viewer" class="viewer"></div>
+          </div>
+          <div id="peek-text" class="peek-text" hidden></div>
+          <img id="peek-image" class="peek-image" alt="" hidden>
+          <div id="peek-proposal" class="peek-proposal" hidden></div>
+        </div>
       </section>
 
       <div id="composer" class="composer">

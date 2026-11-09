@@ -436,7 +436,9 @@ export class PageAsk {
     a.offerTurn = turn.id;
     a.offers = turn.offers;
     a.offersEl.replaceChildren(
-      ...turn.offers.map((offer, k) => renderOffer(offer, { onPick: (i) => this.pick(k, i) }))
+      ...turn.offers.map((offer, k) =>
+        renderOffer(offer, { onPick: (i) => this.pick(k, i), onKeep: () => this.keep(k) })
+      )
     );
     a.offersEl.hidden = false;
     a.body.hidden = true;
@@ -469,6 +471,24 @@ export class PageAsk {
     this._setStatus('Rebuilding…', 'busy');
     if (this._early?.id === a.turnId) this.turnFinished(this._early);
     this._early = null;
+  }
+
+  /** Keep offer `offer` in the source as a proposal, and close the box: the
+   * versions wait in the margin. */
+  async keep(offer) {
+    const a = this.ask;
+    if (!a || a.state !== 'choose') return;
+    this._setStatus('Keeping them in the source…', 'busy');
+    try {
+      await postJSON(`/api/turns/${a.offerTurn}/keep`, { offer });
+    } catch (err) {
+      if (this.ask !== a) return;
+      this._setStatus(err.message || String(err), 'err');
+      return;
+    }
+    const { file, line } = a.offers[offer];
+    this.close();
+    showToast(`Kept as a proposal at ${file}:${line} — pick one later from the margin.`);
   }
 
   /* ---------------- the box ---------------- */

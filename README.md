@@ -205,6 +205,12 @@ versions to pick from. The switch keeps its setting from one request to the
 next. The versions also stay in the turn's chat card, so you can still pick one
 after closing the box.
 
+Offering costs nothing: the file is untouched until you pick. To decide later
+instead, **Keep as proposal** under the versions writes them into the source as
+`%@propose` lines above the passage (see *Proposals*). From there they outlast
+the session: a card in the margin opens them again tomorrow, or on a
+co-author's machine.
+
 Closing the box does not stop the agent; the turn finishes in the chat either
 way. One request runs at a time, so the ✦ stays away while the agent is busy.
 
@@ -343,10 +349,14 @@ under you:
 The tool only scrolls; it cannot change anything.
 
 Its second tool, `offer_options(file, original, options)`, is how it hands you
-versions to pick from (see *Asking from the page*). It changes nothing either:
-texai checks that `original` occurs exactly once in the file, and the agent is
-told to fix its quote if not. Your pick is applied by texai as a plain
-replacement of that text, in a turn of its own.
+versions to pick from (see *Asking from the page*). texai checks that
+`original` occurs exactly once in the file, and the agent is told to fix its
+quote if not.
+
+The tool changes nothing in the file. Your pick is applied by texai as a plain
+replacement of that text, in a turn of its own. If you keep the versions for
+later instead, texai writes them above the passage as `%@propose` lines,
+widened to whole lines; picking one then puts it in and takes those lines out.
 
 ### Two views, one stream
 
@@ -571,34 +581,180 @@ needs `ANTHROPIC_API_KEY` (or an `ant auth login` profile); without one, the
 ### Annotations in the source
 
 Notes about the paper belong in the paper. A comment line that opens with `%@`
-is an annotation: TeX skips it like any other comment, and texai shows it in
-the margins of the page.
+is an annotation. TeX skips it like any other comment, and texai shows it
+beside the page.
+
+Intent, comments, provenance and edit proposals are all annotations, and all
+are written the same way:
+
+```latex
+%@kind [key:value ...] [-- text]
+%> more lines, when there is more to say than fits on one
+```
+
+The word glued to the `@` is the kind; a bare `%@ ...` is a comment. Any
+annotation can carry four fields:
+
+- **`id:c4`** names it, so that others can point at it.
+- **`by:TL`** says who wrote it. The agent signs `by:agent`. Write
+  `by:"Two words"` for a value with spaces.
+- **`re:c4`** makes it a reply to `c4`.
+- **`status:done`** marks it as settled: a todo done, a question answered.
+
+The paper is written one sentence per line, and an annotation is about the line
+below it, so in practice it is about one sentence.
 
 ```latex
 %@intent motivation, contrast with prior work
-%@comment Is this consistent with Table 2? -- TL
-We estimate the elasticity from the 2008 reform, which ...
-%@todo cite the 2019 replication
-and find a value close to one.
+We estimate the elasticity from the 2008 reform.
+%@comment id:c1 by:TL Is this consistent with Table 2?
+%@comment id:c2 re:c1 by:agent Yes, column (2) gives 0.31.
+%@todo status:done -- cite the 2019 replication
+We find a value close to one.
 ```
 
-- **`%@intent`** is a few keywords naming what the paragraph is *for*. They
-  appear in the left margin beside the paragraph's colour bar, in its colour,
-  so you can read the paper's argument down the edge of the page.
-- **Any other kind** (`%@comment`, `%@todo`, `%@question`, anything) and a bare
-  `%@ ...` is a note. It goes in the right margin, level with the line that
-  follows it, clamped to three lines until you hover over it.
+| Kind | What it is | Where it shows |
+|---|---|---|
+| `%@intent` | a few words naming what the paragraph is *for* | left margin, beside the paragraph's colour bar, in its colour |
+| `%@comment`, `%@todo`, `%@question`, any other word | a note on the line below | a slip in the right margin, clamped to three lines until hovered |
+| `%@src` | what backs the sentence below | a small icon at the end of the line (see *Provenance*) |
+| `%@propose` | a version of the line below | a blue slip saying how many versions there are (see *Proposals*) |
 
-An annotation belongs to the blank-line-separated paragraph it sits in. A block
-of nothing but annotations, set off by blank lines, belongs to the next
-paragraph down. Clicking one opens the editor on its line, where `%@` lines are
-tinted so they stand out from ordinary comments. **Notes** in the toolbar hides
-and shows them; the button only appears when the paper has annotations.
+**Notes, comments and todos**
+- Fields come first and the rest of the line is the text, exactly as written.
+  `%@comment Note: see Table 2 -- TL` keeps all of it, because `Note:` is not a
+  field this kind takes.
+- A reply shows **↳** and its author.
+- A settled item is faded, and a done todo is struck through.
 
-The agent is told what they mean. It keeps a paragraph's annotations with the
-paragraph when it rewrites it, writes to the stated intent, and leaves them
-alone unless asked. *Add an intent to every paragraph in the model section* or
-*resolve the todos in results.tex* are ordinary requests.
+**Where an annotation belongs**
+- It belongs to the blank-line-separated paragraph it sits in. A block of
+  nothing but annotations, set off by blank lines, belongs to the next
+  paragraph down.
+- `%@intent` is about its paragraph. Every other kind is placed beside the
+  first line below it that typesets something.
+
+**In the app**
+- Clicking a note opens the editor on its line. In the editor, `%@` and `%>`
+  lines are tinted so they stand out from ordinary comments.
+- **Notes** in the toolbar hides and shows notes and proposals, and **Sources**
+  does the same for provenance icons. Each button only appears when the paper
+  has something for it.
+
+**How it is built**
+- The grammar and the list of kinds live in one place,
+  `src/texai/annotations.py`.
+- Each kind declares where it goes, and the page draws by that alone. A new
+  kind is a line in that table.
+
+The agent is taught this grammar. It keeps a sentence's annotations with the
+sentence when it rewrites or moves it, writes to the stated intent, and leaves
+annotations alone unless asked. These are all ordinary requests:
+
+- *Add an intent to every paragraph in the model section*
+- *Answer TL's comments*
+- *Mark the todos you resolved as done*
+
+### Proposals
+
+A `%@propose` is one version of the lines below it. Its `%>` lines are the
+version's text, in full, and its free text is a label. Consecutive proposals
+with the same `id:` are one choice:
+
+```latex
+%@propose id:p1 by:agent -- shorter
+%> We find an elasticity of 0.3.
+%@propose id:p1 by:agent -- with the range
+%> We find an elasticity of 0.3 (0.25 to 0.36 across specifications).
+We find that the elasticity, across all of our specifications, is about 0.3.
+```
+
+- **What a choice replaces:** one line, the sentence directly below it, unless
+  `lines:N` says more. Nothing may come between a choice and the lines it
+  replaces.
+- **On the page:** a blue slip in the margin says how many versions there are.
+  Clicking it opens them in the **Peek** tab, next to the current text, with
+  the words each version changes marked.
+- **Picking or dismissing:** picking one puts it in place and removes the whole
+  choice. **Dismiss** removes the choice and keeps the text. Either is a turn of
+  its own, reviewed and undone like any other edit.
+- **Where they come from:** **Keep as proposal** on versions the agent offered
+  (see *Asking from the page*); the agent, when asked to *suggest, don't edit*;
+  or you, by hand.
+- **Why they live in the source:** a proposal survives a restart, goes through
+  git to a co-author, and can wait until you decide.
+- **The cost:** they are source edits. They show in the diff, and writing them
+  rebuilds the document, because the extra lines move SyncTeX's line numbers.
+  That is why an offer stays out of the file until you ask to keep it.
+
+### Provenance: what backs a sentence
+
+A `%@src` annotation records where a claim comes from. Write the paper one
+sentence per line and put the `%@src` on the line above the sentence it backs;
+a sentence can have several. The first word is the target:
+
+```latex
+%@src #tab:estimates
+Table~\ref{tab:estimates} shows that the estimate is not delicate.
+%@src code/estimate.py:4-8 -- the regression behind alpha-hat
+Estimating~\eqref{eq:growth} by least squares gives $\hat{\alpha} = 0.34$.
+%@src @smith2019 p.2 "the capital share of income is remarkably stable" sha:e760a4e2
+That is in line with the cross-country evidence~\cite{smith2019}.
+```
+
+- **`#label`** is something in this paper, by its `\label`.
+- **A path** is a file in the project, optionally with `:line` or
+  `:start-end`.
+- **`@key`** is a paper: `papers/<key>.pdf`, named after its bib key.
+
+After the target, in any order:
+
+- `p.N` is a page, in the PDF file's own count rather than the journal's
+  printed page numbers.
+- `"..."` is the passage that backs the claim, copied word for word.
+- `sha:` gives the first hex digits of the PDF's SHA-256.
+- `-- ...` is a note.
+
+Each `%@src` shows as a small grey icon at the end of the line it backs. The
+icon's shape says what kind of source it is. **Sources** in the toolbar hides
+and shows them. Click an icon to open the source in the **Peek** tab beside the
+page; Alt-click opens the annotation in the editor.
+
+- **A paper or a project PDF** opens in a viewer of its own. The page you are
+  reading stays where it was.
+  - With a quote, texai searches the paper's text for those words and
+    highlights them. The page number only says where to look first, since pages
+    move between versions of a paper and words do not.
+  - The search ignores spacing, hyphenation, accents and ligatures, and falls
+    back to a close match.
+  - The panel tells you when the quote is on a different page from the one
+    written.
+- **A label** opens this paper's own PDF with the labelled table, figure or
+  equation outlined. **Go there** moves the main page to it.
+- **A text file** opens with the named lines highlighted.
+- **The hash** finds the paper even if the file is renamed. If the file in
+  `papers/` has changed since it was quoted, it still opens, with a warning.
+
+The bib entry, from any `.bib` in the project, supplies the title and authors
+shown in the Peek header.
+
+The agent knows the syntax, and reads papers with a tool of texai's own,
+`read_paper`. Neither agent can open a PDF by itself: Claude has file tools
+only, and its Read cannot open most papers; Codex has a shell but nothing in it
+that reads PDFs. `read_paper` extracts the text with pypdf, so it needs nothing
+installed on the system. Given a paper and a passage, it returns:
+
+- the page, in the file's own count;
+- the passage as the PDF actually words it;
+- a `%@src` line, hash included, ready to paste.
+
+A quote checked this way is one Peek will find when you click.
+
+*Source the claims in this paragraph* has the agent read the papers and write
+`%@src` lines with exact quotes, pages and hashes. It is told to say so when
+nothing supports a claim, rather than cite loosely. *Check the sources in the
+results section* has it read each one and report sentences their source does
+not support.
 
 ### Finding your way around the source
 
@@ -872,10 +1028,14 @@ absent.
   write only inside the project (and temp directories) and has no network, and
   with approvals denied, so it never stops to ask. It is told not to compile,
   but nothing prevents it.
-- The agent gets two tools of our own: `show_in_pdf`, which scrolls your view,
-  and `offer_options`, which shows you versions of a passage to pick from.
-  Neither writes anything. Claude calls them in-process. Codex calls them over
-  MCP on texai's own loopback port, which only exists when Codex is the agent.
+- The agent gets three tools of our own, none of which writes anything:
+  - `show_in_pdf` scrolls your view.
+  - `offer_options` shows you versions of a passage to pick from.
+  - `read_paper` reads a PDF inside the project as text. It reads only PDFs, and
+    applies the same path checks as everything else.
+
+  Claude calls them in-process. Codex calls them over MCP on texai's own
+  loopback port, which only exists when Codex is the agent.
 - Every turn is snapshotted before the agent starts, so any turn can be undone
   and a turn that breaks the build undoes itself. Snapshots are plain file
   copies in a temp directory keyed by project — deliberately *outside* the

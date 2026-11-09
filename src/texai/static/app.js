@@ -14,6 +14,7 @@ import { MarksLayer, narrowRects } from './marks.js';
 import { OutlinePanel } from './outline.js';
 import { ParagraphGuide } from './paraguide.js';
 import { AnnotationLayer } from './annotations.js';
+import { PeekPanel } from './peek.js';
 import { ProjectSources } from './project.js';
 import { ScrollSync } from './sync.js';
 import { showToast } from './toast.js';
@@ -36,6 +37,7 @@ const els = {
   copyRef: document.getElementById('copy-reference'),
   toggleMarks: document.getElementById('toggle-marks'),
   toggleNotes: document.getElementById('toggle-notes'),
+  toggleSources: document.getElementById('toggle-sources'),
   toggleGuides: document.getElementById('toggle-guides'),
   toggleSync: document.getElementById('toggle-sync'),
   acceptAll: document.getElementById('accept-all'),
@@ -81,7 +83,11 @@ marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.a
 // The page-side twin of the editor's paragraph gutter. Refreshed whenever the
 // PDF is (re)built; redrawn on every render alongside the change markers. Its
 // answer also places the author's `%@` annotations, drawn in the margins.
-notes = new AnnotationLayer({ viewer, button: els.toggleNotes });
+notes = new AnnotationLayer({
+  viewer,
+  button: els.toggleNotes,
+  sourcesButton: els.toggleSources,
+});
 paraGuide = new ParagraphGuide({
   viewer,
   button: els.toggleGuides,
@@ -188,7 +194,7 @@ const scrollSync = new ScrollSync({ viewer, editor, button: els.toggleSync });
 
 // The composer writes to the agent, so it only belongs to the chat views.
 chat.onViewChange = (view) => {
-  els.composer.hidden = view === 'source';
+  els.composer.hidden = view === 'source' || view === 'peek';
   editor.setActive(view === 'source');
   // Coming back to a source that has been sitting still while the page moved:
   // catch it up rather than wait for the next scroll.
@@ -384,6 +390,17 @@ async function goTo(file, line, { quiet = false, phrases = [] } = {}) {
 chat.onGoTo = goTo;
 marks.onEdit = (file, line) => editAt(file, line);
 notes.onEdit = (file, line) => editAt(file, line);
+
+// What backs a sentence, opened in the Peek tab beside the page.
+const peek = new PeekPanel();
+peek.pdfUrl = () => `/api/pdf?v=${encodeURIComponent(pdfVersion ?? 'initial')}`;
+peek.onEdit = (file, line) => editAt(file, line);
+peek.onShowInPaper = (location) => showLocation(location);
+notes.onPeek = (item) => {
+  setPanelVisible(true);
+  chat.setView('peek');
+  peek.show(item);
+};
 // A marked passage carries a column when the word was pinned down.
 chat.onEdit = (file, line, column, word) => editAt(file, line, word ? column : null);
 chat.onNavigate = (event) => {

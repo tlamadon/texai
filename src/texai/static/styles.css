@@ -244,6 +244,27 @@ button.ghost { background: transparent; }
   letter-spacing: 0.04em;
   color: #8a6d00;
 }
+/* Who wrote it, and what it answers: quiet, ahead of the text. */
+.note-card .note-by {
+  margin-right: 4px;
+  font-weight: 600;
+  color: #6b6b6b;
+}
+.note-card .note-re {
+  margin-right: 3px;
+  color: #8a8a8a;
+}
+/* Settled: still there to read, no longer asking for attention. */
+.note-layer .note-card.done { opacity: 0.55; }
+.note-layer .note-card.done .note-text { text-decoration: line-through; }
+/* Versions of the line beside it, waiting for a pick. */
+.note-layer .note-card.proposal,
+.note-layer .note-card.proposal:hover:not(:disabled) {
+  background: #eef3ff;
+  border-left-color: #4c8dff;
+}
+.note-card.proposal .note-kind { color: #2f5fb8; }
+
 /* No room for the slip: a dot that says "something here", text in the tooltip. */
 .note-layer .note-card.dot,
 .note-layer .note-card.dot:hover:not(:disabled) {
@@ -253,6 +274,32 @@ button.ghost { background: transparent; }
   border: 0;
   border-radius: 50%;
   background: #e0b000;
+}
+
+/* A %@src marker: a small grey glyph hard against the end of the line it backs.
+   Quiet until pointed at, so a well-sourced page does not read as cluttered. */
+.note-layer .note-source,
+.note-layer .note-source:hover:not(:disabled) {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  color: #8b929c;
+  opacity: 0.7;
+}
+.note-layer .note-source:hover:not(:disabled) {
+  opacity: 1;
+  color: #1f6feb;
+  background: rgba(31, 111, 235, 0.1);
+}
+.note-source svg {
+  display: block;
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* The document's own links, over the text layer so they can be clicked, but
@@ -912,6 +959,14 @@ button.toggle.active {
 .offer-note { color: var(--muted); }
 .offer-options { display: flex; gap: 6px; align-items: stretch; }
 .offer.compact .offer-options { flex-direction: column; }
+.offer-keep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.offer-kept { color: var(--muted); font-size: 12px; }
+.offer-kept:empty { display: none; }
 .offer-option {
   flex: 1 1 0;
   min-width: 0;
@@ -1731,4 +1786,140 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
   overflow-wrap: anywhere;
   max-height: 16em;
   overflow-y: auto;
+}
+
+/* ---------------- peek: what backs a sentence ---------------- */
+
+.peek-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--panel-2);
+}
+.peek-head {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--panel-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.peek-line1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.peek-kind {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.peek-kind:empty { display: none; }
+.peek-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.peek-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.peek-actions .button-link {
+  padding: 2px 8px;
+  color: var(--fg);
+  text-decoration: none;
+  border-radius: 4px;
+}
+.peek-actions .button-link:hover { background: var(--panel); }
+.peek-meta { color: var(--muted); font-size: 12px; }
+.peek-quote {
+  margin: 2px 0;
+  padding: 2px 8px;
+  border-left: 3px solid #e0b000;
+  color: var(--fg);
+  font-style: italic;
+}
+.peek-note { color: var(--muted); font-size: 12px; }
+.peek-status { font-size: 12px; color: var(--muted); }
+.peek-status.ok { color: var(--ok); }
+.peek-status.warn { color: var(--warn); }
+.peek-status.error { color: var(--err); }
+
+.peek-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.peek-body > .placeholder { padding: 16px; }
+.peek-pdf {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 0 32px;
+  background: var(--bg);
+}
+.peek-pdf .viewer { gap: 12px; }
+.page .peek-hits {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.peek-hit {
+  position: absolute;
+  background: rgba(255, 213, 0, 0.42);
+  mix-blend-mode: multiply;
+  border-radius: 2px;
+}
+
+.peek-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0;
+  background: #16181c;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.peek-text .peek-line { display: flex; white-space: pre; }
+.peek-text .peek-line.hit { background: rgba(76, 141, 255, 0.18); }
+.peek-text .ln {
+  flex: 0 0 auto;
+  width: 4.5em;
+  padding-right: 10px;
+  text-align: right;
+  color: #6e7681;
+  user-select: none;
+}
+.peek-text .peek-line.hit .ln { color: var(--accent); }
+.peek-image {
+  max-width: 100%;
+  margin: 12px auto;
+  background: #fff;
+}
+
+.peek-proposal {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.peek-current .offer-text {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
 }

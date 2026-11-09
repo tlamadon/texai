@@ -23,9 +23,11 @@ import { showToast } from './toast.js';
 const PARAGRAPH_PALETTE = 5;
 
 // An author annotation: a comment line opening with `%@`, optionally naming its
-// kind (`%@intent ...`, `%@todo ...`). Must agree with _ANNOTATION in
-// annotations.py, which places the same lines in the PDF's margins.
-const ANNOTATION = /^\s*%@(intent(?![\w-]))?/i;
+// kind (`%@intent ...`, `%@todo ...`), or a `%>` line carrying one on. Must
+// agree with _ANNOTATION and _CONTINUATION in annotations.py, which place the
+// same lines in the PDF's margins. (A stray `%>` with no `%@` above is tinted
+// too; the backend reads it as an ordinary comment.)
+const ANNOTATION = /^\s*%(?:@(intent(?![\w-]))?|>)/i;
 
 export class SourceEditor {
   constructor({ onSaved } = {}) {

@@ -26,7 +26,9 @@ from .config import AppConfig
 from .events import EventBus
 from .models import SelectionRef
 from .hunks import reconstruct
-from .options import OfferError, OfferStale, apply_option, offer_options
+from .options import OfferError, OfferStale, apply_option, offer_options, propose
+from .proposals import ProposalError, apply_proposal, dismiss_proposal, find_proposal
+from .source import SourceError, read_source
 from .prompt import compose_build_failure_prompt, compose_turn_prompt
 from .quick import (
     QuickSession,
@@ -363,6 +365,133 @@ class TurnController:
                 self.bus.publish(
                     "offer_picked", turnId=turn_id, offer=offer_index, option=option_index
                 )
+
+        self._task = asyncio.create_task(run())
+        return turn
+
+    async def keep_offer(self, turn_id: str, offer_index: int) -> Turn:
+        """Write the versions a turn offered into the source, to decide later.
+
+        An offer lives only on its turn; kept, it becomes a ``%@propose`` choice
+        above the passage, shown in the margin and carried by git, and picking
+        from it works the same either way. A turn of its own, since it edits the
+        file (and moves the lines SyncTeX maps, so the PDF is rebuilt).
+        """
+        if self.busy:
+            raise TurnBusy("an agent turn is already running")
+        source = self.get(turn_id)
+        if source is None:
+            raise KeyError(turn_id)
+        if not 0 <= offer_index < len(source.offers):
+            raise OfferError(f"{turn_id} has no offer {offer_index + 1}")
+        offer = source.offers[offer_index]
+        if offer.get("id"):
+            raise OfferError(f"Already kept, as proposal {offer['id']}.")
+        if offer.get("picked") is not None:
+            raise OfferError("A version of it is already in place.")
+
+        count = len(offer["options"])
+        where = f"{offer['file']}:{offer['line']}"
+        turn = self._start_turn(
+            f"Keep {count} versions as a proposal",
+            f"The user kept the {count} versions you offered in {turn_id} for {where} "
+            "as a %@propose choice in the source, to decide later.",
+            source.selections,
+            route="pick",
+        )
+        kept: dict[str, Any] = {}
+
+        async def write(turn: Turn) -> None:
+            try:
+                kept.update(propose(self.config, offer))
+            except OfferStale:
+                self._emit(turn, notice_entry("The passage has changed since; nothing was kept."))
+                return
+            self._emit(turn, notice_entry(f"Kept as proposal {kept['id']} at {offer['file']}:{kept['line']}."))
+            self._news.append(
+                f"(Since your last turn: the user kept your versions for {where} as "
+                f"`%@propose id:{kept['id']}` in the source, to decide later.)"
+            )
+
+        async def run() -> None:
+            await self._run(turn, write, phase="pickMs")
+            if turn.status == "applied" and kept:
+                offer.update(id=kept["id"], line=kept["line"], lines=kept["lines"])
+                self.bus.publish(
+                    "offer_kept", turnId=turn_id, offer=offer_index, id=kept["id"]
+                )
+
+        self._task = asyncio.create_task(run())
+        return turn
+
+    async def settle_proposal(
+        self, file: str, proposal_id: str, line: int | None, option: int | None
+    ) -> Turn:
+        """Pick a version of a ``%@propose`` choice in the source, or dismiss it.
+
+        A turn of its own, like picking from a turn's offer, so it is reviewed
+        and undone the same way; texai edits the file itself. Unlike an offer,
+        the choice may have been written by anyone, at any time: it is read from
+        the file as it is now.
+        """
+        if self.busy:
+            raise TurnBusy("an agent turn is already running")
+        try:
+            source = read_source(self.config, file)
+        except SourceError as exc:
+            raise OfferError(str(exc)) from exc
+        try:
+            choice = find_proposal(source["text"], proposal_id, line)
+        except ProposalError as exc:
+            raise OfferError(str(exc)) from exc
+        name = choice.id or f"at line {choice.line}"
+        where = f"{source['file']}:{choice.start}"
+        if option is None:
+            message = f"Dismiss proposal {name}"
+            news = f"the user dismissed proposal {name} at {where}, keeping the text as it was"
+        else:
+            if not 0 <= option < len(choice.options):
+                raise OfferError(f"Proposal {name} has no version {option + 1}.")
+            label = choice.options[option]["label"]
+            message = f"Use “{label}” ({option + 1} of {len(choice.options)})"
+            news = f"the user picked “{label}” from proposal {name} at {where}"
+        turn = self._start_turn(message, f"{news[0].upper()}{news[1:]}.", [], route="pick")
+
+        async def settle(turn: Turn) -> None:
+            text = read_source(self.config, source["file"])["text"]
+            try:
+                current = find_proposal(text, choice.id, choice.line)
+            except ProposalError:
+                self._emit(turn, notice_entry("The proposal is no longer in the file."))
+                return
+            new = (
+                dismiss_proposal(text, current)
+                if option is None
+                else apply_proposal(text, current, option)
+            )
+            atomic_write_text(self.config.root / source["file"], new)
+            self._emit(turn, notice_entry(f"{message} at {where}."))
+            self._news.append(f"(Since your last turn: {news}.)")
+
+        async def run() -> None:
+            await self._run(turn, settle, phase="pickMs")
+            if turn.status != "applied" or not choice.id:
+                return
+            # A choice kept from a turn's offer: that turn's card follows along,
+            # showing the pick, or, once dismissed, the offer as never kept.
+            for earlier in self.turns:
+                for k, offer in enumerate(earlier.offers):
+                    if offer.get("id") != choice.id or offer["file"] != source["file"]:
+                        continue
+                    if option is None:
+                        offer.pop("id", None)
+                        offer.pop("lines", None)
+                        self.bus.publish("offer_kept", turnId=earlier.id, offer=k, id="")
+                    else:
+                        offer["picked"] = option
+                        self.bus.publish(
+                            "offer_picked", turnId=earlier.id, offer=k, option=option
+                        )
 
         self._task = asyncio.create_task(run())
         return turn

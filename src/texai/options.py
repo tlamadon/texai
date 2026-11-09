@@ -12,6 +12,13 @@ does not match is the agent's to fix while it is still working, not the user's
 to discover when they click. The accepted offer goes out on the event bus; the
 turn controller collects it from there when the agent's turn ends, as both
 Claude (in-process) and Codex (over MCP) reach the same handler.
+
+An offer lives on its turn and costs nothing to make: the file is untouched
+until a version is picked. When the user would rather decide later, they keep
+it as a proposal: :func:`propose` writes it into the file as ``%@propose`` lines
+above the passage (see :mod:`texai.proposals`), widened to whole lines. That
+copy outlasts the session — the margin shows it after a restart, git carries it
+to a co-author — and picking from it later is the same as picking now.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ from typing import Any
 
 from .config import AppConfig
 from .events import EventBus
+from .proposals import ProposalError, apply_proposal, find_proposal, insert_proposal
 from .source import SourceError, read_source
 from .selection import atomic_write_text
 
@@ -33,6 +41,7 @@ __all__ = [
     "apply_option",
     "check_offer",
     "offer_options",
+    "propose",
 ]
 
 MIN_OPTIONS = 2
@@ -137,6 +146,42 @@ def check_offer(config: AppConfig, file: Any, original: Any, options: Any, note:
     }
 
 
+def propose(config: AppConfig, offer: dict[str, Any]) -> dict[str, Any]:
+    """Write a checked offer into its file as a ``%@propose`` choice.
+
+    The passage is widened to the whole lines it touches, and each option with
+    it, so the choice replaces lines. Returns the offer with the choice's ``id``
+    and the lines it covers.
+    """
+    try:
+        source = read_source(config, offer["file"])
+    except SourceError as exc:
+        raise OfferStale(str(exc)) from exc
+    text = source["text"]
+    if _occurrences(text, offer["original"]) != 1:
+        raise OfferStale(f"the passage in {offer['file']} has changed since it was offered")
+    at = text.index(offer["original"])
+    head = text.rfind("\n", 0, at) + 1
+    tail = text.find("\n", at + len(offer["original"]))
+    tail = len(text) if tail == -1 else tail
+    prefix = text[head:at]
+    suffix = text[at + len(offer["original"]) : tail]
+    start = text[:head].count("\n") + 1
+    stop = start + text[head:tail].count("\n")
+    options = [
+        {"label": option["label"], "text": f"{prefix}{option['text']}{suffix}"}
+        for option in offer["options"]
+    ]
+    new, proposal_id, moved = insert_proposal(text, start, stop, options)
+    atomic_write_text(config.root / source["file"], new)
+    return {
+        **offer,
+        "id": proposal_id,
+        "line": moved + offer["line"] - start,
+        "lines": text[head:tail],
+    }
+
+
 async def offer_options(
     config: AppConfig, bus: EventBus, file: Any, original: Any, options: Any, note: Any = ""
 ) -> str:
@@ -156,15 +201,27 @@ async def offer_options(
 def apply_option(config: AppConfig, offer: dict[str, Any], index: int) -> None:
     """Put option ``index`` in place of the offer's original text.
 
-    If a version was picked before, it is what gets replaced: picking again is
-    changing your mind. Raises :class:`OfferStale` when neither is in the file
-    exactly once — edited since, by hand or by a later turn.
+    An offer kept as a proposal is picked through its ``%@propose`` choice while
+    that is still in the file, which also clears it. Otherwise — never kept,
+    picked before, or the choice removed by hand — the text is swapped directly. If a version was picked before, it is what gets replaced:
+    picking again is changing your mind. Raises :class:`OfferStale` when neither
+    is in the file exactly once — edited since, by hand or by a later turn.
     """
     try:
         source = read_source(config, offer["file"])
     except SourceError as exc:
         raise OfferStale(str(exc)) from exc
     text = source["text"]
+    if offer.get("id"):
+        try:
+            choice = find_proposal(text, offer["id"])
+        except ProposalError:
+            choice = None
+        if choice is not None:
+            if choice.original != offer.get("lines"):
+                raise OfferStale(f"the passage in {offer['file']} has changed since it was offered")
+            atomic_write_text(config.root / source["file"], apply_proposal(text, choice, index))
+            return
     candidates = [offer["original"]]
     if offer.get("picked") is not None:
         candidates.insert(0, offer["options"][offer["picked"]]["text"])

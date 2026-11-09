@@ -37,7 +37,9 @@ from .models import (
     CommitRequest,
     CompleteRequest,
     ParagraphWrite,
+    KeepRequest,
     PickRequest,
+    ProposalRequest,
     SelectRequest,
     SelectResponse,
     SessionSwitch,
@@ -48,6 +50,7 @@ from .macros import document_macros
 from .navigate import LocateError, locate, locate_forward, locate_range
 from .paragraphs import paragraph_bars
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
+from .provenance import ProvenanceError, resolve_source, serve_path
 from .selection import atomic_write_json, build_selection
 from .sessions import catalogue, conversation
 from .source import (
@@ -515,6 +518,28 @@ def create_app(
         against the build inside; the first request after a rebuild pays for it."""
         return await asyncio.to_thread(paragraph_bars, config)
 
+    @app.get("/api/provenance")
+    async def provenance(spec: str) -> dict[str, Any]:
+        """What a `%@src` annotation points at, for the peek: which view shows
+        it, and where in it to look. `spec` is the annotation's text after `%@src`."""
+        try:
+            return await asyncio.to_thread(resolve_source, config, spec)
+        except ProvenanceError as exc:
+            raise _error(400, "bad_source", str(exc)) from exc
+
+    @app.get("/api/project-file")
+    async def project_file(path: str) -> Response:
+        """A file from the project, as it is on disk: the paper or figure a
+        `%@src` names. Hidden directories stay out of reach."""
+        try:
+            resolved = serve_path(config, path)
+        except ProvenanceError as exc:
+            raise _error(403, "not_served", str(exc)) from exc
+        if not resolved.is_file():
+            raise _error(404, "file_missing", f"No file {path} in the project.")
+        media_type = mimetypes.guess_type(resolved.name)[0] or "application/octet-stream"
+        return FileResponse(resolved, media_type=media_type, headers=NO_STORE)
+
     # ------------------------------------------------------------------ git
 
     # One git operation at a time: two concurrent commits, or a commit racing a
@@ -799,6 +824,34 @@ def create_app(
             raise _error(404, "turn_not_found", f"No turn {turn_id}.") from exc
         except FileNotFoundError as exc:
             raise _error(410, "snapshot_gone", str(exc)) from exc
+        return {"ok": True, "turn": turn.as_dict()}
+
+    @app.post("/api/turns/{turn_id}/keep")
+    async def keep_offer(turn_id: str, payload: KeepRequest) -> dict[str, Any]:
+        """Keep the versions a turn offered as a `%@propose` choice in the source,
+        to decide later; runs as a turn."""
+        try:
+            turn = await controller.keep_offer(turn_id, payload.offer)
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
+        except KeyError as exc:
+            raise _error(404, "turn_not_found", f"No turn {turn_id}.") from exc
+        except OfferError as exc:
+            raise _error(409, "not_kept", str(exc)) from exc
+        return {"ok": True, "turn": turn.as_dict()}
+
+    @app.post("/api/proposals")
+    async def settle_proposal(payload: ProposalRequest) -> dict[str, Any]:
+        """Pick a version of a `%@propose` choice in the source, or with no
+        `option`, dismiss it; runs as a turn."""
+        try:
+            turn = await controller.settle_proposal(
+                payload.file, payload.id, payload.line, payload.option
+            )
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
+        except OfferError as exc:
+            raise _error(404, "proposal_not_found", str(exc)) from exc
         return {"ok": True, "turn": turn.as_dict()}
 
     @app.post("/api/turns/{turn_id}/pick")

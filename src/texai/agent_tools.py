@@ -1,15 +1,17 @@
 """texai's own agent tools, served over MCP for agents that run out of process.
 
-Claude takes ``show_in_pdf`` and ``offer_options`` as in-process tools (see
-:func:`texai.agent.build_navigation_server`). Codex runs as a separate process,
-so it reaches the same tools here instead: a streamable-HTTP MCP endpoint mounted
-on texai's own server, on the loopback port it already listens on. The handler
-is the same (:func:`texai.agent.navigate_to`, :func:`texai.options.offer_options`),
-so both agents move the view the same way and get the same answer back.
+Claude takes ``show_in_pdf``, ``offer_options`` and ``read_paper`` as in-process
+tools (see :func:`texai.agent.build_navigation_server`). Codex runs as a separate
+process, so it reaches the same tools here instead: a streamable-HTTP MCP endpoint
+mounted on texai's own server, on the loopback port it already listens on. The
+handlers are the same (:func:`texai.agent.navigate_to`,
+:func:`texai.options.offer_options`, :func:`texai.papers.read_paper`), so both
+agents get the same answer back.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from pydantic import BaseModel
@@ -18,6 +20,7 @@ from .agent import SHOW_IN_PDF_DESCRIPTION, navigate_to
 from .config import AppConfig
 from .events import EventBus
 from .options import OFFER_OPTIONS_DESCRIPTION, offer_options
+from .papers import READ_PAPER_DESCRIPTION, read_paper
 
 __all__ = ["TOOLS_MOUNT", "TOOLS_PATH", "build_tools_server", "tools_url"]
 
@@ -39,7 +42,7 @@ def tools_url(host: str, port: int) -> str:
 
 
 def build_tools_server(config: AppConfig, bus: EventBus) -> Any:
-    """A FastMCP server carrying ``show_in_pdf`` and ``offer_options``.
+    """A FastMCP server carrying ``show_in_pdf``, ``offer_options`` and ``read_paper``.
 
     The caller mounts ``server.streamable_http_app()`` and must run
     ``server.session_manager.run()`` for the app's lifetime: a mounted
@@ -76,6 +79,10 @@ def build_tools_server(config: AppConfig, bus: EventBus) -> Any:
         return await offer_options(
             config, bus, file, original, [option.model_dump() for option in options], note
         )
+
+    @server.tool(name="read_paper", description=READ_PAPER_DESCRIPTION)
+    async def paper(target: str, pages: str = "", find: str = "") -> str:
+        return await asyncio.to_thread(read_paper, config, target, pages, find)
 
     return server
 

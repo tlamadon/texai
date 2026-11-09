@@ -20,7 +20,11 @@ cached against the SyncTeX file (rewritten on every build) and the source
 mtimes, so only the first request after a change pays for the parse.
 
 The same pass places the author's ``%@`` annotations (see :mod:`texai.annotations`):
-an intent beside its paragraph's bar, a note beside the line it precedes.
+an intent beside its paragraph's bar, anything else beside the line it is about.
+Each carries its kind's ``place``, which is all the browser draws by; a
+``%@src`` also carries its parsed target (see :mod:`texai.provenance`), and the
+versions of one ``%@propose`` choice travel as one item (see
+:mod:`texai.proposals`).
 """
 
 from __future__ import annotations
@@ -32,9 +36,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .annotations import INTENT, parse_annotations
+from .annotations import PROPOSE, SOURCE, parse_annotations
 from .config import AppConfig
 from .paths import to_project_relative
+from .proposals import proposals_in
+from .provenance import source_ref
 from .snapshots import iter_source_files
 from .synctex import synctex_data_file
 
@@ -313,13 +319,33 @@ def _map_file(
                 starts[index] = found
                 break
 
+    annotations = parse_annotations(text)
+    # Each annotation is one item on the page, except proposals: the versions
+    # of one choice are drawn, and picked from, together.
+    items: list[tuple[int, int, str, dict[str, Any]]] = []
+    for note in annotations:
+        if note.kind == PROPOSE:
+            continue
+        item = note.as_dict()
+        if note.kind == SOURCE:
+            # A provenance marker: drawn as an icon, opened in the peek.
+            ref = source_ref(note)
+            if ref is None:
+                continue
+            item["source"] = ref.as_dict()
+        items.append((note.line, note.end, note.place, item))
+    for choice in proposals_in(text, annotations):
+        item = {"kind": PROPOSE, "place": "proposal", **choice.as_dict()}
+        items.append((choice.line, choice.end, "proposal", item))
+    items.sort(key=lambda entry: entry[0])
+
     notes: list[dict[str, Any]] = []
-    for note in parse_annotations(text):
-        if note.line < body_start:
+    for line, end, place, item in items:
+        if line < body_start:
             continue  # the preamble has nothing on the page to hang it beside
         # Its own paragraph, or — for a block of annotations on their own — the
         # first one below that typeset something.
-        own = next((r for r in ranges if r[1] <= note.line <= r[2]), None)
+        own = next((r for r in ranges if r[1] <= line <= r[2]), None)
         if own is None:
             continue
         target = next((r for r in ranges[own[0] :] if r[0] in starts), None)
@@ -328,23 +354,21 @@ def _map_file(
         index, first, last = target
 
         spot = starts[index]
-        if note.kind != INTENT:
-            # Beside the line it comments on: the first one after it that put
+        if place != "intent":
+            # Beside the line it is about: the first one after it that put
             # something on the page, else the last one before it.
-            after = range(max(first, note.line + 1), last + 1)
-            before = range(min(last, note.line - 1), first - 1, -1)
-            for line in (*after, *before):
-                found = _line_top(line_index.get((relative, line)))
+            after = range(max(first, end + 1), last + 1)
+            before = range(min(last, line - 1), first - 1, -1)
+            for candidate in (*after, *before):
+                found = _line_top(line_index.get((relative, candidate)))
                 if found is not None:
                     spot = found
                     break
 
         notes.append(
             {
+                **item,
                 "file": relative,
-                "line": note.line,
-                "kind": note.kind,
-                "text": note.text,
                 "index": index,
                 "palette": index % PARAGRAPH_PALETTE,
                 "page": spot[0],

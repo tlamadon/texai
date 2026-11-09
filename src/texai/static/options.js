@@ -6,6 +6,9 @@
 // few words, and those are hard to spot side by side. The pick itself is the
 // caller's — the box on the page and the chat card both send it to
 // /api/turns/<id>/pick, where texai puts the version in place.
+//
+// Or none of them, yet: "Keep as proposal" writes the versions into the source
+// as a %@propose choice (/api/turns/<id>/keep), to decide later from the margin.
 
 const MAX_DIFF_CELLS = 250_000; // past this, show the text unmarked
 
@@ -18,9 +21,10 @@ const el = (tag, className, text) => {
 
 /**
  * One offer as a row of cards, one per version. `onPick(i)` runs when version
- * `i` is chosen; `compact` stacks them, for the narrow chat panel.
+ * `i` is chosen; `onKeep()`, when given, adds a button to keep them all as a
+ * proposal instead. `compact` stacks them, for the narrow chat panel.
  */
-export function renderOffer(offer, { onPick, compact = false } = {}) {
+export function renderOffer(offer, { onPick, onKeep, compact = false } = {}) {
   const root = el('div', compact ? 'offer compact' : 'offer');
   if (offer.note) root.append(el('div', 'offer-note', offer.note));
   const row = el('div', 'offer-options');
@@ -44,7 +48,28 @@ export function renderOffer(offer, { onPick, compact = false } = {}) {
     row.append(card);
   });
   root.append(row);
+  if (onKeep) {
+    const bar = el('div', 'offer-keep');
+    const button = el('button', 'ghost', 'Keep as proposal');
+    button.type = 'button';
+    button.title =
+      'Write these versions into the source as %@propose lines, and decide later from the margin';
+    button.addEventListener('click', () => onKeep());
+    bar.append(button, el('span', 'offer-kept'));
+    root.append(bar);
+    markKept(root, offer.id || '', offer.picked != null);
+  }
   return root;
+}
+
+/** Show a rendered offer as kept in the source as proposal `id`, or as not. */
+export function markKept(node, id, picked = false) {
+  const button = node.querySelector('.offer-keep button');
+  const note = node.querySelector('.offer-kept');
+  if (!button || !note) return;
+  button.hidden = !!id;
+  button.disabled = picked;
+  note.textContent = id ? `Kept in the source as proposal ${id}` : '';
 }
 
 /** Show version `i` of a rendered offer as the one chosen, the rest set aside. */
