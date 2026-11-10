@@ -507,7 +507,7 @@ so a slow answer cannot scroll you back to where you were two clicks ago.
 ### Scrolling together
 
 Clicking is exact but deliberate: you ask, once, per passage. Reading with both
-panes open means asking over and over, so **Sync scroll** in the toolbar ties
+panes open means asking over and over, so **Sync scroll** in the View menu ties
 them together instead. Scroll the page and the source arrives at whatever is on
 screen; scroll the source and the page follows. Off by default, and remembered
 between sessions.
@@ -567,7 +567,7 @@ With editing on the page, the chat and the source can be put away: the panel
 button at the right of the toolbar (or **Cmd/Ctrl-\\**) hides them and gives the
 page the whole window. Alt-clicking into the source or attaching a passage
 brings the panel back. The coloured paragraph bars in the margin matter most
-beside the source, so **Guides** in the toolbar switches them off; your `%@`
+beside the source, so **Paragraph guides** in the View menu switches them off; your `%@`
 notes stay.
 
 When you are stuck mid-sentence, **Ctrl-Space** (or **Alt-\\**, for systems where
@@ -653,8 +653,8 @@ We find a value close to one.
 - Alt-click a note to open the editor on its line; clicking an intent always
   does. In the editor, `%@` and `%>` lines are tinted so they stand out from
   ordinary comments.
-- **Notes** in the toolbar hides and shows notes and proposals, and **Sources**
-  does the same for provenance icons. Each button only appears when the paper
+- **Notes** in the View menu hides and shows notes and proposals, and **Sources**
+  does the same for provenance icons. Each entry only appears when the paper
   has something for it.
 
 **How it is built**
@@ -796,7 +796,7 @@ last, and a small mark in the right margin, level with the line it ends on.
   shows what it links to (the paper's title and authors from your `.bib`, a
   file and its lines, or a label in this paper) and its quote or note.
 - **Alt-click** opens the annotation in the editor.
-- **Sources** in the toolbar hides and shows the underlines and marks.
+- **Sources** in the View menu hides and shows the underlines and marks.
 
 - **A paper or a project PDF** opens in a viewer of its own. The page you are
   reading stays where it was.
@@ -1069,7 +1069,7 @@ could not be matched in the source with confidence, `word` is `null` and
 `column` is `1` — read the line and ignore the column in that case. See
 [Down to the word](#down-to-the-word).
 
-There is also a **Copy reference** button:
+The View menu also has **Copy reference to last selection**:
 
 ```text
 PDF selection: sections/model.tex:143

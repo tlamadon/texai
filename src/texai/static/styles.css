@@ -94,27 +94,86 @@ button.ghost { background: transparent; }
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 8px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--panel-border);
   flex: none;
 }
 
+/* One row, whatever the width. Nothing in it wraps onto a second line or is
+   squeezed: the file name gives way first, then the rules at the end of this
+   section drop what the page can be read without. Without this the controls
+   at the right-hand end — git, the panel toggle — are the ones pushed out of
+   the pane. */
+.toolbar > * { flex: none; white-space: nowrap; }
+.toolbar > .spacer { flex: 1 1 0; min-width: 0; }
+
 .brand { font-weight: 600; letter-spacing: 0.02em; }
 
-.pdf-name {
+.toolbar > .pdf-name {
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--muted);
   max-width: 24ch;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .group { display: flex; align-items: center; gap: 6px; }
 .readout { color: var(--muted); min-width: 4ch; text-align: center; }
-.conn { color: var(--muted); font-size: 12px; }
+
+/* The watcher: a dot while the server answers, words only once it has not. */
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.conn::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
 .conn.stale { color: var(--err); }
+.conn.stale::before { background: var(--err); }
+
+/* What is drawn over the page, behind one button (see app.js). */
+.view-wrap { position: relative; display: flex; }
+.view-button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+}
+.view-button.on,
+.view-button:hover:not(:disabled) { color: var(--fg); }
+
+/* The page's pane is what narrows — the window may be wide and the chat wider
+   still — so these answer to it rather than to the viewport. */
+.canvas-pane { container: canvas / inline-size; }
+@container canvas (max-width: 920px) {
+  .toolbar > .brand,
+  .toolbar > .pdf-name { display: none; }
+}
+@container canvas (max-width: 800px) {
+  .toolbar > #download-pdf,
+  .toolbar #zoom-fit,
+  .toolbar #zoom-level { display: none; }
+}
+/* Narrower still: zooming keeps its keys (Cmd/Ctrl +/-), and the branch name
+   is in the git panel. */
+@container canvas (max-width: 720px) {
+  .toolbar > .group,
+  .toolbar #git-branch { display: none; }
+}
+@container canvas (max-width: 420px) {
+  .toolbar > .conn,
+  .toolbar > #contents-toggle { display: none; }
+}
 
 /* ---------------- viewer ---------------- */
 
@@ -439,14 +498,31 @@ button.ghost { background: transparent; }
 }
 .empty.error { color: var(--err); white-space: pre-wrap; }
 
+/* One line of mouse shortcuts, never two: what does not fit is cut off rather
+   than taking a second row from the page. Dismissed from its own ×, brought
+   back from the View menu. */
 .hintbar {
   flex: none;
-  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px 3px 12px;
   background: var(--panel);
   border-top: 1px solid var(--panel-border);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
+  white-space: nowrap;
 }
+.hint-items {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 18px;
+  overflow: hidden;
+}
+.hint-items > span { flex: none; }
+.hint-items b { color: var(--fg); font-weight: 400; }
+button.hint-dismiss { border-color: transparent; font-size: 14px; padding: 0 6px; }
 
 kbd {
   background: #363c45;
@@ -469,7 +545,9 @@ kbd {
   flex: none;
 }
 
-.tabs { display: flex; gap: 2px; }
+.tabs { display: flex; gap: 2px; flex: none; }
+.chat-header > .spacer { min-width: 0; }
+.chat-header > #interrupt { flex: none; }
 
 .tab {
   background: transparent;
@@ -515,7 +593,23 @@ kbd {
 .transcript .t-detail { color: #6e7681; }
 .transcript .t-empty { color: var(--muted); }
 
-.agent-status { color: var(--muted); font-size: 12px; }
+/* A dot in the state's colour, and the state in words unless it is "ready". */
+.agent-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.agent-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .agent-status.ok { color: var(--ok); }
 .agent-status.busy { color: var(--accent); }
 .agent-status.off { color: var(--warn); }
@@ -1333,6 +1427,19 @@ button.toggle.active {
 .editor-menu .menu-item:focus-visible { background: #414954; }
 /* A checkable menu item leaves room for a leading tick that only shows when on,
    so the label does not shift as it toggles. */
+/* In a menu that has ticks, every label starts where the ticked ones do. */
+.view-menu .menu-item { position: relative; padding-left: 26px; }
+.editor-menu .menu-item.check[aria-pressed="true"]::before {
+  content: "\2713";
+  position: absolute;
+  left: 9px;
+  color: var(--accent);
+}
+.editor-menu .menu-rule {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--panel-border);
+}
 .editor-menu .menu-note {
   display: block;
   color: var(--muted);

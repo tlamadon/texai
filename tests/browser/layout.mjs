@@ -2406,6 +2406,59 @@ if (canLocate) {
     JSON.stringify([words.citeStop, words.bracketStop, words.noStop]));
 }
 
+// ---------------------------------------------------------------- toolbar
+
+// The toolbar is one row at any width. It once wrapped its buttons onto two
+// lines and pushed the git pill and the panel toggle out of the pane as soon as
+// a paper had notes and sources to toggle — on a 1440px laptop, not a phone.
+{
+  const bar = await cdp.json(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const app = document.querySelector('.app');
+    const toolbar = document.querySelector('.toolbar');
+    // The worst case: every optional control showing.
+    const optional = ['toggle-notes', 'toggle-sources', 'accept-all', 'git-pill']
+      .map((id) => document.getElementById(id));
+    const were = optional.map((el) => el.hidden);
+    for (const el of optional) el.hidden = false;
+    const out = {};
+    for (const width of [1100, 900, 760, 640, 480, 400]) {
+      app.style.gridTemplateColumns = width + 'px 4px 1fr';
+      await sleep(60);
+      const pane = toolbar.getBoundingClientRect();
+      const shown = [...toolbar.children].filter((el) => el.getBoundingClientRect().width > 0);
+      out[width] = {
+        height: Math.round(pane.height),
+        overflow: Math.round(Math.max(...shown.map((el) => el.getBoundingClientRect().right)) - pane.right),
+        tallest: Math.round(Math.max(...shown.map((el) => el.getBoundingClientRect().height))),
+        toggle: document.getElementById('panel-toggle').getBoundingClientRect().width > 0,
+      };
+    }
+    app.style.gridTemplateColumns = '';
+    optional.forEach((el, i) => { el.hidden = were[i]; });
+
+    const menu = document.getElementById('view-menu');
+    const button = document.getElementById('view-button');
+    const opened = (button.click(), !menu.hidden);
+    const guides = document.getElementById('toggle-guides');
+    guides.click();
+    const stayedOpen = !menu.hidden;
+    guides.click();
+    const box = menu.getBoundingClientRect();
+    const onScreen = box.left >= 0 && box.right <= window.innerWidth && box.height > 0;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    return { out, opened, stayedOpen, onScreen, closed: menu.hidden };
+  })()`);
+  console.log('toolbar:', JSON.stringify(bar));
+  const sizes = Object.values(bar.out);
+  check('the toolbar never spills out of its pane', sizes.every((s) => s.overflow <= 0 && s.toggle),
+    JSON.stringify(bar.out));
+  check('the toolbar stays one row high', sizes.every((s) => s.height < 56 && s.tallest < 36),
+    JSON.stringify(bar.out));
+  check('the View menu opens on screen, stays open for a tick, closes on Escape',
+    bar.opened && bar.stayedOpen && bar.onScreen && bar.closed, JSON.stringify(bar));
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

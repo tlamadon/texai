@@ -373,9 +373,13 @@ export class ChatPanel {
       status.classList.add('off');
     } else if (this.busy) {
       status.textContent = 'working…';
+      status.title = '';
       status.classList.add('busy');
     } else {
-      status.textContent = 'ready';
+      // The usual state is a dot, not a word: the header is short of room, and
+      // "ready" is only news when it stops being true.
+      status.textContent = '';
+      status.title = `${this.agent.name || 'Agent'} is ready`;
       status.classList.add('ok');
     }
   }

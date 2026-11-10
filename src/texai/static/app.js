@@ -48,6 +48,11 @@ const els = {
   composer: document.getElementById('composer'),
   app: document.querySelector('.app'),
   panelToggle: document.getElementById('panel-toggle'),
+  viewButton: document.getElementById('view-button'),
+  viewMenu: document.getElementById('view-menu'),
+  hintbar: document.getElementById('hintbar'),
+  toggleHints: document.getElementById('toggle-hints'),
+  hintsDismiss: document.getElementById('hints-dismiss'),
 };
 
 let marks = null;
@@ -491,13 +496,21 @@ async function loadPdf(version, { preserveView = false } = {}) {
 
 let polling = false;
 
+// A quiet dot while the server answers; words only when it has stopped.
+function setConnected(connected) {
+  els.conn.classList.toggle('stale', !connected);
+  els.conn.textContent = connected ? '' : 'disconnected';
+  els.conn.title = connected
+    ? 'Watching the PDF for rebuilds'
+    : 'The texai server is not answering — is it still running?';
+}
+
 async function poll() {
   if (polling) return; // a reload may outlive one tick
   polling = true;
   try {
     const status = await getJSON('/api/status');
-    els.conn.textContent = 'watching';
-    els.conn.classList.remove('stale');
+    setConnected(true);
     if (!status.exists) {
       showEmpty('PDF is missing — waiting for it to be rebuilt…', true);
       return;
@@ -517,8 +530,7 @@ async function poll() {
       }
     }
   } catch (err) {
-    els.conn.textContent = 'disconnected';
-    els.conn.classList.add('stale');
+    setConnected(false);
   } finally {
     polling = false;
   }
@@ -684,7 +696,51 @@ els.zoomFit.addEventListener('click', () => {
   viewer.setFitWidth();
   updateZoomReadout();
 });
-els.copyRef.addEventListener('click', copyReference);
+els.copyRef.addEventListener('click', () => {
+  copyReference();
+  setViewMenu(false);
+});
+
+/* ---------------- the View menu and the hint line ---------------- */
+
+// What is drawn over the page is chosen once and then left alone, so it lives
+// behind one button rather than as a row of them. The menu stays open while
+// its boxes are ticked — several are often changed together.
+function setViewMenu(open) {
+  els.viewMenu.hidden = !open;
+  els.viewButton.setAttribute('aria-expanded', String(open));
+  els.viewButton.classList.toggle('on', open);
+}
+els.viewButton.addEventListener('click', () => setViewMenu(els.viewMenu.hidden));
+document.addEventListener('click', (event) => {
+  if (els.viewMenu.hidden) return;
+  if (els.viewButton.contains(event.target) || els.viewMenu.contains(event.target)) return;
+  setViewMenu(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !els.viewMenu.hidden) setViewMenu(false);
+});
+
+// The mouse shortcuts under the page: worth a line until they are known, then
+// worth the line back.
+const HINTS_KEY = 'texai.hints';
+function setHints(visible, { remember = true } = {}) {
+  els.hintbar.hidden = !visible;
+  els.toggleHints.setAttribute('aria-pressed', String(visible));
+  if (!remember) return;
+  try {
+    localStorage.setItem(HINTS_KEY, visible ? '1' : '0');
+  } catch {
+    /* storage disabled: the hints just come back next time */
+  }
+}
+els.toggleHints.addEventListener('click', () => setHints(els.hintbar.hidden));
+els.hintsDismiss.addEventListener('click', () => setHints(false));
+try {
+  if (localStorage.getItem(HINTS_KEY) === '0') setHints(false, { remember: false });
+} catch {
+  /* storage disabled */
+}
 els.viewer.addEventListener('click', onViewerClick);
 els.viewer.addEventListener('dblclick', onViewerDoubleClick);
 

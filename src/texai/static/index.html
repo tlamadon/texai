@@ -25,13 +25,6 @@
         </a>
 
         <div class="group">
-          <button id="zoom-out" type="button" title="Zoom out">&minus;</button>
-          <span id="zoom-level" class="readout">100%</span>
-          <button id="zoom-in" type="button" title="Zoom in">+</button>
-          <button id="zoom-fit" type="button" title="Fit page width">Fit</button>
-        </div>
-
-        <div class="group">
           <button id="view-back" type="button" class="icon" disabled>
             <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
               <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
@@ -44,28 +37,56 @@
                     stroke-linejoin="round" d="M6 3l5 5-5 5"/>
             </svg>
           </button>
-          <span class="readout">Page <span id="page-current">1</span> / <span id="page-count">?</span></span>
+          <span class="readout page-readout" title="Page"><span id="page-current">1</span> / <span id="page-count">?</span></span>
+        </div>
+
+        <div class="group">
+          <button id="zoom-out" type="button" title="Zoom out">&minus;</button>
+          <span id="zoom-level" class="readout">100%</span>
+          <button id="zoom-in" type="button" title="Zoom in">+</button>
+          <button id="zoom-fit" type="button" title="Fit page width">Fit</button>
         </div>
 
         <div class="spacer"></div>
 
-        <button id="toggle-sync" type="button" class="toggle" aria-pressed="false"
-                title="Keep the source scrolled to whatever the page is showing, and back">
-          Sync scroll</button>
-        <button id="toggle-guides" type="button" class="toggle" aria-pressed="true"
-                title="Colour each paragraph in the margin, matching the source's gutter">
-          Guides</button>
-        <button id="toggle-notes" type="button" class="toggle" aria-pressed="true" hidden
-                title="Show the %@ annotations from the source in the page margins">Notes</button>
-        <button id="toggle-sources" type="button" class="toggle" aria-pressed="true" hidden
-                title="Show the %@src markers: what backs each sentence">Sources</button>
+        <!-- The review loop: the one pair of controls that changes with every turn. -->
         <button id="toggle-marks" type="button" class="toggle"
                 title="Show what the agent changed, inline on the page">Show changes</button>
         <button id="accept-all" type="button" class="ghost" hidden
                 title="Accept every pending change and start a fresh review">Accept all</button>
-        <button id="copy-reference" type="button" class="secondary" disabled
-                title="Copy the last selection as text">Copy reference</button>
-        <span id="conn" class="conn" title="PDF watcher">watching</span>
+
+        <!-- What is drawn over the page: set once and left alone, so behind a menu. -->
+        <div class="view-wrap">
+          <button id="view-button" type="button" class="ghost view-button"
+                  aria-haspopup="menu" aria-expanded="false"
+                  title="What is shown on the page">
+            View <span class="session-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <div id="view-menu" class="editor-menu view-menu" role="menu" hidden>
+            <button id="toggle-guides" type="button" role="menuitemcheckbox" class="menu-item check"
+                    aria-pressed="true"
+                    title="Colour each paragraph in the margin, matching the source's gutter">
+              Paragraph guides</button>
+            <button id="toggle-notes" type="button" role="menuitemcheckbox" class="menu-item check"
+                    aria-pressed="true" hidden
+                    title="Show the %@ annotations from the source in the page margins">Notes</button>
+            <button id="toggle-sources" type="button" role="menuitemcheckbox" class="menu-item check"
+                    aria-pressed="true" hidden
+                    title="Show the %@src markers: what backs each sentence">Sources</button>
+            <button id="toggle-sync" type="button" role="menuitemcheckbox" class="menu-item check"
+                    aria-pressed="false"
+                    title="Keep the source scrolled to whatever the page is showing, and back">
+              Sync scroll with source</button>
+            <button id="toggle-hints" type="button" role="menuitemcheckbox" class="menu-item check"
+                    aria-pressed="true"
+                    title="The line of mouse shortcuts under the page">Shortcut hints</button>
+            <div class="menu-rule" role="separator"></div>
+            <button id="copy-reference" type="button" role="menuitem" class="menu-item" disabled
+                    title="Copy the last selection as text">Copy reference to last selection</button>
+          </div>
+        </div>
+
+        <span id="conn" class="conn" role="status" title="Watching the PDF for rebuilds"></span>
 
         <button id="git-pill" class="git-pill" type="button" hidden>
           <svg class="git-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
@@ -134,10 +155,15 @@
         </main>
       </div>
 
-      <footer class="hintbar">
-        Select text and click &#10022; to ask for a change. Double-click to edit a paragraph in place.
-        <kbd id="mod-key">Cmd</kbd>-click attaches a passage to your next message;
-        <kbd>Alt</kbd>-click opens its source.
+      <footer id="hintbar" class="hintbar">
+        <span class="hint-items">
+          <span>Select text, then <b>&#10022;</b> to ask for a change</span>
+          <span><kbd>Double-click</kbd> edit in place</span>
+          <span><kbd><span id="mod-key">Cmd</span>-click</kbd> attach to your message</span>
+          <span><kbd>Alt-click</kbd> open the source</span>
+        </span>
+        <button id="hints-dismiss" type="button" class="ghost icon hint-dismiss"
+                title="Hide these hints (View menu brings them back)">&times;</button>
       </footer>
     </section>
 
