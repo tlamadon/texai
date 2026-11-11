@@ -37,9 +37,12 @@ def _signature(config: AppConfig, sources: list[Any]) -> str:
         parts.append(f"{data.name}:{stat.st_mtime_ns}:{stat.st_size}")
     for path in sources:
         try:
-            parts.append(f"{path}:{path.stat().st_mtime_ns}")
+            stat = path.stat()
         except OSError:
             continue
+        # The size as well as the time: two saves inside one tick of the
+        # clock share an mtime, and the second must not be served the first.
+        parts.append(f"{path}:{stat.st_mtime_ns}:{stat.st_size}")
     return "|".join(parts)
 
 
