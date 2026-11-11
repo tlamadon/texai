@@ -93,6 +93,7 @@ from .synctex import (
     run_synctex_edit,
 )
 from .quick import QuickSession
+from .update import UpdateCheck
 from .turns import OfferError, TurnBusy, TurnController
 from .words import locate as locate_word_detail
 
@@ -136,13 +137,15 @@ def create_app(
     agent: AgentSession | None = None,
     message_writer: Callable[..., Any] = propose_message,
     quick: QuickSession | None = None,
+    update_check: UpdateCheck | None = None,
 ) -> FastAPI:
     """Build the application for one review session.
 
     ``synctex_runner``, ``agent`` and ``message_writer`` are injectable so tests
     can exercise the API without a real TeX installation or a live agent.
     ``quick`` is the quick editor for one-passage requests; without one, every
-    request goes to the agent.
+    request goes to the agent. ``update_check`` asks PyPI for a newer texai;
+    without one nothing is asked, which is what tests and ``--no-update-check`` get.
     """
     # An injected agent brings its own bus; everything must publish to the same one.
     bus = agent.bus if agent is not None else EventBus()
@@ -477,6 +480,12 @@ def create_app(
             "busy": controller.busy,
             "sessions": await known_sessions(),
         }
+
+    @app.get("/api/update")
+    async def update() -> dict[str, Any]:
+        if update_check is None:
+            return {"current": __version__, "latest": None, "available": False, "command": None}
+        return await update_check.status()
 
     @app.post("/api/agent/settings")
     async def set_agent_settings(request: AgentSettings) -> dict[str, Any]:

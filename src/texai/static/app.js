@@ -808,6 +808,42 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+/* ---------------- a newer texai ---------------- */
+
+// The server asks PyPI, at most twice a day; this only shows what it heard. An
+// arrow beside the name when there is a newer release, and the command that
+// fetches it on a click — texai does not update itself under a running paper.
+const UPDATE_POLL_MS = 6 * 3600 * 1000;
+let update = null;
+
+async function checkForUpdate() {
+  try {
+    update = await getJSON('/api/update');
+  } catch {
+    return; // an older server, or none: nothing to show
+  }
+  const pill = document.getElementById('update-pill');
+  pill.hidden = !update.available;
+  if (update.available) {
+    pill.title = `texai ${update.latest} is out — you have ${update.current}. Click for how to update.`;
+  }
+}
+
+document.getElementById('update-pill').addEventListener('click', async () => {
+  if (!update?.available) return;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(update.command);
+    copied = true;
+  } catch {
+    /* clipboard blocked: the command is in the toast to copy by hand */
+  }
+  showToast(
+    `texai ${update.latest} is out (you have ${update.current}).\n` +
+      `Stop texai, then run:  ${update.command}${copied ? '\n(copied)' : ''}`
+  );
+});
+
 /* ---------------- boot ---------------- */
 
 async function boot() {
@@ -851,6 +887,8 @@ async function boot() {
 
   await poll();
   setInterval(poll, POLL_MS);
+  checkForUpdate();
+  setInterval(checkForUpdate, UPDATE_POLL_MS);
   chat.start().catch(() => showToast('Chat panel failed to start', { type: 'error' }));
   git.start().catch(() => {
     /* a project outside git simply has no pill */

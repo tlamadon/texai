@@ -111,6 +111,16 @@ button.ghost { background: transparent; }
 
 .brand { font-weight: 600; letter-spacing: 0.02em; }
 
+/* A newer texai is out (see app.js): tucked against the name it belongs to. */
+button.update-pill,
+button.update-pill:hover:not(:disabled) {
+  padding: 2px 4px;
+  border-color: var(--ok);
+  border-radius: 999px;
+  color: var(--ok);
+}
+button.update-pill:hover:not(:disabled) { background: rgba(63, 185, 80, 0.15); }
+
 .toolbar > .pdf-name {
   flex: 0 1 auto;
   min-width: 0;
@@ -172,6 +182,7 @@ button.ghost { background: transparent; }
 }
 @container canvas (max-width: 420px) {
   .toolbar > .conn,
+  .toolbar > .update-pill,
   .toolbar > #contents-toggle { display: none; }
 }
 

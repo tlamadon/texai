@@ -26,6 +26,7 @@ from .synctex import synctex_data_file
 from .quick import QuickSession
 from .sessions import last_session
 from .timing import timings_path
+from .update import UpdateCheck
 
 __all__ = ["main", "build_parser", "build_missing_pdf", "pending_work"]
 
@@ -109,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: the agent's own). Claude: {', '.join(EFFORT_LEVELS)}; "
             f"Codex: {', '.join(CODEX_EFFORT_LEVELS)}"
         ),
+    )
+    parser.add_argument(
+        "--no-update-check",
+        action="store_true",
+        help="do not ask PyPI whether a newer texai is out",
     )
     parser.add_argument(
         "--no-quick",
@@ -292,7 +298,8 @@ def main(argv: list[str] | None = None) -> int:
     quick = None
     if args.agent == "claude" and not args.no_quick:
         quick = QuickSession(config, agent.bus, model=args.model, effort=args.effort)
-    app = create_app(config, agent=agent, quick=quick)
+    update_check = None if args.no_update_check else UpdateCheck(__version__)
+    app = create_app(config, agent=agent, quick=quick, update_check=update_check)
     server = _announcing_server(uvicorn, app, port)
     server.run()
     # Uvicorn cancels whatever request was in flight on the way out, which can
