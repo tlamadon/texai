@@ -447,12 +447,32 @@ class AgentSession:
         # The conversation the next start picks up, rather than a fresh one.
         self._resume: str | None = None
 
+    # What the panel offers to choose from. The models are Claude Code's own
+    # aliases, which follow the current release of each; any other id it
+    # accepts can be typed in.
+    models: tuple[str, ...] = ("opus", "sonnet", "haiku")
+    efforts: tuple[str, ...] = EFFORT_LEVELS
+
     @property
     def running(self) -> bool:
         return self._started
 
     def status(self) -> tuple[bool, str | None]:
         return sdk_status()
+
+    async def configure(self, model: str | None, effort: str | None) -> None:
+        """Change the model and effort (None: the agent's own default).
+
+        Both are fixed when a session connects, so this one is closed; the next
+        turn reconnects to the same conversation with the new settings.
+        """
+        if (model, effort) == (self.model, self.effort):
+            return
+        session = self.session_id
+        await self.stop()
+        self.model, self.effort = model, effort
+        if session:
+            self.resume(session)
 
     def resume(self, session_id: str | None) -> None:
         """Make the next start continue this conversation (None: a new one)."""

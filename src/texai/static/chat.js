@@ -10,6 +10,7 @@ import { renderMarkdown } from './markdown.js';
 import { markChosen, markKept, renderOffer } from './options.js';
 import { ProgressBar, progressLabels } from './progress.js';
 import { SessionMenu, pastConversation } from './sessions.js';
+import { AgentSettingsMenu } from './settings.js';
 import { showToast } from './toast.js';
 
 const MAX_CHIP_TEXT = 90;
@@ -56,6 +57,7 @@ export class ChatPanel {
       editorPane: document.getElementById('editor-pane'),
       peekPane: document.getElementById('peek'),
     };
+    this.settings = new AgentSettingsMenu();
     this.sessions = new SessionMenu();
     this.sessions.onCopyResume = (command) => this.copyResumeCommand(command);
 
@@ -117,6 +119,7 @@ export class ChatPanel {
     try {
       const info = await getJSON('/api/info');
       this.agent = info.agent || { available: false, reason: 'unknown' };
+      this.settings.set(this.agent);
       this._renderStatus();
     } catch {
       this._renderStatus();
@@ -296,9 +299,9 @@ export class ChatPanel {
 
   _renderHint() {
     const n = this.chips.length;
-    this.els.hint.textContent = n === 0
-      ? 'Cmd/Ctrl-click the PDF to attach a passage'
-      : `${n} passage${n === 1 ? '' : 's'} attached`;
+    // Only when there is something to say: how to attach one is in the hint
+    // line under the page, and the row is shared with the model picker.
+    this.els.hint.textContent = n === 0 ? '' : `${n} passage${n === 1 ? '' : 's'} attached`;
   }
 
   /* ---------------- sending ---------------- */
@@ -361,6 +364,7 @@ export class ChatPanel {
     this.els.send.disabled = busy;
     this.els.interrupt.hidden = !busy;
     this.sessions.setBusy(busy);
+    this.settings.setBusy(busy);
     this._renderStatus();
   }
 
@@ -428,6 +432,11 @@ export class ChatPanel {
         this._appendTurnRule(event.turn);
         this._setBusy(false);
         this.onTurnFinished?.(event.turn);
+        break;
+      case 'agent_settings':
+        // Chosen here or in another window: the button says what is in use.
+        this.agent = { ...this.agent, model: event.model, effort: event.effort };
+        this.settings.set({ model: event.model, effort: event.effort });
         break;
       case 'agent_ready':
         this.agent = { ...this.agent, available: true, reason: null };

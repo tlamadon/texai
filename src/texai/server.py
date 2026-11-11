@@ -50,6 +50,7 @@ from .git import push as git_push
 from .git import scoped_diff
 from .merge import merge3, normalize_newlines
 from .models import (
+    AgentSettings,
     ChatRequest,
     CommentRequest,
     CommitRequest,
@@ -231,6 +232,15 @@ def create_app(
     async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html", headers=NO_STORE)
 
+    def agent_settings() -> dict[str, Any]:
+        """The model and effort in use (None: the agent's default), and the choices."""
+        return {
+            "model": getattr(agent_session, "model", None),
+            "effort": getattr(agent_session, "effort", None),
+            "models": list(getattr(agent_session, "models", ())),
+            "efforts": list(getattr(agent_session, "efforts", ())),
+        }
+
     @app.get("/api/info")
     async def info() -> dict[str, Any]:
         available, reason = agent_session.status()
@@ -255,6 +265,7 @@ def create_app(
                 "sessionId": agent_session.session_id,
                 # Lets you attach a real terminal to the very same conversation.
                 "resumeCommand": agent_session.resume_command(),
+                **agent_settings(),
             },
             "completion": {
                 "available": complete_available,
@@ -466,6 +477,21 @@ def create_app(
             "busy": controller.busy,
             "sessions": await known_sessions(),
         }
+
+    @app.post("/api/agent/settings")
+    async def set_agent_settings(request: AgentSettings) -> dict[str, Any]:
+        efforts = getattr(agent_session, "efforts", ())
+        if request.effort is not None and request.effort not in efforts:
+            raise _error(
+                422,
+                "unknown_effort",
+                f"{getattr(agent_session, 'name', 'The agent')} takes effort: {', '.join(efforts)}.",
+            )
+        try:
+            await controller.configure_agent(request.model, request.effort)
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
+        return {"ok": True, **agent_settings()}
 
     @app.post("/api/sessions/switch")
     async def switch_session(request: SessionSwitch) -> dict[str, Any]:

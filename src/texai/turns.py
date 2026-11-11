@@ -785,6 +785,18 @@ class TurnController:
             )
         self.bus.publish("session_switched", sessionId=session_id)
 
+    async def configure_agent(self, model: str | None, effort: str | None) -> None:
+        """Use another model or effort from the next turn (None: the default).
+
+        The conversation carries on; only the session behind it is reopened.
+        """
+        if self.busy:
+            raise TurnBusy("an agent turn is running; stop it or wait before changing the model")
+        await self.agent.configure(model, effort)
+        if self.quick is not None:
+            await self.quick.configure(model, effort)
+        self.bus.publish("agent_settings", model=model, effort=effort)
+
     # ------------------------------------------------- the review session
 
     def session_changes(self) -> list[dict[str, Any]]:

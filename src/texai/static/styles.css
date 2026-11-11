@@ -848,6 +848,40 @@ kbd {
 .composer textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 
 .composer-actions { display: flex; align-items: center; gap: 6px; }
+
+/* The model and effort the next message will use (see settings.js). Its menu
+   opens upwards: the composer sits at the bottom of the window. */
+.agent-settings { position: relative; display: flex; min-width: 0; }
+.agent-settings-button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 200px;
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.agent-settings-button.on,
+.agent-settings-button:hover:not(:disabled) { color: var(--fg); }
+.editor-menu.agent-settings-menu {
+  top: auto;
+  bottom: calc(100% + 5px);
+  left: 0;
+  right: auto;
+  min-width: 170px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.agent-settings-menu .menu-label {
+  padding: 4px 8px 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.composer-actions .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .hint { color: var(--muted); font-size: 11.5px; }
 
 /* ---------------- toasts ---------------- */
@@ -1428,7 +1462,7 @@ button.toggle.active {
 /* A checkable menu item leaves room for a leading tick that only shows when on,
    so the label does not shift as it toggles. */
 /* In a menu that has ticks, every label starts where the ticked ones do. */
-.view-menu .menu-item { position: relative; padding-left: 26px; }
+.ticked-menu .menu-item { position: relative; padding-left: 26px; }
 .editor-menu .menu-item.check[aria-pressed="true"]::before {
   content: "\2713";
   position: absolute;

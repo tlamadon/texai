@@ -1027,7 +1027,7 @@ unavailable it falls back to `Update sections/model.tex, ...` and says so.
 | `--build-cmd` | `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>`, with the engine the document needs | how to rebuild |
 | `--build-dir` | the root `.tex` file's directory | where to run the build |
 | `--agent` | `claude` | `claude` or `codex` (needs `texai[codex]`) |
-| `--model` | the agent's default | model for the agent |
+| `--model` | the agent's default | model for the agent; also on the composer, where it can be changed mid-conversation |
 | `--resume` [*id*] | a new conversation | carry on the last conversation texai had here, or the one given |
 | `--port` | `8765` | port on `127.0.0.1`; the next free one is used if busy |
 | `--synctex` | `synctex` | path to the `synctex` executable |

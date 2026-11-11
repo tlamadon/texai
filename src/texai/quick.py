@@ -234,6 +234,10 @@ class QuickSession(AgentSession):
         self.effort = self.effort or DEFAULT_EFFORT
         self._requests = 0
 
+    async def configure(self, model: str | None, effort: str | None) -> None:
+        """Follow the agent's model; without an effort asked for, stay quick."""
+        await super().configure(model, effort or DEFAULT_EFFORT)
+
     def _options(self) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 

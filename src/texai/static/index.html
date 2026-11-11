@@ -62,7 +62,7 @@
                   title="What is shown on the page">
             View <span class="session-caret" aria-hidden="true">&#9662;</span>
           </button>
-          <div id="view-menu" class="editor-menu view-menu" role="menu" hidden>
+          <div id="view-menu" class="editor-menu ticked-menu view-menu" role="menu" hidden>
             <button id="toggle-guides" type="button" role="menuitemcheckbox" class="menu-item check"
                     aria-pressed="true"
                     title="Colour each paragraph in the margin, matching the source's gutter">
@@ -285,6 +285,15 @@
         <textarea id="composer-input" rows="3"
                   placeholder="What should change? (Enter to send, Shift-Enter for a new line)"></textarea>
         <div class="composer-actions">
+          <div id="agent-settings" class="agent-settings" hidden>
+            <button id="agent-settings-button" type="button" class="ghost agent-settings-button"
+                    aria-haspopup="menu" aria-expanded="false">
+              <span id="agent-settings-label" class="session-label">Default model</span>
+              <span class="session-caret" aria-hidden="true">&#9662;</span>
+            </button>
+            <div id="agent-settings-menu" class="editor-menu ticked-menu agent-settings-menu"
+                 role="menu" hidden></div>
+          </div>
           <span id="composer-hint" class="hint"></span>
           <div class="spacer"></div>
           <button id="clear-chips" type="button" class="ghost" hidden>Clear</button>

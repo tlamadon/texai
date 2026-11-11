@@ -2459,6 +2459,51 @@ if (canLocate) {
     bar.opened && bar.stayedOpen && bar.onScreen && bar.closed, JSON.stringify(bar));
 }
 
+// ---------------------------------------------------------------- model
+
+// The model and effort picker sits on the composer, so its menu has to open
+// upwards — below the button is the bottom of the window.
+{
+  const picker = await cdp.json(`(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    window.__texai.setPanelVisible(true);
+    document.getElementById('tab-chat').click();
+    const button = document.getElementById('agent-settings-button');
+    const menu = document.getElementById('agent-settings-menu');
+    const label = document.getElementById('agent-settings-label');
+    button.click();
+    await sleep(50);
+    const box = menu.getBoundingClientRect();
+    const at = button.getBoundingClientRect();
+    const items = [...menu.querySelectorAll('button')].map((b) => b.textContent);
+    const pick = (text) => [...menu.querySelectorAll('button')].find((b) => b.textContent === text).click();
+    pick('haiku');
+    await sleep(400);
+    const chosen = label.textContent;
+    const server = (await (await fetch('/api/info')).json()).agent.model;
+    button.click();
+    await sleep(50);
+    const ticked = [...menu.querySelectorAll('[aria-pressed="true"]')].map((b) => b.textContent);
+    pick('Default');
+    await sleep(400);
+    return {
+      visible: at.width > 0,
+      above: box.bottom <= at.top && box.top >= 0 && box.height > 100,
+      onScreen: box.left >= 0 && box.right <= window.innerWidth,
+      items, chosen, server, ticked, back: label.textContent, closed: menu.hidden,
+    };
+  })()`);
+  console.log('model picker:', JSON.stringify(picker));
+  check('the model picker opens above the composer, on screen',
+    picker.visible && picker.above && picker.onScreen, JSON.stringify(picker));
+  check('it lists models and efforts, each with a default',
+    picker.items.filter((t) => t === 'Default').length === 2 && picker.items.includes('opus')
+      && picker.items.includes('high'), JSON.stringify(picker.items));
+  check('a pick reaches the server, shows on the button, and can be undone',
+    picker.chosen === 'haiku' && picker.server === 'haiku' && picker.ticked.includes('haiku')
+      && picker.back === 'Default model' && picker.closed, JSON.stringify(picker));
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} layout checks passed`);
 process.exit(failed.length ? 1 : 0);

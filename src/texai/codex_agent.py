@@ -296,6 +296,23 @@ class CodexSession:
     def status(self) -> tuple[bool, str | None]:
         return codex_status()
 
+    # Codex's models change too often to list; the panel takes any id typed in.
+    models: tuple[str, ...] = ()
+    efforts: tuple[str, ...] = CODEX_EFFORT_LEVELS
+
+    async def configure(self, model: str | None, effort: str | None) -> None:
+        """Change the model and effort (None: Codex's own default).
+
+        The thread is closed and resumed with the new settings on the next turn.
+        """
+        if (model, effort) == (self.model, self.effort):
+            return
+        session = self._session_id
+        await self.stop()
+        self.model, self.effort = model, effort
+        if session:
+            self.resume(session)
+
     def resume(self, session_id: str | None) -> None:
         """Make the next start continue this thread (None: a new one)."""
         self._resume = session_id

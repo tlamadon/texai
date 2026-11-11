@@ -308,6 +308,15 @@ class SessionAgent:
         self.session_id = self.session_id or "s1"
         return TurnOutcome(ok=True, text="Sure.", session_id=self.session_id)
 
+    model = None
+    effort = None
+    models = ("opus", "sonnet")
+    efforts = ("low", "high")
+
+    async def configure(self, model, effort):
+        self.running = False
+        self.model, self.effort = model, effort
+
     async def switch(self, session_id):
         self.running = False
         self.session_id = session_id
@@ -384,3 +393,54 @@ async def test_a_conversation_taken_over_keeps_its_own_title(config):
     listed = sessions.catalogue(config.root, "claude", agent.saved, current="s2")
     taken = next(s for s in listed if s["id"] == "s2")
     assert (taken["texai"], taken["turns"], taken["title"]) == (True, 1, "From a terminal")
+
+
+async def test_the_model_waits_for_the_running_turn(config):
+    bus = EventBus()
+    agent = SessionAgent(bus)
+    agent.gate = asyncio.Event()
+    controller = TurnController(config, bus, agent)
+    await controller.submit("Tighten it", [])
+    with pytest.raises(TurnBusy):
+        await controller.configure_agent("opus", "high")
+    agent.gate.set()
+    await controller._task
+
+    await controller.configure_agent("opus", "high")
+    assert (agent.model, agent.effort, agent.session_id) == ("opus", "high", "s1")
+    (event,) = [e.data for e in bus.since(0) if e.type == "agent_settings"]
+    assert (event["model"], event["effort"]) == ("opus", "high")
+
+
+def test_the_panel_chooses_the_model_and_effort(config):
+    agent = SessionAgent(EventBus())
+    client = TestClient(create_app(config, agent=agent), base_url="http://127.0.0.1")
+
+    info = client.get("/api/info").json()["agent"]
+    assert (info["model"], info["effort"]) == (None, None)
+    assert (info["models"], info["efforts"]) == (["opus", "sonnet"], ["low", "high"])
+
+    set_to = client.post("/api/agent/settings", json={"model": "sonnet", "effort": "low"}).json()
+    assert (set_to["model"], set_to["effort"]) == ("sonnet", "low")
+    assert (agent.model, agent.effort) == ("sonnet", "low")
+    # Any id the agent might take, not only the listed ones; but a real effort.
+    assert client.post("/api/agent/settings", json={"model": "claude-x-1[1m]"}).json()["ok"]
+    assert (agent.model, agent.effort) == ("claude-x-1[1m]", None)
+    assert client.post("/api/agent/settings", json={"effort": "heroic"}).status_code == 422
+    assert client.post("/api/agent/settings", json={"model": "--flag"}).status_code == 422
+
+
+async def test_a_new_model_reopens_the_same_conversation(config):
+    from texai.agent import AgentSession
+    from texai.quick import DEFAULT_EFFORT, QuickSession
+
+    agent = AgentSession(config, EventBus(), model="opus")
+    agent.resume("s1")
+    agent._started = True
+    await agent.configure("haiku", "low")
+    assert (agent.model, agent.effort) == ("haiku", "low")
+    assert not agent.running and agent.session_id == "s1" and agent._resume == "s1"
+
+    quick = QuickSession(config, EventBus())
+    await quick.configure("haiku", None)
+    assert (quick.model, quick.effort) == ("haiku", DEFAULT_EFFORT)

@@ -18,6 +18,7 @@ __all__ = [
     "SelectionRef",
     "ChatRequest",
     "PickRequest",
+    "AgentSettings",
 ]
 
 # A PDF page cannot exceed 200in = 14400pt; allow a little slack and reject the
@@ -184,6 +185,15 @@ class SessionSwitch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: str | None = Field(default=None, alias="sessionId", max_length=200)
+
+
+class AgentSettings(BaseModel):
+    """The model and effort for the agent's next turns; null for its own default."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = Field(default=None, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]*$")
+    effort: str | None = Field(default=None, max_length=20)
 
 
 class SourceLocation(BaseModel):
