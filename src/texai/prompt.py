@@ -20,6 +20,15 @@ How the loop works:
   surrounding lines and use the quoted rendered text to find the exact spot
   before editing. The quoted text is what the reader sees, so LaTeX markup,
   ligatures and math will not match it character for character.
+- Slides. In a beamer deck SyncTeX cannot see inside a frame, so a passage
+  marked on a slide is a block of the source instead, given as a line range:
+  the slide's title, one `\\item` (with its sub-list), a paragraph, or the whole
+  frame. Its "Slide:" line names the frame and its lines. The range is exact;
+  "Rendered text", when given, is the part of it the user selected. One frame
+  can be several PDF pages (overlays), so a page number is not a slide number.
+  When you edit items, keep their overlay specifications (`\\item<2->`) unless
+  asked to change them, and keep a slide to what fits on it. A `%@comment`
+  above `\\begin{frame}` is about the whole slide.
 - Do NOT compile the document. The harness compiles after you finish and will
   send you the errors as a follow-up message if the build breaks. Running
   latexmk or pdflatex yourself only slows the loop down.
@@ -96,13 +105,17 @@ When you are done, say briefly what you changed and where, one line per passage.
 """.strip()
 
 
-def _format_selection(index: int, selection: SelectionRef) -> str:
+def _format_selection(index: int, selection: SelectionRef, slide: str = "") -> str:
     # The column is only worth stating when it points at a word we actually
     # found in the source; otherwise it is a meaningless 1.
     where = f"{selection.file}:{selection.line}"
-    if selection.word:
+    if selection.endLine and selection.endLine > selection.line:
+        where += f"-{selection.endLine}"
+    elif selection.word:
         where += f":{selection.column}"
     lines = [f"[{index}] {where}"]
+    if slide:
+        lines.append(f"    Slide: {slide}")
     if selection.word:
         lines.append(f'    At the word: "{selection.word}"')
     if selection.selectedText:
@@ -126,12 +139,14 @@ def compose_turn_prompt(
     selections: Iterable[SelectionRef],
     pdf_rel: str,
     attached: Sequence[str] | None = None,
+    slides: Sequence[str] | None = None,
 ) -> str:
     """Build the user turn from the composer's message and its selection chips.
 
     ``attached`` says, per selection, what is attached to the sentence it is on
     (see :func:`texai.records.attached_summary`), so the agent sees a passage's
-    sources and comments without looking them up.
+    sources and comments without looking them up. ``slides`` names, per
+    selection, the slide it is on (see :func:`texai.slides.slide_label`).
     """
     marked = list(selections)
     parts: list[str] = []
@@ -140,7 +155,8 @@ def compose_turn_prompt(
         noun = "passage" if len(marked) == 1 else "passages"
         formatted = []
         for i, selection in enumerate(marked, start=1):
-            block = _format_selection(i, selection)
+            slide = slides[i - 1] if slides and i - 1 < len(slides) else ""
+            block = _format_selection(i, selection, slide)
             note = attached[i - 1] if attached and i - 1 < len(attached) else ""
             if note:
                 block += f"\n    Attached: {note}"

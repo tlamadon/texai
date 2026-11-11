@@ -66,7 +66,7 @@ export class PageAsk {
    * given, puts a second button beside the ✦, to leave a comment instead; it
    * needs no agent, only that nothing is editing the source (`canComment()`).
    */
-  constructor({ viewer, container, select, available, onChanges, onOpenChat, onComment, canComment }) {
+  constructor({ viewer, container, select, available, onChanges, onOpenChat, onComment, canComment, onEdit }) {
     this.viewer = viewer;
     this.container = container;
     this.select = select;
@@ -74,6 +74,9 @@ export class PageAsk {
     this.onChanges = onChanges;
     this.onOpenChat = onOpenChat;
     this.onComment = onComment;
+    // `onEdit(passage)` opens a passage that knows its source for editing in
+    // place: the third button, for a block of a slide.
+    this.onEdit = onEdit;
     this.canComment = canComment || (() => true);
 
     // What is on offer: the passage under the button, before anything is asked.
@@ -113,6 +116,19 @@ export class PageAsk {
     });
     if (onComment) container.append(this.commentButton);
 
+    this.editButton = el('button', 'ask-button comment-button', '\u270e');
+    this.editButton.type = 'button';
+    this.editButton.title = 'Edit this here';
+    this.editButton.hidden = true;
+    this.editButton.addEventListener('mousedown', (event) => event.preventDefault());
+    this.editButton.addEventListener('click', () => {
+      const passage = this.offer;
+      if (!passage) return;
+      this._hideOffer();
+      this.onEdit?.(passage);
+    });
+    if (onEdit) container.append(this.editButton);
+
     document.addEventListener('mouseup', (event) => {
       // After the browser has settled the selection this release made.
       setTimeout(() => this._afterRelease(event), 0);
@@ -120,7 +136,13 @@ export class PageAsk {
     document.addEventListener(
       'mousedown',
       (event) => {
-        if (event.target === this.button || this.commentButton.contains(event.target)) return;
+        if (
+          event.target === this.button ||
+          event.target === this.editButton ||
+          this.commentButton.contains(event.target)
+        ) {
+          return;
+        }
         this._hideOffer();
         const a = this.ask;
         // An empty box is not worth keeping open; one with a request typed in,
@@ -163,6 +185,9 @@ export class PageAsk {
     if (event.button !== 0 || event.detail >= 2) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (this.ask && this.ask.el.contains(event.target)) return;
+    // A slide's icon, or a pick in pick mode, makes its own offer on the
+    // click that follows.
+    if (event.target.closest?.('.slide-icon, .slide-picking')) return;
     this._offerSelection();
   }
 
@@ -180,7 +205,34 @@ export class PageAsk {
     this.offer = passage;
     this.button.hidden = !canAsk;
     this.commentButton.hidden = !canComment;
+    this.editButton.hidden = true;
     this._placeButton();
+  }
+
+  /**
+   * Offer a passage that was not selected by hand: a block of a slide, picked
+   * by its icon. It carries its own `source`, so nothing has to be resolved.
+   */
+  offerPassage(passage) {
+    this._hideOffer();
+    const asking = this.ask?.state === 'sending' || this.ask?.state === 'working';
+    const canAsk = this.available() && !asking;
+    const canComment = !!this.onComment && this.canComment() && !asking;
+    const canEdit = !!this.onEdit && !!passage.source && this.canComment() && !asking;
+    if (!canAsk && !canComment && !canEdit) return false;
+    this.offer = passage;
+    this.button.hidden = !canAsk;
+    this.commentButton.hidden = !canComment;
+    this.editButton.hidden = !canEdit;
+    // The buttons sit by the icon, between two lines; lighting the block up
+    // says which one they are for.
+    this.offerMarks = (passage.source?.rects || []).map((rect) => {
+      const mark = el('div', 'ask-highlight');
+      this.container.append(mark);
+      return { rect, mark };
+    });
+    this._placeButton();
+    return true;
   }
 
   /**
@@ -209,10 +261,18 @@ export class PageAsk {
     };
   }
 
+  /** Take back what is on offer: something else is opening on the passage. */
+  dismissOffer() {
+    this._hideOffer();
+  }
+
   _hideOffer() {
+    for (const { mark } of this.offerMarks || []) mark.remove();
+    this.offerMarks = [];
     this.offer = null;
     this.button.hidden = true;
     this.commentButton.hidden = true;
+    this.editButton.hidden = true;
   }
 
   /** A rectangle of the passage, in the scroll container's coordinates. */
@@ -224,16 +284,37 @@ export class PageAsk {
 
   _placeButton() {
     if (!this.offer) return;
-    const last = this._spot(this.offer.rects[this.offer.rects.length - 1]);
-    if (!last) return;
+    // A passage picked by an icon is offered where the icon is, not at the far
+    // end of its line: in a row from the icon, just above it, or beside it for
+    // one in the page's corner with nothing above.
+    const { anchor } = this.offer;
+    const at = anchor ? this._spot(anchor) : null;
+    const last = at ? null : this._spot(this.offer.rects[this.offer.rects.length - 1]);
+    if (!at && !last) return;
+    let x = at ? at.left + 11 : last.left + last.width;
+    let y = at ? at.top - 3 : last.top - 3;
+    if (at && anchor.beside) {
+      x = at.left + at.width + 16;
+      y = at.top + at.height + 4;
+    }
     // Just above the end of the passage, clear of the text it would otherwise
-    // cover on its own line.
-    this.button.style.left = `${last.left + last.width}px`;
-    this.button.style.top = `${last.top - 3}px`;
-    // The comment button just after the ✦, or in its place when there is none.
-    const step = this.button.hidden ? 0 : 26;
-    this.commentButton.style.left = `${last.left + last.width + step}px`;
-    this.commentButton.style.top = `${last.top - 3}px`;
+    // cover on its own line. Each button follows the ones that are showing.
+    for (const { rect, mark } of this.offerMarks || []) {
+      const spot = this._spot(rect);
+      mark.hidden = !spot;
+      if (!spot) continue;
+      Object.assign(mark.style, {
+        left: `${spot.left}px`,
+        top: `${spot.top}px`,
+        width: `${spot.width}px`,
+        height: `${spot.height}px`,
+      });
+    }
+    for (const button of [this.button, this.commentButton, this.editButton]) {
+      button.style.left = `${x}px`;
+      button.style.top = `${y}px`;
+      if (!button.hidden) x += 26;
+    }
   }
 
   /* ---------------- asking ---------------- */
@@ -329,14 +410,18 @@ export class PageAsk {
     this._setStatus('Sending…');
     const { passage } = a;
     try {
-      const result = await this.select({
-        page: passage.page,
-        point: passage.point,
-        word: passage.word,
-        selectedText: passage.text,
-      });
+      // A block of a slide knows where it comes from; anything else is asked.
+      const source =
+        passage.source ??
+        (
+          await this.select({
+            page: passage.page,
+            point: passage.point,
+            word: passage.word,
+            selectedText: passage.text,
+          })
+        ).selection.source;
       if (this.ask !== a) return;
-      const source = result.selection.source;
       const response = await postJSON('/api/chat', {
         message: '',
         selections: [
@@ -345,6 +430,7 @@ export class PageAsk {
             line: source.line,
             word: source.word ?? null,
             column: source.column ?? 1,
+            endLine: source.endLine ?? null,
             page: passage.page,
             selectedText: passage.text,
             instruction: request,

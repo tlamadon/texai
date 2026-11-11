@@ -559,6 +559,57 @@ export class PdfViewer {
   }
 
   /**
+   * The page's text as the reader sees it: one entry per rendered line, top to
+   * bottom, with its rectangle in PDF points. Two columns side by side are two
+   * lines, not one — a wide gap on a row splits it.
+   */
+  textLines(entry) {
+    const layer = entry?.el.querySelector('.textLayer');
+    if (!layer || !entry.viewport) return [];
+    const spans = [...layer.querySelectorAll('span')]
+      .filter((el) => !el.querySelector('span') && el.textContent.trim())
+      .map((el) => ({ text: el.textContent, r: el.getBoundingClientRect() }))
+      .filter(({ r }) => r.width > 0 && r.height > 0)
+      // Tallest first, so a row is set by its ordinary text and a superscript
+      // or a subscript joins the row it leans on.
+      .sort((a, b) => b.r.height - a.r.height);
+
+    const rows = [];
+    for (const span of spans) {
+      const middle = span.r.top + span.r.height / 2;
+      const row = rows.find((candidate) => middle > candidate.top && middle < candidate.bottom);
+      if (row) row.spans.push(span);
+      else rows.push({ top: span.r.top, bottom: span.r.bottom, spans: [span] });
+    }
+    rows.sort((a, b) => a.top - b.top);
+
+    const lines = [];
+    for (const row of rows) {
+      row.spans.sort((a, b) => a.r.left - b.r.left);
+      // Wider than any space between words, narrower than a column gutter.
+      const gap = 1.2 * (row.bottom - row.top);
+      let run = [];
+      const flush = () => {
+        if (!run.length) return;
+        const box = {
+          left: Math.min(...run.map((s) => s.r.left)),
+          top: Math.min(...run.map((s) => s.r.top)),
+          right: Math.max(...run.map((s) => s.r.right)),
+          bottom: Math.max(...run.map((s) => s.r.bottom)),
+        };
+        lines.push({ text: run.map((s) => s.text).join(' '), ...this.clientRectToPdf(entry, box) });
+        run = [];
+      };
+      for (const span of row.spans) {
+        if (run.length && span.r.left - run[run.length - 1].r.right > gap) flush();
+        run.push(span);
+      }
+      flush();
+    }
+    return lines;
+  }
+
+  /**
    * The word under a point, with the rendered words either side of it.
    *
    * SyncTeX only ever answers with a line, so this is where the extra precision

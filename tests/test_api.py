@@ -776,3 +776,51 @@ def test_word_context_is_bounded(config: AppConfig, payload: dict):
     client = make_client(config, fake_runner())
     response = client.post("/api/select", json={"page": 1, "x": 1.0, "y": 2.0, **payload})
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------- slides
+
+SLIDES_TEX = (
+    "\\begin{frame}{First}\n"
+    "\\begin{itemize}\n"
+    "  \\item One\n"
+    "\\end{itemize}\n"
+    "\\end{frame}\n"
+)
+
+
+def test_a_click_on_a_slide_answers_with_its_frame(config: AppConfig, project: Path):
+    # Beamer records the whole slide against \end{frame}; pointing at that line
+    # would be pointing at nothing, so the answer is the frame.
+    (project / "sections" / "talk.tex").write_text(SLIDES_TEX)
+    client = make_client(config, fake_runner("sections/talk.tex", line=5))
+
+    where = client.post("/api/resolve", json={"page": 2, "x": 10, "y": 10, "word": "One"}).json()
+    assert (where["file"], where["line"], where["endLine"], where["word"]) == ("sections/talk.tex", 1, 5, None)
+    assert where["frame"] == {"start": 1, "end": 5, "title": "First"}
+    assert where["why"] == "slides are selected by block"
+
+
+def test_a_click_outside_any_frame_is_resolved_as_before(config: AppConfig, project: Path):
+    (project / "sections" / "talk.tex").write_text(SLIDES_TEX + "\nAfter the frame.\n")
+    client = make_client(config, fake_runner("sections/talk.tex", line=7))
+    where = client.post("/api/resolve", json={"page": 2, "x": 10, "y": 10}).json()
+    assert where["line"] == 7 and "frame" not in where
+
+
+def test_slides_endpoint_is_empty_for_a_paper(config: AppConfig):
+    client = make_client(config, fake_runner())
+    assert client.get("/api/slides").json() == {"frames": []}
+
+
+def test_a_block_of_a_slide_is_read_and_saved_by_its_lines(config: AppConfig, project: Path):
+    # The box that opens on a slide's item holds exactly its lines, whatever
+    # blank lines do or do not surround them.
+    (project / "sections" / "talk.tex").write_text(SLIDES_TEX)
+    client = make_client(config, fake_runner())
+
+    block = client.get("/api/paragraph", params={"file": "sections/talk.tex", "line": 3, "end": 3}).json()
+    assert (block["start"], block["end"], block["text"]) == (3, 3, "  \\item One")
+
+    missing = client.get("/api/paragraph", params={"file": "sections/talk.tex", "line": 3, "end": 99})
+    assert missing.status_code == 422

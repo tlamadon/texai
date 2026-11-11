@@ -58,6 +58,16 @@ _ACCENT = re.compile(r"\\(?:['`^\"~=.]|[Hbcdkruv](?![A-Za-z]))\s*\{?\s*([A-Za-z]
 # its own that we can match against.
 _CONTROL = re.compile(r"\\(?:[A-Za-z@]+\*?|[^A-Za-z])")
 _COMMENT = re.compile(r"(?<!\\)%")
+# The name in \begin{itemize} or \end{frame}: never on the page.
+_ENV_NAME = re.compile(r"\s*\{([A-Za-z@*]+)\}")
+# A beamer overlay specification, straight after a command: \item<2->,
+# \only<1,3>, \begin{frame}<handout:0>. Narrow on purpose, so that the
+# comparison in $\alpha<1$ is left alone.
+_OVERLAY = re.compile(r"<[\w\s,\-+|@:.!*]{1,40}>")
+# Environments whose [options] set things up rather than print a title, as a
+# theorem's would.
+_OPTION_ENVS = frozenset({"frame", "itemize", "enumerate", "columns", "column"})
+_OPTIONS = re.compile(r"\s*\[[^\]\n]*\]")
 
 
 @dataclass(frozen=True)
@@ -84,6 +94,28 @@ def normalize_rendered(text: str) -> str:
 def _strip_accents(text: str) -> str:
     decomposed = unicodedata.normalize("NFD", text)
     return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def _skip_unrendered(raw: str, position: int, command: str) -> int:
+    """Past what follows a command and renders as nothing: the name in
+    ``\\begin{itemize}``, a slide's ``[options]``, an overlay ``<2->``."""
+    if command in {"\\begin", "\\end"}:
+        name = _ENV_NAME.match(raw, position)
+        if name is None:
+            return position
+        position = name.end()
+        if command == "\\end":
+            return position
+        overlay = _OVERLAY.match(raw, position)
+        if overlay:
+            position = overlay.end()
+        if name.group(1) in _OPTION_ENVS:
+            options = _OPTIONS.match(raw, position)
+            if options:
+                position = options.end()
+        return position
+    overlay = _OVERLAY.match(raw, position)
+    return overlay.end() if overlay else position
 
 
 def project(raw: str) -> tuple[str, list[int]]:
@@ -119,6 +151,8 @@ def project(raw: str) -> tuple[str, list[int]]:
                     text.append(escaped)
                     index.append(position + 1)
                 position = control.end()
+                if escaped.isalpha():
+                    position = _skip_unrendered(raw, position, control.group())
                 continue
 
         if char in "{}$":

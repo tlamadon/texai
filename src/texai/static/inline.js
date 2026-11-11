@@ -29,6 +29,50 @@ const SETTLE_MS = 6000;
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
 
+/**
+ * What is wrong with the environments in a piece of LaTeX, in words, or null
+ * when every \begin has its \end. Comments are skipped; verbatim is not known
+ * about, which a block that was whole to start with rarely minds.
+ */
+function unclosed(text) {
+  const open = [];
+  const code = text.replace(/(^|[^\\])%.*$/gm, '$1');
+  for (const found of code.matchAll(/\\(begin|end)\s*\{([^}]*)\}/g)) {
+    const [, kind, name] = found;
+    if (kind === 'begin') open.push(name);
+    else if (open.pop() !== name) return `\\end{${name}} has no \\begin{${name}} before it`;
+  }
+  return open.length ? `\\begin{${open.pop()}} is not closed — add its \\end` : null;
+}
+
+/**
+ * Where a word seen on the page sits in a block's source, or -1. The source
+ * spells more than the page shows, so of several occurrences the one with the
+ * most of the page's neighbouring words around it wins, and the first on a tie.
+ */
+function findWord(text, { word, before = [], after = [] }) {
+  if (!word) return -1;
+  const edge = /[\p{L}\p{N}]/u;
+  const reach = 80;
+  let best = -1;
+  let bestScore = -1;
+  for (let at = text.indexOf(word); at !== -1; at = text.indexOf(word, at + 1)) {
+    const end = at + word.length;
+    // Not inside a longer word, and not the name of a command.
+    if (at > 0 && (edge.test(text[at - 1]) || text[at - 1] === '\\')) continue;
+    if (end < text.length && edge.test(text[end])) continue;
+    const left = text.slice(Math.max(0, at - reach), at);
+    const right = text.slice(end, end + reach);
+    const score =
+      before.filter((w) => left.includes(w)).length + after.filter((w) => right.includes(w)).length;
+    if (score > bestScore) {
+      best = at;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 export class InlineEditor {
   /**
    * `resolve(entry, clientX, clientY)` is the same lookup Alt-click makes; it
@@ -110,6 +154,93 @@ export class InlineEditor {
     };
     this.place();
     this._putCursor(where);
+  }
+
+  /**
+   * Open on a block the source names outright: an item, a title or a paragraph
+   * of a beamer slide, or the whole frame. `source` is `{ file, line, endLine }`
+   * and `rects` where it sits on `page`, in PDF points (none for a frame).
+   * `word`, when the box was opened by a double-click, is the word under it
+   * with its neighbours (`{ word, before, after }`), to be selected in the box.
+   */
+  async openBlock(source, page, rects = [], word = null) {
+    if (this.session) {
+      if (this.session.state !== 'editing') {
+        this.onError?.('Still saving the last edit…');
+        return;
+      }
+      await this.commit();
+      if (this.session) return;
+    }
+    const entry = this.viewer.pageEntry(page);
+    if (!entry?.viewport) return;
+
+    const token = ++this._opening;
+    let para;
+    try {
+      const refusal = this.refuse(source.file);
+      if (refusal) throw new Error(refusal);
+      para = await getJSON(
+        `/api/paragraph?file=${encodeURIComponent(source.file)}` +
+          `&line=${source.line}&end=${source.endLine ?? source.line}`
+      );
+    } catch (err) {
+      if (token === this._opening) this.onError?.(err.message || String(err));
+      return;
+    }
+    if (token !== this._opening || this.session) return;
+
+    const [x0, y0, x1, y1] = entry.viewport.viewBox;
+    const pageWidth = x1 - x0;
+    const pageHeight = y1 - y0;
+    let box;
+    let fontPt;
+    if (rects.length) {
+      const left = Math.min(...rects.map((r) => r.x));
+      const top = Math.min(...rects.map((r) => r.y));
+      const right = Math.max(...rects.map((r) => r.x + r.width));
+      const bottom = Math.max(...rects.map((r) => r.y + r.height));
+      // As wide as the text, and wide enough to type LaTeX in, short of the edge.
+      const room = pageWidth - left - 12;
+      box = {
+        x: left,
+        y: top,
+        width: Math.min(room, Math.max(right - left + 8, pageWidth * 0.5)),
+        height: bottom - top,
+      };
+      fontPt = rects[0].height * 0.75;
+    } else {
+      // A whole frame: over the body of the slide, under its title.
+      box = { x: pageWidth * 0.06, y: pageHeight * 0.2, width: pageWidth * 0.88, height: pageHeight * 0.3 };
+      fontPt = 8;
+    }
+    fontPt = Math.min(MAX_FONT_PT, Math.max(MIN_FONT_PT, fontPt));
+
+    this.session = {
+      file: para.file,
+      start: para.start,
+      end: para.end,
+      original: para.text,
+      page,
+      box,
+      fontPt,
+      // A block of a slide was whole when it opened, and is saved whole.
+      whole: !unclosed(para.text),
+      state: 'editing',
+      reloaded: false,
+      settle: null,
+      ...this._build(para),
+    };
+    this.place();
+    const { cm } = this.session;
+    cm.focus();
+    const at = word ? findWord(para.text, word) : -1;
+    if (at === -1) {
+      cm.setCursor(0, cm.getLine(0).length);
+    } else {
+      // Selected, as a double-click selects a word: typing replaces it.
+      cm.setSelection(cm.posFromIndex(at), cm.posFromIndex(at + word.word.length));
+    }
   }
 
   /* ---------------- geometry ---------------- */
@@ -256,6 +387,14 @@ export class InlineEditor {
     const text = s.cm.getValue();
     if (text === s.original) {
       this.close();
+      return;
+    }
+    // On a slide a stray \begin or \end breaks the whole frame, not a
+    // paragraph: say which one before anything is written.
+    const broken = s.whole ? unclosed(text) : null;
+    if (broken) {
+      this._setStatus(broken, 'err');
+      s.cm.focus();
       return;
     }
 

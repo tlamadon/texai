@@ -56,6 +56,10 @@
         <div class="spacer"></div>
 
         <!-- The review loop: the one pair of controls that changes with every turn. -->
+        <!-- On a beamer deck: point at a block of a slide the way a browser's
+             inspector points at an element. -->
+        <button id="pick-block" type="button" class="toggle" hidden aria-pressed="false"
+                title="Pick a block of a slide: it lights up under the pointer, and a click selects it. Esc to stop.">Pick</button>
         <button id="toggle-marks" type="button" class="toggle"
                 title="Show what the agent changed, inline on the page">Show changes</button>
         <button id="accept-all" type="button" class="ghost" hidden
@@ -73,6 +77,9 @@
                     aria-pressed="true"
                     title="Colour each paragraph in the margin, matching the source's gutter">
               Paragraph guides</button>
+            <button id="toggle-anchors" type="button" role="menuitemcheckbox" class="menu-item check"
+                    aria-pressed="true" hidden
+                    title="A small icon beside each block of a slide, to select it by">Slide anchors</button>
             <button id="toggle-notes" type="button" role="menuitemcheckbox" class="menu-item check"
                     aria-pressed="true" hidden
                     title="Show the %@ annotations from the source in the page margins">Notes</button>

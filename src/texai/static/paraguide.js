@@ -22,8 +22,13 @@ const BAR_WIDTH = 4; // px: the coloured rule itself
 const BAR_GAP = 12; // px to the left of the text column, so it clears the text
 
 export class ParagraphGuide {
-  constructor({ viewer, button = null, onAnnotations = null }) {
+  /**
+   * `skip(page)` says a page has no use for bars: a beamer slide, where every
+   * line is recorded against the frame's last and one bar would span the lot.
+   */
+  constructor({ viewer, button = null, onAnnotations = null, skip = () => false }) {
     this.viewer = viewer;
+    this.skip = skip;
     this.button = button;
     this.onAnnotations = onAnnotations;
     this.bars = [];
@@ -84,7 +89,7 @@ export class ParagraphGuide {
 
     for (const bar of this.bars) {
       const entry = this.viewer.pageEntry(bar.page);
-      if (!entry || !entry.viewport) continue;
+      if (!entry || !entry.viewport || this.skip(bar.page)) continue;
 
       // Width is a screen thickness, not a document measure, so only the box's
       // left edge and vertical extent come from the transform.

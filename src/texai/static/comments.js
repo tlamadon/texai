@@ -198,15 +198,18 @@ export class CommentBox {
     window.getSelection()?.removeAllRanges();
 
     try {
-      where = await postJSON('/api/resolve', {
-        page: passage.page,
-        x: Number(passage.point.x.toFixed(3)),
-        y: Number(passage.point.y.toFixed(3)),
-        selectedText: passage.text || null,
-        word: passage.word?.word ?? null,
-        contextBefore: passage.word?.before ?? null,
-        contextAfter: passage.word?.after ?? null,
-      });
+      // A block of a slide knows where it comes from; anything else is asked.
+      where =
+        passage.source ??
+        (await postJSON('/api/resolve', {
+          page: passage.page,
+          x: Number(passage.point.x.toFixed(3)),
+          y: Number(passage.point.y.toFixed(3)),
+          selectedText: passage.text || null,
+          word: passage.word?.word ?? null,
+          contextBefore: passage.word?.before ?? null,
+          contextAfter: passage.word?.after ?? null,
+        }));
       if (this.box?.node === node) {
         label.textContent = `Comment on ${where.file}:${where.line}`;
         if (this.author) label.textContent += ` as ${this.author}`;

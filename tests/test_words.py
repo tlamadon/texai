@@ -293,3 +293,24 @@ def test_the_distant_pass_still_respects_word_boundaries():
 def test_the_distant_pass_still_ignores_comments():
     lines = ["\\maketitle"] + ["filler"] * 8 + ["% monopsony lives only in a comment"]
     assert locate_word(lines, 1, "monopsony") is None
+
+
+# ---------------------------------------------------------------- slides
+
+
+def test_environment_names_are_not_text():
+    # \begin{frame}{First slide} used to project as "frameFirst slide", which
+    # no title on a page could match.
+    assert project(r"\begin{frame}{First slide}")[0] == "First slide"
+    assert project(r"\end{itemize}")[0] == ""
+
+
+def test_overlays_and_a_frames_options_are_not_text():
+    assert project(r"\begin{frame}<2>[t,fragile]{First slide}")[0] == "First slide"
+    assert project(r"  \item<2-> Beta item")[0].strip() == "Beta item"
+    assert project(r"\only<1,3>{Shown twice}")[0] == "Shown twice"
+
+
+def test_a_theorems_title_and_a_comparison_are_left_alone():
+    assert project(r"\begin{theorem}[Existence]")[0] == "[Existence]"
+    assert project(r"$\alpha<1$ and $x>0$")[0] == "<1 and x>0"

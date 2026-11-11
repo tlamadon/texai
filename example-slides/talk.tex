@@ -1,0 +1,62 @@
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Madrid}
+
+\title{Minimum Wages and Firm Entry}
+\author{A. Author}
+\date{November 2026}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\section{Motivation}
+
+\begin{frame}{Why firm entry matters}
+Most work on minimum wages looks at workers who already have a job.
+
+\begin{itemize}
+  \item<1-> Entry is where new jobs come from and that is it
+  \item<2-> Entrants are small and pay close to the minimum
+    \begin{itemize}
+      \item so they are the firms most exposed to a rise
+    \end{itemize}
+  \item<3-> A rise could therefore slow job creation without a single layoff
+\end{itemize}
+\end{frame}
+
+\input{slides/method}
+
+\section{Results}
+
+\begin{frame}[fragile]{The estimate in one line} %#jiinri
+The baseline specification is a two-way fixed effects regression of entry on
+the interaction of treatment and post, absorbing county and year effects:
+
+\begin{verbatim}
+reghdfe entry treated##post, absorb(county year)
+\end{verbatim}
+
+\begin{enumerate}
+  \item Entry falls by about four percent in treated counties
+  \item $\hat\beta = -0.041 \quad (0.012)$
+  \item $\beta_{r} < \beta_{o}$
+  \item The effect is concentrated in retail and food services
+\end{enumerate}
+\end{frame}
+
+\begin{frame}
+\frametitle{What we take from this}
+\begin{block}{Main point}
+Employment effects understate the cost when entry responds.
+\end{block}
+
+\begin{columns}
+\column{0.5\textwidth}
+Incumbents barely adjust their headcount.
+
+\column{0.5\textwidth}
+Entrants are the margin that moves. %#4vcppr
+\end{columns}
+\end{frame}
+
+\end{document}

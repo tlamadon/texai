@@ -986,6 +986,59 @@ in the message.
 Only files a LaTeX build reads are editable — `.tex`, `.bib`, `.cls`, `.sty`,
 `.bbx`, `.cbx`, `.lco` — and only inside `--root`.
 
+### Slides
+
+A beamer deck opens like a paper: `texai talk.tex`. What changes is how you
+point at it. Beamer collects a frame's body before typesetting it, so SyncTeX
+records everything on a slide against the one line of its `\end{frame}`; a
+click on a slide can say which slide and nothing finer.
+
+So on slides texai goes the other way round. It reads each frame out of the
+source, with the pieces a reader would point at: its title, each `\item`, each
+paragraph of plain text. It then finds each piece's words on the page and hangs
+a small icon beside them, plus a square one in the corner for the slide as a
+whole.
+
+- **Click an icon** and three buttons appear beside it, with the block lit up:
+  ✦ to ask for a change, the bubble to leave a comment, the pencil to edit it
+  yourself. A request reaches the agent as an exact range of lines
+  (`talk.tex:19-22`, an item with its sub-list) on a named slide. "Add a bullet
+  about X after this", "cut this slide to three points" and "tighten this" are
+  single quick edits.
+- **Edit it in place.** The pencil, or a double-click on the text, opens the
+  block's LaTeX right there on the slide: one item, the title, a paragraph, or
+  the whole frame from the slide's own icon. Saving rebuilds. Type a second
+  `\item` under the first to add a bullet; empty the box to remove one.
+  A paragraph that opens an environment comes with all of it, so the box on a
+  `\begin{block}{Main point}` holds its `\end{block}` too, and a save that
+  would leave a `\begin` without its `\end` is refused with the reason.
+- **Or pick, as a browser's inspector does.** *Pick* in the toolbar turns the
+  pointer into a selector: the block under it lights up (the innermost one: a
+  sub-item, not the item around it; the slide's outline where there is no
+  block) and a click picks it, with the same three buttons at the pointer. It
+  stays on until you click *Pick* again or press Esc. With it, the icons are
+  optional: *View › Slide anchors* takes them off the page.
+- **Cmd/Ctrl-click an icon** to put the block on the composer as a passage;
+  **Alt-click** to open it in the Source tab.
+- **Hover an icon** to see what it stands for before asking anything of it.
+- **Selecting or Cmd/Ctrl-clicking text** on a slide resolves to the block it
+  is in, and a selection still travels as the words you selected.
+- **A comment** goes above its block in the source, or above `\begin{frame}`
+  when it is about the whole slide.
+
+An icon always stands for known lines; the text matching only decides where to
+draw it. A bullet with no words to find, one that is all symbols, takes the
+unclaimed line between its neighbours. What is left without an icon is a block
+that put no text on the page at all (a figure), or an item not yet uncovered on
+an earlier overlay page; the slide's own icon still reaches it. A click on a
+line that belongs to no block means the slide, never the line next to it.
+Frames are found as
+`\begin{frame}…\end{frame}` and `\frame{…}`; a custom frame environment is not
+recognised.
+
+Not there yet on slides: change markers, margin notes and "take me to" are not
+placed inside a slide. `example-slides/talk.tex` is a deck to try it on.
+
 ### Committing
 
 If the project is in a git repository, the toolbar carries a pill: the branch,
@@ -1205,6 +1258,8 @@ src/texai/
   source.py      reading and writing source files for the editor
   merge.py       three-way merge, so an outside edit and an unsaved one both live
   words.py       matching a rendered word back to its source column
+  frames.py      a beamer deck's frames and their blocks, read from the source
+  slides.py      which page is which frame, for the icons on each slide
   git.py         root-scoped status, commit, pull --rebase, push
   commitmsg.py   the agent's one-shot commit message, with a fallback
   server.py      FastAPI routes
@@ -1215,6 +1270,7 @@ src/texai/
                   both tables of contents, project.js assembles the document
                   from its \input tree, jump.js is the go-to palette,
                   sync.js keeps the two panes on the same passage,
+                  slides.js places the selector icons on beamer slides,
                   sessions.js the conversation menu, and git.js the git panel)
 ```
 
@@ -1235,6 +1291,11 @@ src/texai/
   skill the agent reads on every turn, in your project or your home directory —
   and let you read and edit that file like any other source. Nothing leaves the
   machine beyond what a turn already sends.
+- **The rest of the page on slides.** A beamer slide has icons to point with
+  (see *Slides*), which gives a map from each block of the source to where it
+  sits on the page. Change markers, margin notes and navigation could hang off
+  the same map. A slide-at-a-time view, and telling the agent when a slide
+  overflows, belong here too.
 - **Selecting without a mouse.** Asking about a passage starts from a text
   selection, which is fiddly on a touchscreen and imprecise across lines. Two
   additions: a small icon beside each paragraph (the guide bars already know

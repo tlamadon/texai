@@ -50,6 +50,7 @@ __all__ = [
     "body_start_line",
     "paragraph_ranges",
     "paragraph_bars",
+    "parsed_synctex",
 ]
 
 # How many colours the palette rotates through. Must match PARAGRAPH_PALETTE in
@@ -154,9 +155,36 @@ def _project_file(config: AppConfig, path: str) -> str | None:
 Words = dict[tuple[str, int], dict[tuple[int, float], list[float]]]
 
 
+# How many glyphs each source line put on each page: {(file, line): {page: n}}.
+Counts = dict[tuple[str, int], dict[int, int]]
+
+_parsed: dict[str, tuple[str, Any]] = {}
+
+
+def parsed_synctex(
+    config: AppConfig,
+) -> tuple[dict[tuple[str, int], dict[int, list[float]]], float, float, Words, Counts]:
+    """:func:`_parse_synctex`, kept until the next build rewrites the file.
+
+    The paragraph bars and the slide map (see :mod:`texai.slides`) both start
+    from the same pass over the SyncTeX data; one of them pays for it.
+    """
+    data = synctex_data_file(config.pdf_path)
+    if data is None:
+        return {}, 0.0, 0.0, {}, {}
+    stat = data.stat()
+    signature = f"{data}:{stat.st_mtime_ns}:{stat.st_size}"
+    key = str(config.pdf_path)
+    cached = _parsed.get(key)
+    if cached is None or cached[0] != signature:
+        cached = (signature, _parse_synctex(config))
+        _parsed[key] = cached
+    return cached[1]
+
+
 def _parse_synctex(
     config: AppConfig,
-) -> tuple[dict[tuple[str, int], dict[int, list[float]]], float, float, Words]:
+) -> tuple[dict[tuple[str, int], dict[int, list[float]]], float, float, Words, Counts]:
     """Where each source line landed, read straight from the ``.synctex.gz``.
 
     Returns two things in PDF points from the top-left of the page — the same
@@ -172,10 +200,12 @@ def _parse_synctex(
     * ``right_margin`` — the right edge of the text column, found the same way.
     * ``words`` — for each source line, on each rendered line it reached, where
       its words start and end (see :data:`Words`).
+    * ``counts`` — how many glyphs each source line put on each page (see
+      :data:`Counts`): on a beamer deck, which slide a page is.
     """
     data = synctex_data_file(config.pdf_path)
     if data is None:
-        return {}, 0.0, 0.0, {}
+        return {}, 0.0, 0.0, {}, {}
 
     tag_files: dict[int, str | None] = {}
     unit = 1.0
@@ -184,6 +214,7 @@ def _parse_synctex(
     y_offset_sp = 0.0
     index: dict[tuple[str, int], dict[int, list[float]]] = {}
     words: Words = {}
+    counts: Counts = {}
     left_votes: dict[int, Counter[int]] = {}
     right_votes: Counter[int] = Counter()
     page = 0
@@ -253,6 +284,8 @@ def _parse_synctex(
                 run[0] = min(run[0], x)
                 run[1] = max(run[1], x)
             key = (file, int(glyph.group(2)))
+            on_page = counts.setdefault(key, {})
+            on_page[page] = on_page.get(page, 0) + 1
             pages = index.setdefault(key, {})
             slot = pages.get(page)
             if slot is None:
@@ -270,7 +303,7 @@ def _parse_synctex(
         total.update(votes)
     left_margin = float(total.most_common(1)[0][0]) if total else 0.0
     right_margin = float(right_votes.most_common(1)[0][0]) if right_votes else 0.0
-    return index, left_margin, right_margin, words
+    return index, left_margin, right_margin, words, counts
 
 
 def _header_number(line: str, default: float) -> float:
@@ -565,7 +598,7 @@ def paragraph_bars(config: AppConfig) -> dict[str, Any]:
     if cached is not None and cached[0] == signature:
         return cached[1]
 
-    line_index, left_margin, right_margin, words = _parse_synctex(config)
+    line_index, left_margin, right_margin, words, _counts = parsed_synctex(config)
     records = load_records(config)
     # Only files that actually rendered are worth reading back for paragraphs.
     present = {file for file, _line in line_index}

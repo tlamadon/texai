@@ -340,6 +340,48 @@ button.update-pill:hover:not(:disabled) { background: rgba(63, 185, 80, 0.15); }
 }
 .note-card.proposal .note-kind { color: #2f5fb8; }
 
+/* A note on a beamer slide: a speech bubble at the end of the block it is
+   about, the size of the anchor beside it and loud enough to be seen across a
+   slide. What it says comes up beside it when pointed at. */
+.note-layer .note-chip,
+.note-layer .note-chip:hover:not(:disabled) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #f2b600;
+  color: #4a3600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  overflow: visible;
+  cursor: pointer;
+}
+.note-layer .note-chip:hover:not(:disabled) { background: #ffc81e; z-index: 2; }
+.note-layer .note-chip.done { opacity: 0.5; }
+.note-chip svg { display: block; flex: none; }
+.note-chip .note-chip-count { font-weight: 700; font-size: 9.5px; }
+.note-chip .note-chip-text {
+  display: none;
+  position: absolute;
+  left: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 260px;
+  padding: 3px 7px;
+  border-radius: 3px;
+  background: #fff6d6;
+  color: #3b3b3b;
+  border-left: 3px solid #e0b000;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  text-align: left;
+  white-space: normal;
+}
+.note-chip:hover .note-chip-text { display: block; }
+
 /* No room for the slip: a dot that says "something here", text in the tooltip. */
 .note-layer .note-card.dot,
 .note-layer .note-card.dot:hover:not(:disabled) {
@@ -1087,6 +1129,61 @@ button.toggle.active {
 .inline-edit-bar button { font-size: 11px; padding: 2px 8px; }
 
 /* ---------------- asking about a selection, on the page ---------------- */
+
+/* Selector icons on a beamer slide: one per block of the frame (its title, each
+   item, each paragraph) and one in the corner for the slide itself. Quiet until
+   the pointer is near, since they sit on a page meant to be read. The layer
+   takes no clicks of its own, so the text under it still selects. */
+.page .slide-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.slide-icon {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 0;
+  /* Its own light ground, so the pencil reads on a coloured title bar too. */
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(76, 141, 255, 0.35);
+  opacity: 0.4;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.slide-icon svg { display: block; }
+.page:hover .slide-icon { opacity: 0.75; }
+.slide-icon:hover,
+.slide-icon:focus-visible {
+  opacity: 1;
+  background: var(--accent);
+  color: #fff;
+  transform: scale(1.15);
+}
+/* The slide's own: squared, to tell it from the blocks'. */
+.slide-icon.slide { border-radius: 4px; }
+.slide-hover {
+  position: absolute;
+  border-radius: 2px;
+  background: rgba(76, 141, 255, 0.2);
+  pointer-events: none;
+}
+/* Pick mode: the pointer picks blocks, so it does not select text. */
+.slide-picking .page { cursor: crosshair; }
+.slide-picking .textLayer { user-select: none; -webkit-user-select: none; }
+.slide-picking .slide-hover {
+  background: rgba(76, 141, 255, 0.22);
+  outline: 1.5px solid var(--accent);
+}
+.page.slide-hovered { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* The button at the end of a selection, sitting just above it. Its own
    transform centres it on the point, so the script only has to name the point. */

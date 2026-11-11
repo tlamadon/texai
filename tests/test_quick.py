@@ -178,3 +178,37 @@ async def test_what_the_quick_editor_cannot_do_goes_to_the_agent(config: AppConf
     assert agent.started and "sections/model.tex:4" in agent.prompts[0]
     assert turn.status == "applied" and turn.timing["route"] == "quick→agent"
     assert any("Handing this to the agent" in e.get("text", "") for e in turn.transcript)
+
+
+# ---------------------------------------------------------------- slides
+
+TALK_TEX = (
+    "\\begin{frame}{Plan}\n"
+    "\\begin{itemize}\n"
+    "  \\item First point\n"
+    "  \\item Second point,\n"
+    "    which runs on\n"
+    "\\end{itemize}\n"
+    "\\end{frame}\n"
+    "\n"
+    "Not on a slide.\n"
+)
+
+
+def test_on_a_slide_the_passage_is_the_block_and_the_context_its_frame(config: AppConfig):
+    (config.root / "sections" / "talk.tex").write_text(TALK_TEX)
+    item = SelectionRef(file="sections/talk.tex", line=4, endLine=5, instruction="tighten")
+    passage = find_passage(config, item)
+    assert (passage.start, passage.end) == (4, 5)
+    assert passage.text == "  \\item Second point,\n    which runs on"
+    # The frame and nothing past it: what a slide is, for the model.
+    assert passage.context.splitlines()[0].endswith("\\begin{frame}{Plan}")
+    assert passage.context.splitlines()[-1].endswith("\\end{frame}")
+    assert "Not on a slide" not in passage.context
+
+
+def test_the_slide_itself_is_a_passage(config: AppConfig):
+    (config.root / "sections" / "talk.tex").write_text(TALK_TEX)
+    whole = SelectionRef(file="sections/talk.tex", line=1, instruction="cut to one point")
+    passage = find_passage(config, whole)
+    assert (passage.start, passage.end) == (1, 7)

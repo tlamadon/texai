@@ -69,6 +69,8 @@ from .models import (
 from .macros import document_macros
 from .navigate import LocateError, locate, locate_forward, locate_range
 from .paragraphs import paragraph_bars
+from .slides import frame_for_page, slide_map
+from .frames import frame_at
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
 from .provenance import ProvenanceError, resolve_source, serve_path, source_from_dict
 from .selection import atomic_write_json, atomic_write_text, build_selection
@@ -78,6 +80,7 @@ from .source import (
     SourceConflict,
     SourceError,
     list_sources,
+    read_lines,
     read_paragraph,
     read_source,
     write_paragraph,
@@ -335,6 +338,40 @@ def create_app(
             return line, 1, None, found.explain(phrase, relative, line)
         return found.hit.line, found.hit.column, found.hit.text, ""
 
+    def _slide_source(payload: SelectRequest, location: Any) -> dict[str, Any] | None:
+        """The slide a click landed on, when it landed on one.
+
+        Beamer records a whole frame against its ``\\end{frame}`` line (and a
+        fragile frame's body against a scratch ``.vrb`` file), so the line
+        SyncTeX gives says which slide and nothing more. The honest answer is
+        the frame; the page's own icons name the block (see texai.slides).
+        """
+        frame: dict[str, Any] | None = None
+        if str(location.input).lower().endswith(".vrb"):
+            frame = frame_for_page(config, payload.page)
+        else:
+            try:
+                path = resolve_source_path(location.input, config.root, config.search_dirs)
+                relative = to_project_relative(path, config.root)
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                return None
+            if "frame" in text:
+                found = frame_at(text.split("\n"), location.line)
+                if found is not None:
+                    frame = {"file": relative, **found.as_dict()}
+        if frame is None:
+            return None
+        return {
+            "file": frame["file"],
+            "line": frame["start"],
+            "endLine": frame["end"],
+            "column": 1,
+            "word": None,
+            "why": "slides are selected by block",
+            "frame": {"start": frame["start"], "end": frame["end"], "title": frame["title"]},
+        }
+
     def _synctex_source(payload: SelectRequest) -> dict[str, Any]:
         """Map a click to a source location, with no side effects."""
         if not config.pdf_path.is_file():
@@ -355,6 +392,10 @@ def create_app(
             raise _error(404, "synctex_no_result", str(exc)) from exc
         except SyncTexError as exc:
             raise _error(500, "synctex_failed", str(exc)) from exc
+
+        slide = _slide_source(payload, location)
+        if slide is not None:
+            return slide
 
         try:
             source_path = resolve_source_path(location.input, config.root, config.search_dirs)
@@ -573,6 +614,12 @@ def create_app(
         palette, so the two panes colour the same block the same way. Cached
         against the build inside; the first request after a rebuild pays for it."""
         return await asyncio.to_thread(paragraph_bars, config)
+
+    @app.get("/api/slides")
+    async def slides() -> dict[str, Any]:
+        """The frames of a beamer deck: their lines, blocks and pages, for the
+        selector icons the page draws on each slide. Empty for a paper."""
+        return await asyncio.to_thread(slide_map, config)
 
     @app.post("/api/provenance")
     async def provenance(payload: ProvenanceRequest) -> dict[str, Any]:
@@ -836,9 +883,12 @@ def create_app(
         return {"ok": True, "file": file, **done, "build": None}
 
     @app.get("/api/paragraph")
-    async def get_paragraph(file: str, line: int) -> dict[str, Any]:
-        """The paragraph around a source line, for editing it on the page."""
+    async def get_paragraph(file: str, line: int, end: int | None = None) -> dict[str, Any]:
+        """The paragraph around a source line, for editing it on the page; or,
+        with ``end``, exactly those lines: a block of a slide."""
         try:
+            if end is not None:
+                return read_lines(config, file, line, end)
             return read_paragraph(config, file, line)
         except NoParagraph as exc:
             raise _error(422, "no_paragraph", str(exc)) from exc

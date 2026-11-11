@@ -218,6 +218,8 @@ export class ChatPanel {
       file: source.file,
       line: source.line,
       column: source.column ?? 1,
+      // A block of a slide is a range of lines rather than a spot.
+      endLine: source.endLine && source.endLine > source.line ? source.endLine : null,
       word: source.word ?? null,
       page: selection.page ?? null,
       selectedText: selection.selectedText ?? null,
@@ -228,7 +230,11 @@ export class ChatPanel {
     // Re-clicking the same spot replaces rather than duplicates. Two words on
     // one line are two different spots now, so the column is part of identity.
     const existing = this.chips.findIndex(
-      (c) => c.file === chip.file && c.line === chip.line && c.column === chip.column
+      (c) =>
+        c.file === chip.file &&
+        c.line === chip.line &&
+        c.column === chip.column &&
+        c.endLine === chip.endLine
     );
     if (existing >= 0) {
       chip.instruction = this.chips[existing].instruction;
@@ -253,7 +259,11 @@ export class ChatPanel {
 
       const head = el('div', 'chip-head');
       // The column only earns its place when it points at a known word.
-      const label = chip.word ? `${chip.file}:${chip.line}:${chip.column}` : `${chip.file}:${chip.line}`;
+      const label = chip.endLine
+        ? `${chip.file}:${chip.line}-${chip.endLine}`
+        : chip.word
+          ? `${chip.file}:${chip.line}:${chip.column}`
+          : `${chip.file}:${chip.line}`;
       const ref = el('span', 'chip-ref ref', label);
       ref.title = chip.word
         ? `Show this passage in the PDF — the word “${chip.word}”`
@@ -324,6 +334,7 @@ export class ChatPanel {
       line: chip.line,
       word: chip.word ?? null,
       column: chip.column,
+      endLine: chip.endLine ?? null,
       page: chip.page,
       selectedText: chip.selectedText,
       instruction: chip.instruction.trim() || null,

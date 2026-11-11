@@ -319,6 +319,11 @@ export class AnnotationLayer {
     this.onEdit = null; // open a source line in the editor
     this.onPeek = null; // show what a %@src points at
     this.onThread = null; // (item, items, anchor): open a note's thread
+    // (file, line) -> where a note goes on a beamer slide, or null off one.
+    // A slide has no margin for a slip and no line positions to level one
+    // with, so a note there is a chip at the end of the block it is about.
+    this.slideSpots = null;
+    this._chips = new Map(); // how many chips already sit at a spot, per draw
     this.popup = null; // {key, node}: the open list of a paragraph's sources
     this._closeOnOutside = (event) => {
       if (this.popup && !this.popup.node.contains(event.target) && !event.target.closest?.('.note-source')) {
@@ -421,6 +426,7 @@ export class AnnotationLayer {
       }
     }
     const touched = new Set();
+    this._chips = new Map();
     for (const note of notes) {
       if (note.re && ids.has(`${note.file}#${note.re}`)) continue;
       const entry =
@@ -497,10 +503,59 @@ export class AnnotationLayer {
     return { entry, node };
   }
 
+  /** A note on a slide: a speech bubble at the end of its block, on every
+      page of the slide that shows the block. */
+  _drawChips(item, spots, replies, title) {
+    const key = `${item.file}:${item.line}`;
+    for (const { entry, left, top } of spots) {
+      const slot = `${entry.num}:${Math.round(left)}:${Math.round(top)}`;
+      const taken = this._chips.get(slot) || 0;
+      this._chips.set(slot, taken + 1);
+
+      const node = el('button', `note-chip${item.status === 'done' ? ' done' : ''}`);
+      node.type = 'button';
+      node.title = title;
+      node.dataset.key = key;
+      node.innerHTML =
+        '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" ' +
+        'd="M2 2.5h12v8.5H7.5L4 14v-3H2z"/></svg>';
+      if (replies) node.append(el('span', 'note-chip-count', String(replies + 1)));
+      // What it says, beside it, when pointed at.
+      const said = el('span', 'note-chip-text');
+      if (item.by) said.append(el('span', 'note-by', item.by));
+      said.append(el('span', '', item.text));
+      node.append(said);
+      node.style.left = `${left + taken * 24}px`;
+      node.style.top = `${top}px`;
+      node.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (event.altKey || !this.onThread) {
+          this.onEdit?.(item.file, item.line);
+          return;
+        }
+        this.onThread(item, this.items, () => this._cardFor(key));
+      });
+      this._layerFor(entry).append(node);
+    }
+  }
+
   _drawNote(item, replies = 0) {
     const who = [item.by, item.re && `\u21b3 ${item.re}`].filter(Boolean).join(' ');
     const done = item.status === 'done';
     const answered = replies ? ` \u00b7 ${replies} repl${replies > 1 ? 'ies' : 'y'}` : '';
+    // A marker sits on the line it is about; a %@ line is about the one below.
+    const about = item.record ? item.line : (item.end ?? item.line) + 1;
+    const spots = this.slideSpots?.(item.file, about);
+    if (spots) {
+      this._drawChips(
+        item,
+        spots,
+        replies,
+        `${item.kind}${who ? ` (${who})` : ''}${item.status ? ` [${item.status}]` : ''}${answered}: ` +
+          `${item.text}\n${item.file}:${item.line} — click to open \u00b7 Alt-click to edit`
+      );
+      return null;
+    }
     const slip = this._slip(
       item,
       `${item.re ? 'reply' : ''}${done ? ' done' : ''}`,
@@ -533,7 +588,9 @@ export class AnnotationLayer {
   /** A note's card as drawn now, and its page: what an open thread hangs off. */
   _cardFor(key) {
     for (const entry of this.viewer.pages) {
-      const node = entry.el.querySelector(`.note-card[data-key="${CSS.escape(key)}"]`);
+      const node = entry.el.querySelector(
+        `.note-card[data-key="${CSS.escape(key)}"], .note-chip[data-key="${CSS.escape(key)}"]`
+      );
       if (node) return { node, entry };
     }
     return null;

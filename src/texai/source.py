@@ -27,6 +27,7 @@ __all__ = [
     "list_sources",
     "read_source",
     "write_source",
+    "read_lines",
     "read_paragraph",
     "write_paragraph",
 ]
@@ -115,6 +116,29 @@ def write_source(config: AppConfig, file: str, text: str, base_sha: str | None) 
 # Only prose can be edited in place on the page: a .bib entry or a .sty macro
 # shows up in the PDF too, but nowhere a paragraph-sized box would make sense.
 _PARAGRAPH_SUFFIXES = frozenset({".tex"})
+
+
+def read_lines(config: AppConfig, file: str, start: int, end: int) -> dict[str, Any]:
+    """Lines ``start``-``end`` as they stand, in the shape of a paragraph.
+
+    For a block the source names outright rather than by its blank lines: one
+    ``\\item`` of a slide, a frame. Saved the same way (:func:`write_paragraph`),
+    which checks the lines are still what was read.
+    """
+    data = read_source(config, file)
+    if PurePosixPath(data["file"]).suffix.lower() not in _PARAGRAPH_SUFFIXES:
+        raise NoParagraph(f"{data['file']}:{start} is not body text that can be edited in place")
+    lines = data["text"].split("\n")
+    if start < 1 or end < start or end > len(lines):
+        raise NoParagraph(f"{data['file']} has no lines {start}-{end}")
+    return {
+        "file": data["file"],
+        "index": None,
+        "start": start,
+        "end": end,
+        "text": "\n".join(lines[start - 1 : end]),
+        "sha": data["sha"],
+    }
 
 
 def read_paragraph(config: AppConfig, file: str, line: int) -> dict[str, Any]:

@@ -86,6 +86,9 @@ class SelectionRef(BaseModel):
     file: str = Field(min_length=1, max_length=1024)
     line: int = Field(ge=1, le=10_000_000)
     column: int = Field(default=1, ge=1, le=10_000)
+    # A block rather than a spot: the last line of it. What a slide's icons
+    # send, where the source names the range and SyncTeX could not.
+    endLine: int | None = Field(default=None, ge=1, le=10_000_000)
     page: int | None = Field(default=None, ge=1, le=100_000)
     selectedText: str | None = Field(default=None, max_length=MAX_SELECTED_TEXT)
     word: str | None = Field(default=None, max_length=MAX_WORD_TEXT)

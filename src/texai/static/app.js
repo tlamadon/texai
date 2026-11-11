@@ -18,6 +18,7 @@ import { AnnotationLayer } from './annotations.js';
 import { PeekPanel } from './peek.js';
 import { ProjectSources } from './project.js';
 import { ScrollSync } from './sync.js';
+import { SlideBlocks } from './slides.js';
 import { showToast } from './toast.js';
 import { PdfViewer } from './viewer.js';
 
@@ -57,6 +58,7 @@ const els = {
 
 let marks = null;
 let paraGuide = null;
+let slides = null;
 let notes = null;
 let viewHistory = null;
 let inline = null;
@@ -74,6 +76,7 @@ const viewer = new PdfViewer({
   onRender: () => {
     marks?.draw();
     paraGuide?.draw();
+    slides?.draw();
     notes?.draw();
     inline?.place();
     ask?.place();
@@ -100,6 +103,7 @@ paraGuide = new ParagraphGuide({
   viewer,
   button: els.toggleGuides,
   onAnnotations: (items) => notes.set(items),
+  skip: (page) => !!slides?.frameOn(page),
 });
 
 // Saving rebuilds the PDF; the watcher below notices the new version and
@@ -192,7 +196,8 @@ ask = new PageAsk({
   container: els.container,
   select: (passage) => recordSelection(passage),
   available: () => chat.agent.available && !chat.busy,
-  onComment: (passage) => comments.compose(passage),
+  onComment: (passage) => comments.compose(onSlide(passage)),
+  onEdit: (passage) => inline.openBlock(passage.source, passage.page, passage.source.rects),
   canComment: () => !chat.busy,
   onChanges: () => marks.reveal(),
   onOpenChat: () => {
@@ -200,6 +205,30 @@ ask = new PageAsk({
     chat.setView('chat');
   },
 });
+// On a beamer deck SyncTeX knows the slide and nothing finer, so each slide
+// wears an icon per block — title, item, paragraph — placed from the source.
+// Clicking one offers the same two buttons a selection does; with Cmd/Ctrl it
+// goes to the composer as a passage, with Alt to the editor.
+slides = new SlideBlocks({
+  viewer,
+  anchorsButton: document.getElementById('toggle-anchors'),
+  pickButton: document.getElementById('pick-block'),
+  onPick: (passage, event) => {
+    const { source } = passage;
+    if (event.altKey) {
+      editAt(source.file, source.line);
+      return;
+    }
+    if (IS_MAC ? event.metaKey : event.ctrlKey || event.metaKey) {
+      addSlideSelection(source, passage.page, passage.text);
+      return;
+    }
+    if (!ask.offerPassage(passage)) showToast('The agent is busy; try again in a moment.');
+  },
+});
+notes.slideSpots = (file, line) => slides.spotsFor(file, line);
+// A note sits just past its block's anchor, so it moves when the anchors go.
+document.getElementById('toggle-anchors')?.addEventListener('click', () => notes.draw());
 chat.onTurnFinished = (turn) => ask.turnFinished(turn);
 chat.onAgentEntry = (turnId, entry) => ask.agentEntry(turnId, entry);
 chat.onBuild = (event) => ask.buildEvent(event);
@@ -488,6 +517,11 @@ async function loadPdf(version, { preserveView = false } = {}) {
   showEmpty('');
   marks?.refresh();
   paraGuide?.refresh();
+  // The bars stay off a slide, so they are drawn again once the slides are known.
+  slides?.refresh().then(() => {
+    paraGuide?.draw();
+    notes?.draw(); // on a slide a note sits by its block, once the blocks are known
+  });
   inline?.pdfReloaded();
   ask?.pdfReloaded();
   updateZoomReadout();
@@ -538,8 +572,34 @@ async function poll() {
 
 /* ---------------- selection ---------------- */
 
+/**
+ * A passage on a slide, with the block of the source it belongs to. A passage
+ * anywhere else comes back as it is, to be resolved through SyncTeX.
+ */
+function onSlide(passage) {
+  if (passage.source) return passage;
+  const source = slides?.sourceAt(passage.page, passage.point);
+  return source ? { ...passage, source } : passage;
+}
+
+/** Put a block of a slide on the composer, as a Cmd-click puts a word there. */
+function addSlideSelection(source, page, selectedText) {
+  lastSelection = { source, page, selectedText: selectedText || null };
+  els.copyRef.disabled = false;
+  setPanelVisible(true);
+  chat.addSelection(lastSelection);
+  const lines = source.endLine > source.line ? `${source.line}-${source.endLine}` : source.line;
+  showToast(`Selected ${source.file}:${lines}`);
+}
+
 /** Resolve a point on a page to its source, and record it as the current selection. */
 async function recordSelection({ page, point, word, selectedText }) {
+  const source = slides?.sourceAt(page, point);
+  if (source) {
+    lastSelection = { source, page, selectedText: selectedText || source.text || null };
+    els.copyRef.disabled = false;
+    return { selection: lastSelection, message: `Selected ${source.file}:${source.line}` };
+  }
   const result = await postJSON('/api/select', {
     page,
     x: Number(point.x.toFixed(3)),
@@ -582,6 +642,8 @@ async function select(entry, clientX, clientY, selectedText) {
 /** Where in the source a point on the page came from, without recording it. */
 function resolvePoint(entry, clientX, clientY) {
   const point = viewer.clientPointToPdf(entry, clientX, clientY);
+  const source = slides?.sourceAt(entry.num, point);
+  if (source) return Promise.resolve({ ...source, why: '' });
   const word = viewer.wordAtClientPoint(clientX, clientY);
   return postJSON('/api/resolve', {
     page: entry.num,
@@ -642,13 +704,25 @@ function onViewerDoubleClick(event) {
   const entry = viewer.pageAtClientPoint(event.clientX, event.clientY);
   if (!entry) return;
   // The browser has just selected the word; the box selects it instead.
+  const word = viewer.wordAtClientPoint(event.clientX, event.clientY);
   window.getSelection()?.removeAllRanges();
+  // On a slide the box opens on the block under the pointer (the source says
+  // what its lines are), or on the whole frame when the pointer is on none.
+  const block = slides?.sourceAt(entry.num, viewer.clientPointToPdf(entry, event.clientX, event.clientY));
+  if (block) {
+    ask.dismissOffer();
+    // The word that was double-clicked is selected in the box, as it was on
+    // the page a moment ago.
+    inline.openBlock(block, entry.num, block.rects, word);
+    return;
+  }
   inline.open(entry, event.clientX, event.clientY, event.target);
 }
 
 function referenceText(selection) {
-  const { file, line, column, word } = selection.source;
-  let text = `PDF selection: ${file}:${line}${word ? `:${column}` : ''}`;
+  const { file, line, column, word, endLine } = selection.source;
+  const range = endLine > line ? `-${endLine}` : word ? `:${column}` : '';
+  let text = `PDF selection: ${file}:${line}${range}`;
   if (word) text += `\nAt the word: “${word}”`;
   if (selection.selectedText) {
     text += `\nRendered text: “${selection.selectedText}”`;

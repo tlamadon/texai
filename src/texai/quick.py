@@ -25,6 +25,7 @@ from typing import Any
 
 from .agent import AgentSession
 from .config import AppConfig
+from .frames import frame_at
 from .models import SelectionRef
 from .paragraphs import paragraph_ranges
 from .selection import atomic_write_text
@@ -95,6 +96,10 @@ Rules:
 - Offer versions when the request has several good answers ("tighten this", "a
   better title"). When it says how many versions are wanted, follow that; when
   it asks for a single edit, give an edit.
+- In a beamer deck the passage can be one block of a slide (its title, one
+  `\\item`, a paragraph) or a whole frame, and the lines around it are its
+  frame. Asked to add an item beside it, return the passage with the new item
+  before or after it. Keep overlay specifications (`\\item<2->`) as they are.
 - The lines shown are usually enough. If you need something else from the
   document (a definition, the notation, what a reference points to), use Read
   or Grep, then answer. Do not narrate.
@@ -142,14 +147,25 @@ def find_passage(config: AppConfig, selection: SelectionRef) -> Passage | None:
         return None
     text = source["text"]
     lines = text.split("\n")
-    for _index, first, last in paragraph_ranges(text):
-        if first <= selection.line <= last:
-            break
+    # On a slide the passage is the block that was picked, which the source
+    # names exactly, and what surrounds it is its frame.
+    frame = frame_at(lines, selection.line) if "frame" in text else None
+    if selection.endLine and selection.line <= selection.endLine <= len(lines):
+        first, last = selection.line, selection.endLine
+    elif frame is not None and selection.line == frame.start:
+        first, last = frame.start, frame.end
     else:
-        return None
+        for _index, first, last in paragraph_ranges(text):
+            if first <= selection.line <= last:
+                break
+        else:
+            return None
 
-    low = max(1, first - CONTEXT_LINES)
-    high = min(len(lines), last + CONTEXT_LINES)
+    if frame is not None:
+        low, high = min(frame.start, first), max(frame.end, last)
+    else:
+        low = max(1, first - CONTEXT_LINES)
+        high = min(len(lines), last + CONTEXT_LINES)
     width = len(str(high))
     context = "\n".join(
         f"{number:>{width}}{'›' if first <= number <= last else '|'} {lines[number - 1]}"

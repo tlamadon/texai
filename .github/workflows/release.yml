@@ -99,6 +99,7 @@ jobs:
               "texai/static/git.js",
               "texai/static/annotations.js",
               "texai/static/paraguide.js",
+              "texai/static/slides.js",
               "texai/static/vendor/pdfjs/pdf.mjs",
               "texai/static/vendor/pdfjs/pdf.worker.mjs",
               "texai/static/vendor/codemirror/codemirror.js",
