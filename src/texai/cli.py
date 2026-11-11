@@ -17,6 +17,7 @@ from .agent_tools import tools_url
 from .codex_agent import CODEX_EFFORT_LEVELS
 from .build import BuildError, detect_engine, run_build, running_builds
 from .config import AppConfig
+from .demo import DEMOS, DemoError, unpack_demo
 from .console import note, warn
 from .discover import DiscoveryError, discover
 from .events import EventBus
@@ -135,6 +136,18 @@ def build_parser() -> argparse.ArgumentParser:
             "the last one texai had here, or the Claude Code / Codex session id given"
         ),
     )
+    parser.add_argument(
+        "--demo",
+        nargs="?",
+        const="paper",
+        default=None,
+        choices=sorted(DEMOS),
+        help=(
+            "try texai on a document of its own instead of yours: a short paper "
+            "(the default) or a beamer deck. It is copied to a new directory, "
+            "built, and opened in the browser"
+        ),
+    )
     parser.add_argument("--open", action="store_true", help="open the viewer in a browser")
     parser.add_argument("--version", action="version", version=f"texai {__version__}")
     return parser
@@ -201,6 +214,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume and args.document is None and Path(args.resume).exists():
         # `texai --resume main.tex`: the optional id swallowed the document.
         args.document, args.resume = args.resume, LAST_SESSION
+    if args.demo:
+        if args.document is not None:
+            parser.error("--demo opens its own document; leave yours out, or drop --demo")
+        try:
+            args.document = str(unpack_demo(args.demo))
+        except DemoError as exc:
+            print(f"texai: {exc}", file=sys.stderr)
+            return 2
+        args.open = True
+        note(f"demo ({args.demo}) copied to {Path(args.document).parent} — yours to edit")
     levels = CODEX_EFFORT_LEVELS if args.agent == "codex" else EFFORT_LEVELS
     if args.effort and args.effort not in levels:
         parser.error(f"--effort for {args.agent} must be one of: {', '.join(levels)}")

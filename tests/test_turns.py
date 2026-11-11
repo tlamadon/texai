@@ -548,3 +548,50 @@ async def test_a_turn_logs_where_its_time_went(project: Path):
     assert [(b["attempt"], b["ok"]) for b in logged["builds"]] == [(1, False), (2, True)]
     assert logged["totalMs"] >= sum(b["ms"] for b in logged["builds"])
     assert controller.turns[-1].as_dict()["timing"]["totalMs"] == logged["totalMs"]
+
+
+# ------------------------------------------------- annotations need no review
+
+
+async def test_sources_and_notes_are_not_up_for_review(project: Path):
+    """Attaching provenance or a comment changes nothing on the page, so there
+    is nothing to accept: it lands, and only the text change beside it waits."""
+    bus = EventBus()
+
+    def annotate() -> TurnOutcome:
+        (project / "sections" / "model.tex").write_text(
+            "%@src @card2018 p.14 \"an elasticity\"\nalpha %#k3f9q\nBETA\ngamma\n"
+        )
+        (project / "annotations.jsonl").write_text('{"id": "k3f9q", "sources": []}\n')
+        return TurnOutcome(ok=True, text="Sourced the first sentence.")
+
+    agent = ScriptedAgent(bus, [annotate])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "source this, and shout beta")
+
+    pending = controller.session_changes()
+    assert [(c["file"], c["before"], c["after"]) for c in pending] == [
+        ("sections/model.tex", "beta\n", "BETA\n")
+    ]
+    # Rejecting the text change leaves the source and its marker where they are.
+    await controller.reject_change(pending[0]["id"])
+    assert (project / "sections" / "model.tex").read_text() == (
+        "%@src @card2018 p.14 \"an elasticity\"\nalpha %#k3f9q\nbeta\ngamma\n"
+    )
+    assert controller.session_changes() == []
+
+
+async def test_a_turn_of_annotations_alone_is_settled_and_still_revertible(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "%@comment by:agent Checked.\nalpha\nbeta\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "check this")
+
+    turn = controller.turns[-1]
+    assert turn.status == "applied" and turn.hunks
+    assert controller.session_changes() == []
+    controller.refresh_review_states()
+    assert turn.review == "accepted"
+
+    await controller.revert(turn.id)
+    assert (project / "sections" / "model.tex").read_text() == "alpha\nbeta\ngamma\n"

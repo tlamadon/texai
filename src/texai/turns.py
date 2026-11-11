@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Awaitable, Callable
 
@@ -25,13 +25,13 @@ from .build import BuildError, BuildResult, run_build
 from .config import AppConfig
 from .events import EventBus
 from .models import SelectionRef
-from .hunks import reconstruct
+from .hunks import file_hunks, reconstruct
 from .options import OfferError, OfferStale, apply_option, offer_options, propose
 from .proposals import ProposalError, apply_proposal, dismiss_proposal, find_proposal
 from .source import SourceError, read_source
 from .prompt import compose_build_failure_prompt, compose_turn_prompt
 from .slides import slide_label
-from .records import attached_summary
+from .records import attached_summary, changes_no_text, fold_annotations
 from .quick import (
     QuickSession,
     QuickStale,
@@ -46,7 +46,15 @@ from .sessions import load as load_sessions
 from .sessions import remember as remember_session
 from .console import note
 from .timing import Stopwatch, estimate_turn, record, seconds
-from .snapshots import Snapshot, diff_against, hunks_against, read_pair, restore, take_snapshot
+from .snapshots import (
+    Snapshot,
+    diff_against,
+    hunks_against,
+    iter_source_files,
+    read_pair,
+    restore,
+    take_snapshot,
+)
 from .transcript import build_entry, notice_entry, text_entry, user_entry
 
 __all__ = ["Turn", "TurnController", "TurnBusy", "OfferError"]
@@ -594,10 +602,14 @@ class TurnController:
             if build is not None and build.ok:
                 turn.changes = diff_against(snapshot, self.config.root)
                 turn.hunks = [h.as_dict() for h in hunks_against(snapshot, self.config.root)]
+                # What is up for review is what changed the text. A source or a
+                # comment attached to a sentence changed nothing on the page.
                 turn.ranges = [
                     (str(h["file"]), int(h["newStart"]), int(h["newEnd"] or h["newStart"]))
                     for h in turn.hunks
+                    if not self._no_text(str(h["file"]), str(h["before"]), str(h["after"]))
                 ]
+                self._absorb_annotations()
                 phases["diffMs"] += watch.lap()
                 turn.build_ok = True
                 turn.status = "applied"
@@ -838,7 +850,9 @@ class TurnController:
                 continue
             states = by_turn.get(turn.id, [])
             if not turn.ranges:
-                turn.review = "pending"
+                # Nothing of it was ever up for review: it only attached
+                # sources or notes, which are settled as they land.
+                turn.review = "accepted" if turn.hunks else "pending"
             elif not states:
                 # Its edits are gone from the pending set: rolled back.
                 turn.review = "rejected"
@@ -882,6 +896,59 @@ class TurnController:
         await self._rebuild_quietly()
         self.refresh_review_states()
         self.bus.publish("changes_updated", reason="rejected", hunkId=hunk_id, file=relative)
+
+    @staticmethod
+    def _no_text(file: str, before: str, after: str) -> bool:
+        """Whether a change leaves the document's text alone: it is all in the
+        records file, or all annotations and markers (see texai.records)."""
+        return file.endswith(".jsonl") or changes_no_text(before, after)
+
+    def _absorb_annotations(self) -> None:
+        """Fold changes that alter no text into the baseline.
+
+        Adding provenance to a sentence, answering a comment, leaving versions
+        for later: none of it changes what the paper says, so asking for each
+        to be accepted is noise. They become part of what the review starts
+        from, exactly as a hand edit does; the text changes beside them stay
+        pending. Reverting the turn still undoes them: that works from the
+        turn's own snapshot, not from this one.
+        """
+        baseline = self._baseline
+        if baseline is None:
+            return
+        current = {
+            path.relative_to(self.config.root).as_posix()
+            for path in iter_source_files(self.config.root)
+        }
+        added: set[str] = set()
+        for relative in sorted(baseline.files | current):
+            before, after = read_pair(baseline, self.config.root, relative)
+            if before == after:
+                continue
+            lines = before.splitlines(keepends=True)
+            out: list[str] = []
+            done = 0
+            folded = False
+            for hunk in file_hunks(relative, before, after):
+                out.extend(lines[done : hunk.old_start - 1])
+                done = hunk.old_end
+                if self._no_text(relative, hunk.before, hunk.after):
+                    settled: str | None = hunk.after
+                else:
+                    # Text and annotations in one change: the annotations land,
+                    # the text stays to be reviewed.
+                    settled = fold_annotations(hunk.before, hunk.after)
+                folded = folded or settled is not None
+                out.append(hunk.before if settled is None else settled)
+            if not folded:
+                continue
+            out.extend(lines[done:])
+            destination = baseline.directory / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text("".join(out), encoding="utf-8")
+            added.add(relative)
+        if added - baseline.files:
+            self._baseline = replace(baseline, files=baseline.files | added)
 
     def absorb_manual_edit(self, relative: str) -> None:
         """Fold a hand edit into the baseline so it is not up for review.

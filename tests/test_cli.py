@@ -244,3 +244,26 @@ def test_resume_picks_up_the_last_conversation_here(project: Path, monkeypatch):
     assert main([str(project / "main.tex"), "--resume", "older", *build]) == 0
     assert main([str(project / "main.tex"), *build]) == 0
     assert resumed == ["newest", "older", None]
+
+
+# ---------------------------------------------------------------- --demo
+
+
+def test_both_demos_unpack_to_a_fresh_copy(tmp_path: Path):
+    from texai.demo import DEMOS, demo_source, unpack_demo
+
+    for name, (_packaged, _checkout, tex) in DEMOS.items():
+        copy = unpack_demo(name, parent=tmp_path)
+        assert copy.name == tex and copy.is_file()
+        assert copy.parent != demo_source(name)  # the agent edits a copy, never the original
+        # Clean: nothing a build left behind, and no state of an earlier run.
+        left = {p.suffix for p in copy.parent.rglob("*") if p.is_file()}
+        assert left <= {".tex", ".bib", ".jsonl"}
+        assert not (copy.parent / ".texai").exists()
+    assert (tmp_path / copy.parent.name / "slides" / "method.tex").is_file()
+
+
+def test_demo_takes_no_document_of_yours(project: Path, capsys):
+    with pytest.raises(SystemExit):
+        main([str(project / "main.tex"), "--demo"])
+    assert "--demo opens its own document" in capsys.readouterr().err

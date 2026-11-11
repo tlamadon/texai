@@ -66,6 +66,12 @@ path = "src/texai/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/texai"]
 
+# The two documents `texai --demo` opens (see texai/demo.py). They live at the
+# top of the repository, where they are also the examples the README points at.
+[tool.hatch.build.targets.wheel.force-include]
+"example" = "texai/demos/paper"
+"example-slides" = "texai/demos/slides"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

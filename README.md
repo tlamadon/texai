@@ -62,6 +62,17 @@ One command on a paper you already have — nothing to install:
 uvx texai /path/to/paper/main.tex --open
 ```
 
+No paper to hand, or not ready to point an agent at yours? Try it on one of
+texai's own:
+
+```bash
+uvx texai --demo           # a short paper
+uvx texai --demo slides    # a beamer deck
+```
+
+Either is copied to a new directory (printed as it starts), built, and opened
+in the browser. It is a copy, so edit it as you like.
+
 Name the `.tex`, or the PDF it builds, and texai works out the rest:
 
 - **From a `.tex`**, the PDF is wherever `latexmk` will write it: next to the
@@ -302,6 +313,14 @@ you can keep three edits out of four from a batch. It is a reconstruction, not a
 patch: the file is rebuilt from the turn's snapshot with the rejected region
 taken from the old text, then recompiled. Hunk ids are content-derived rather
 than positional, so rejecting one does not renumber the others.
+
+**What is reviewed is the text.** A change that leaves the text as it was is
+not put to you: a `%@src` added to a sentence, a comment answered, a record's
+`%#` marker, versions left as `%@propose`. They change nothing on the page, so
+they land as they are written, and a turn that did only that reads `accepted`
+at once. When one change does both, rewording a sentence and sourcing the one
+above it, the source lands and the rewording waits. Reverting the turn still
+undoes all of it.
 
 **Accept** just marks it reviewed. Nothing blocks — ignore the markers and keep
 working if you would rather.

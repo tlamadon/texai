@@ -62,6 +62,8 @@ RECORDS_FILE = "annotations.jsonl"
 
 # ``%#k3f9q``: not escaped (``\%#`` is text), anywhere on a line.
 MARKER = re.compile(r"(?<!\\)%#(?P<id>[a-z0-9]{4,16})\b")
+# A marker with the space that sets it off from its sentence.
+_MARKER_AT_END = re.compile(r"\s*(?<!\\)%#[a-z0-9]{4,16}\b")
 _MARKER_ONLY = re.compile(r"^\s*%#[a-z0-9]{4,16}\s*$")
 # No look-alikes: an ID is read and typed by people.
 _ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
@@ -136,6 +138,54 @@ def new_id(taken: set[str]) -> str:
 
 
 # ------------------------------------------------------------------ markers
+
+
+def changes_no_text(before: str, after: str) -> bool:
+    """Whether going from ``before`` to ``after`` leaves the document's text as
+    it was: only ``%@`` annotations, their ``%>`` lines and ``%#`` record
+    markers came, went or changed.
+
+    Such an edit — a source added to a sentence, a comment answered — puts
+    nothing different on the page, so there is nothing in it to review.
+    """
+
+    def text(block: str) -> list[str]:
+        return [
+            _MARKER_AT_END.sub("", line).rstrip()
+            for line in block.splitlines()
+            if not is_annotation_line(line)
+        ]
+
+    return text(before) == text(after)
+
+
+def fold_annotations(before: str, after: str) -> str | None:
+    """``before`` with the annotations of ``after`` and none of its new text,
+    or ``None`` when the two cannot be told apart line for line.
+
+    For a change that does both — a sentence reworded and a source attached to
+    the one above it — this is what the review should start from: the sources
+    and markers in place, the old wording still to be accepted or rejected.
+    """
+    old = [line for line in before.splitlines(keepends=True) if not is_annotation_line(line)]
+    new = after.splitlines(keepends=True)
+    if len(old) != sum(1 for line in new if not is_annotation_line(line)):
+        return None
+
+    def bare(line: str) -> str:
+        return _MARKER_AT_END.sub("", line).rstrip()
+
+    out: list[str] = []
+    at = 0
+    for line in new:
+        if is_annotation_line(line):
+            out.append(line)
+            continue
+        # The same sentence, with or without its marker: take it as it now is.
+        out.append(line if bare(old[at]) == bare(line) else old[at])
+        at += 1
+    folded = "".join(out)
+    return None if folded == before else folded
 
 
 def markers_in(text: str) -> list[tuple[int, str, bool]]:
