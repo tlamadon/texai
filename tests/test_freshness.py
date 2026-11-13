@@ -70,7 +70,10 @@ def test_a_change_is_raised_once_and_a_later_one_again(project: Path):
     assert fresh.stale() == "main.tex"
     fresh.handled()  # the build it set off may fail, or leave the PDF alone
     assert fresh.stale() is None
-    os.utime(project / "main.tex", (NOW + 5, NOW + 5))
+    # Later than now, not than when this file was imported: on a slow machine
+    # the two are far enough apart to matter.
+    later = time.time() + 5
+    os.utime(project / "main.tex", (later, later))
     assert fresh.stale(quiet=0) == "main.tex"
 
 
