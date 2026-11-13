@@ -824,3 +824,22 @@ def test_a_block_of_a_slide_is_read_and_saved_by_its_lines(config: AppConfig, pr
 
     missing = client.get("/api/paragraph", params={"file": "sections/talk.tex", "line": 3, "end": 99})
     assert missing.status_code == 422
+
+
+# ---------------------------------------------------------------- /api/block
+
+
+def test_a_line_names_its_sentence_and_its_paragraph(config: AppConfig, project: Path):
+    # What Pick mode asks once a click has been resolved to a line.
+    (project / "sections" / "model.tex").write_text(
+        "\\section{Model}\n\nFirst sentence here.\nSecond one runs\nover two lines.\n\nNext paragraph.\n"
+    )
+    client = make_client(config, fake_runner())
+
+    found = client.get("/api/block", params={"file": "sections/model.tex", "line": 5}).json()
+    assert (found["sentence"]["start"], found["sentence"]["end"]) == (4, 5)
+    assert found["sentence"]["text"] == "Second one runs over two lines."
+    assert (found["paragraph"]["start"], found["paragraph"]["end"]) == (3, 5)
+
+    # A blank line is in no paragraph.
+    assert client.get("/api/block", params={"file": "sections/model.tex", "line": 6}).status_code == 404

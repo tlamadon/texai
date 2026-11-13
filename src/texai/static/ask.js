@@ -30,6 +30,7 @@ import { renderMarkdown } from './markdown.js';
 import { markChosen, renderOffer } from './options.js';
 import { ProgressBar, progressLabels } from './progress.js';
 import { showToast } from './toast.js';
+import { micButton, stopDictation } from './speech.js';
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
 const MAX_QUOTE = 90; // characters of the passage quoted at the top of the box
@@ -57,6 +58,10 @@ const el = (tag, className, text) => {
 /** A tool as a reader would name it: `mcp__texai__show_in_pdf` is "show in pdf". */
 const toolName = (verb) => String(verb || '').replace(/^mcp__[^_]+__/, '').replace(/_/g, ' ');
 
+// At or below this width the page has the window to itself, and what is on
+// offer for a passage goes in a bar along the bottom (see styles.css).
+const NARROW_PX = 760;
+
 export class PageAsk {
   /**
    * `select({ page, point, word, selectedText })` resolves the passage to a
@@ -66,7 +71,19 @@ export class PageAsk {
    * given, puts a second button beside the ✦, to leave a comment instead; it
    * needs no agent, only that nothing is editing the source (`canComment()`).
    */
-  constructor({ viewer, container, select, available, onChanges, onOpenChat, onComment, canComment, onEdit }) {
+  constructor({
+    viewer,
+    container,
+    select,
+    available,
+    onChanges,
+    onOpenChat,
+    onComment,
+    canComment,
+    onEdit,
+    onAttach,
+    onSource,
+  }) {
     this.viewer = viewer;
     this.container = container;
     this.select = select;
@@ -77,6 +94,10 @@ export class PageAsk {
     // `onEdit(passage)` opens a passage that knows its source for editing in
     // place: the third button, for a block of a slide.
     this.onEdit = onEdit;
+    // The two things a modifier key does on a desktop, for a screen with no
+    // keys: put the passage on the composer, open it in the source.
+    this.onAttach = onAttach;
+    this.onSource = onSource;
     this.canComment = canComment || (() => true);
 
     // What is on offer: the passage under the button, before anything is asked.
@@ -129,6 +150,59 @@ export class PageAsk {
     });
     if (onEdit) container.append(this.editButton);
 
+    // On a touch screen, or a narrow one, the three small buttons by the
+    // passage become a bar along the bottom: big enough for a thumb, with
+    // names, and with what a modifier-click would have done.
+    this.bar = el('div', 'pick-bar');
+    this.bar.hidden = true;
+    const action = (name, label, title, run) => {
+      const button = el('button', `pick-action ${name}`, label);
+      button.type = 'button';
+      button.title = title;
+      button.addEventListener('mousedown', (event) => event.preventDefault());
+      button.addEventListener('click', () => {
+        const passage = this.offer;
+        if (passage) run(passage);
+      });
+      this.bar.append(button);
+      return button;
+    };
+    this.barActions = {
+      ask: action('ask primary', '\u2726 Ask', 'Ask the agent about this', () => this.open()),
+      comment: action('comment', 'Comment', 'Leave a comment on this', (passage) => {
+        this._hideOffer();
+        this.onComment?.(passage);
+      }),
+      edit: action('edit', '\u270e Edit', 'Edit this here', (passage) => {
+        this._hideOffer();
+        this.onEdit?.(passage);
+      }),
+      wider: action('wider', '\u2922 Wider', 'Pick what this is part of', (passage) => {
+        this.offerPassage(passage.wider());
+      }),
+      attach: action('attach', '+ Message', 'Add this to your next message', (passage) => {
+        this._hideOffer();
+        this.onAttach?.(passage);
+      }),
+      source: action('source', 'Source', 'Open this in the source', (passage) => {
+        this._hideOffer();
+        this.onSource?.(passage);
+      }),
+      close: action('close', '\u00d7', 'Put this away', () => this._hideOffer()),
+    };
+    document.body.append(this.bar);
+
+    // A touch screen selects with a long press and handles, and sends no
+    // mouse release when it is done: the selection settling is the signal.
+    let settle = null;
+    document.addEventListener('selectionchange', () => {
+      if (!(window.matchMedia?.('(pointer: coarse)').matches ?? false)) return;
+      clearTimeout(settle);
+      settle = setTimeout(() => {
+        if (this.viewer.getSelectionInfo()) this._offerSelection();
+      }, 350);
+    });
+
     document.addEventListener('mouseup', (event) => {
       // After the browser has settled the selection this release made.
       setTimeout(() => this._afterRelease(event), 0);
@@ -139,7 +213,8 @@ export class PageAsk {
         if (
           event.target === this.button ||
           event.target === this.editButton ||
-          this.commentButton.contains(event.target)
+          this.commentButton.contains(event.target) ||
+          this.bar.contains(event.target)
         ) {
           return;
         }
@@ -187,7 +262,7 @@ export class PageAsk {
     if (this.ask && this.ask.el.contains(event.target)) return;
     // A slide's icon, or a pick in pick mode, makes its own offer on the
     // click that follows.
-    if (event.target.closest?.('.slide-icon, .slide-picking')) return;
+    if (event.target.closest?.('.slide-icon, .picking, .pick-bar')) return;
     this._offerSelection();
   }
 
@@ -207,6 +282,7 @@ export class PageAsk {
     this.commentButton.hidden = !canComment;
     this.editButton.hidden = true;
     this._placeButton();
+    this._syncBar();
   }
 
   /**
@@ -232,7 +308,30 @@ export class PageAsk {
       return { rect, mark };
     });
     this._placeButton();
+    this._syncBar();
     return true;
+  }
+
+  /** Whether what is on offer shows as the bar along the bottom. */
+  _barMode() {
+    return (
+      (window.matchMedia?.('(pointer: coarse)').matches ?? false) || window.innerWidth <= NARROW_PX
+    );
+  }
+
+  _syncBar() {
+    const passage = this.offer;
+    const on = !!passage && this._barMode();
+    document.body.classList.toggle('offer-in-bar', on);
+    this.bar.hidden = !on;
+    if (!on) return;
+    const { ask, comment, edit, wider, attach, source } = this.barActions;
+    ask.hidden = this.button.hidden;
+    comment.hidden = this.commentButton.hidden;
+    edit.hidden = this.editButton.hidden;
+    wider.hidden = !passage.wider;
+    attach.hidden = !this.onAttach;
+    source.hidden = !this.onSource;
   }
 
   /**
@@ -273,6 +372,7 @@ export class PageAsk {
     this.button.hidden = true;
     this.commentButton.hidden = true;
     this.editButton.hidden = true;
+    this._syncBar();
   }
 
   /** A rectangle of the passage, in the scroll container's coordinates. */
@@ -361,7 +461,9 @@ export class PageAsk {
     const close = el('button', 'ghost ask-close', '×');
     close.type = 'button';
     close.title = 'Close';
-    bar.append(modes, hint, primary);
+    // Say the request instead of typing it, where the browser can take it.
+    const mic = micButton({ input, onError: (message) => this._setStatus(message, 'err') });
+    bar.append(modes, hint, ...(mic ? [mic] : []), primary);
     box.append(close, quote, input, status, body, offers, bar);
 
     const highlights = passage.rects.map(() => {
@@ -403,6 +505,7 @@ export class PageAsk {
   async send() {
     const a = this.ask;
     if (!a || a.state !== 'compose') return;
+    stopDictation();
     const request = a.input.value.trim();
     if (!request) return;
 
@@ -686,6 +789,7 @@ export class PageAsk {
   close() {
     const a = this.ask;
     if (!a) return;
+    stopDictation();
     a.progress?.stop();
     // Closing the box does not stop the agent: the turn is in the chat either
     // way, and its edits still arrive as markers.

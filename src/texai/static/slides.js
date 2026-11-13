@@ -12,9 +12,8 @@
 // icon in its corner always covers the whole frame.
 //
 // There are two ways to point. The icons are always there (unless switched off
-// in the View menu). Pick mode is the browser inspector's: switch it on, and
-// whatever block is under the pointer lights up — the innermost one, the slide
-// itself where there is none — and a click picks it.
+// in the View menu); Pick mode (see pick.js) lights up whatever block is under
+// the pointer and takes a click on it.
 //
 // Like the paragraph bars, the icons live in an overlay every page render
 // wipes: `draw()` reruns on any render or zoom, `refresh()` refetches when the
@@ -92,143 +91,57 @@ function belongs(blockWords, line) {
 
 const overlapX = (a, b) => Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
 
+/**
+ * What the ask and comment boxes take, for something picked on the page: a
+ * block of a slide, a slide, a sentence or a paragraph. `source` names its
+ * lines and carries its `rects`; `anchor` is where it was picked, in PDF
+ * points, which is where what can be done with it is offered.
+ */
+export function passageFor(entry, source, anchor, beside = false) {
+  const rects = source.rects.length
+    ? source.rects
+    : [{ page: entry.num, x: 0, y: 12, width: Math.min(44, entry.viewport.viewBox[2]), height: 14 }];
+  return {
+    text: source.text || (source.kind === 'slide' ? 'this slide' : ''),
+    page: entry.num,
+    point: { x: rects[0].x + rects[0].width / 2, y: rects[0].y + rects[0].height / 2 },
+    word: null,
+    rects,
+    anchor: { page: entry.num, ...anchor, beside },
+    source,
+  };
+}
+
 export class SlideBlocks {
   /**
    * `onPick(passage, event)` is called when an icon is clicked. The passage is
    * what the ask and comment boxes take — text, page, rectangles — and already
    * carries its `source`: `{ file, line, endLine }`.
    */
-  constructor({ viewer, onPick = null, anchorsButton = null, pickButton = null }) {
+  constructor({ viewer, onPick = null, anchorsButton = null }) {
     this.viewer = viewer;
     this.onPick = onPick;
     this.frames = [];
     this.byPage = new Map(); // page number -> frame
     this.placed = new Map(); // page number -> [{ block, rects }]
 
-    // Both controls only mean something on a deck: hidden until there is one.
+    // Only means something on a deck: hidden until there is one.
     this.anchorsButton = anchorsButton;
-    this.pickButton = pickButton;
     this.anchors = localStorage.getItem(ANCHORS_KEY) !== '0';
-    this.picking = false;
-    this.hover = null; // what pick mode has lit up: { page, key, marks }
     anchorsButton?.addEventListener('click', () => {
       this.anchors = !this.anchors;
       localStorage.setItem(ANCHORS_KEY, this.anchors ? '1' : '0');
       this._reflect();
       this.draw();
     });
-    pickButton?.addEventListener('click', () => this.setPicking(!this.picking));
     this._reflect();
-
-    const host = viewer.container;
-    host.addEventListener('mousemove', (event) => this.picking && this._hoverAt(event));
-    host.addEventListener('mouseleave', () => this._unhover());
-    // Ahead of the page's own click handling: in pick mode a click is a pick.
-    host.addEventListener(
-      'click',
-      (event) => {
-        if (!this.picking || event.button !== 0) return;
-        if (event.target.closest?.('button, a, .ask-box, .comment-box, .inline-edit')) return;
-        const at = this._under(event);
-        if (!at) return;
-        event.preventDefault();
-        event.stopPropagation();
-        this.onPick?.(this._passage(at.entry, at.source, { ...at.point, width: 0, height: 0 }), event);
-      },
-      true
-    );
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && this.picking && !event.defaultPrevented) this.setPicking(false);
-    });
   }
 
   _reflect() {
-    const deck = this.frames.length > 0;
-    if (this.anchorsButton) {
-      this.anchorsButton.hidden = !deck;
-      this.anchorsButton.classList.toggle('active', this.anchors);
-      this.anchorsButton.setAttribute('aria-pressed', String(this.anchors));
-    }
-    if (this.pickButton) {
-      this.pickButton.hidden = !deck;
-      this.pickButton.classList.toggle('active', this.picking);
-      this.pickButton.setAttribute('aria-pressed', String(this.picking));
-    }
-  }
-
-  /* ---------------- pick mode ---------------- */
-
-  setPicking(on) {
-    this.picking = !!on && this.frames.length > 0;
-    this.viewer.container.classList.toggle('slide-picking', this.picking);
-    if (this.picking) window.getSelection()?.removeAllRanges();
-    else this._unhover();
-    this._reflect();
-  }
-
-  /** The page, point and block under a mouse event, when it is on a slide. */
-  _under(event) {
-    const entry = this.viewer.pageAtClientPoint(event.clientX, event.clientY);
-    if (!entry?.viewport) return null;
-    const point = this.viewer.clientPointToPdf(entry, event.clientX, event.clientY);
-    const source = this.sourceAt(entry.num, point);
-    return source ? { entry, point, source } : null;
-  }
-
-  _hoverAt(event) {
-    const at = event.target.closest?.('button, a, .ask-box, .comment-box, .inline-edit')
-      ? null
-      : this._under(event);
-    if (!at) {
-      this._unhover();
-      return;
-    }
-    const { entry, source } = at;
-    const key = `${source.line}-${source.endLine}`;
-    const layer = this._layerFor(entry);
-    // Unchanged, and still drawn: a page render wipes the layer under us.
-    if (this.hover?.page === entry.num && this.hover.key === key && this.hover.layer === layer) return;
-    this._unhover();
-    const marks = source.rects.map((rect) => {
-      const r = this.viewer.pdfRectToPageRect(entry, rect);
-      const mark = document.createElement('div');
-      mark.className = 'slide-hover';
-      Object.assign(mark.style, {
-        left: `${r.left - 3}px`,
-        top: `${r.top - 2}px`,
-        width: `${r.width + 6}px`,
-        height: `${r.height + 4}px`,
-      });
-      layer.append(mark);
-      return mark;
-    });
-    // No block under the pointer: the slide itself is what a click would pick.
-    if (!marks.length) entry.el.classList.add('slide-hovered');
-    this.hover = { page: entry.num, key, layer, marks, el: entry.el };
-  }
-
-  _unhover() {
-    if (!this.hover) return;
-    for (const mark of this.hover.marks) mark.remove();
-    this.hover.el.classList.remove('slide-hovered');
-    this.hover = null;
-  }
-
-  /** What the ask and comment boxes take, for a block or a slide. */
-  _passage(entry, source, anchor, beside = false) {
-    const rects = source.rects.length
-      ? source.rects
-      : [{ page: entry.num, x: 0, y: 12, width: Math.min(44, entry.viewport.viewBox[2]), height: 14 }];
-    return {
-      text: source.text || (source.kind === 'slide' ? 'this slide' : ''),
-      page: entry.num,
-      point: { x: rects[0].x + rects[0].width / 2, y: rects[0].y + rects[0].height / 2 },
-      word: null,
-      rects,
-      // Where it was picked: what is offered for it is offered there.
-      anchor: { page: entry.num, ...anchor, beside },
-      source,
-    };
+    if (!this.anchorsButton) return;
+    this.anchorsButton.hidden = !this.frames.length;
+    this.anchorsButton.classList.toggle('active', this.anchors);
+    this.anchorsButton.setAttribute('aria-pressed', String(this.anchors));
   }
 
   async refresh() {
@@ -242,8 +155,6 @@ export class SlideBlocks {
     this.byPage = new Map();
     for (const frame of this.frames) for (const page of frame.pages) this.byPage.set(page, frame);
     this.placed = new Map();
-    this._unhover();
-    if (!this.frames.length) this.setPicking(false);
     this._reflect();
     this.draw();
   }
@@ -278,6 +189,12 @@ export class SlideBlocks {
     }
     const placed = best && (this._place(page) || []).find((p) => p.block === best);
     return { ...this._source(frame, best), page, rects: placed ? placed.rects : [] };
+  }
+
+  /** The slide a page shows, as something to pick: its whole frame. */
+  frameSource(page) {
+    const frame = this.frameOn(page);
+    return frame ? { ...this._source(frame, null), page, rects: [] } : null;
   }
 
   _source(frame, block) {
@@ -329,6 +246,24 @@ export class SlideBlocks {
       });
     }
     return spots;
+  }
+
+  /**
+   * The rendered lines of the block a source line is in, on one page of its
+   * slide: what "go to this line" lights up there. Empty when the page does
+   * not show the block, or the line is in none.
+   */
+  rectsFor(file, line, page) {
+    const frame = this.frameOn(page);
+    if (!frame) return null; // not a slide at all
+    if (frame.file !== file) return [];
+    let best = null;
+    for (const placed of this._place(page) || []) {
+      const { start, end } = placed.block;
+      if (line < start || line > end) continue;
+      if (!best || end - start < best.block.end - best.block.start) best = placed;
+    }
+    return best ? best.rects : [];
   }
 
   /* ---------------- placing ---------------- */
@@ -514,7 +449,7 @@ export class SlideBlocks {
       const at = this.viewer.clientRectToPdf(entry, node.getBoundingClientRect());
       // What an icon offers goes beside it, on its own line: past the end of
       // the text there is room, and above it is somebody else's line.
-      this.onPick?.(this._passage(entry, picked, at, true), event);
+      this.onPick?.(passageFor(entry, picked, at, true), event);
     });
     layer.append(node);
   }

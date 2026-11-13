@@ -42,6 +42,13 @@ back marked on the page for you to accept or reject.
   paragraph is for; `%@comment`, `%@todo` or a bare `%@` leaves a note. They are
   ordinary LaTeX comments, so they travel with the source through git, and the
   preview shows them in the page margins beside the text they describe.
+- **Say what backs each claim.** `%@src` ties a sentence to a table in the
+  paper, a script in the project, or a quoted passage in a PDF under `papers/`.
+  The agent checks every quote against the paper before writing it, and a click
+  on the page opens the source at the passage.
+- **Slides too.** A beamer deck opens like a paper. Each slide's title, bullets
+  and paragraphs can be pointed at, sent to the agent, commented on and edited
+  in place.
 - **Know how far you have drifted from git.** The toolbar carries the branch,
   how many files are uncommitted, and how many commits you are ahead or behind
   the remote — scoped to your project, even when it is a subdirectory of a
@@ -87,21 +94,15 @@ Name the `.tex`, or the PDF it builds, and texai works out the rest:
   the `.tex`'s own. Everything texai and the agent touch stays inside it.
 
 The PDF does not have to exist yet: texai compiles it, then opens the viewer on
-<http://127.0.0.1:8765/>. All it needs is a TeX installation with `latexmk` and
+<http://127.0.0.1:8765/>. One that is there but behind is compiled again (see
+*Keeping the PDF current*). All it needs is a TeX installation with `latexmk` and
 `synctex`. When a guess is wrong, `--root` and `--pdf` override it.
-
-Nothing to hand? This repository's `example/` is a short paper split across four
-files, and ships uncompiled on purpose:
-
-```bash
-git clone https://github.com/tlamadon/texai && cd texai
-uvx texai example/main.tex --open
-```
 
 `uvx` is `uv tool run`: it fetches texai into a throwaway environment, runs it,
 and leaves nothing behind. `uv run texai` is the other one — it runs texai from
 the project you are standing in, which is what you want in a checkout of *this*
-repo (`uv sync` first) and not what you want anywhere else.
+repo (`uv sync` first) and not what you want anywhere else. The two demos are
+the `example/` and `example-slides/` directories of this repository.
 
 ### Turning on the agent
 
@@ -222,8 +223,108 @@ instead, **Keep as proposal** under the versions writes them into the source as
 the session: a card in the margin opens them again tomorrow, or on a
 co-author's machine.
 
+A request made this way usually does not go through the agent at all. The
+passage, its line numbers and the lines around it are sent to a **quick
+editor**: a separate read-only Claude session that answers with the new text in
+one model call, which texai then writes. That takes a few seconds where the
+agent's find-read-edit-report takes several calls. Anything that needs more
+than rewriting the passage (other places, other files, a new table) it hands to
+the agent, and the turn around it is the same either way: snapshot, build,
+revert, review. `--no-quick` sends everything to the agent; with Codex there is
+no quick editor.
+
 Closing the box does not stop the agent; the turn finishes in the chat either
 way. One request runs at a time, so the ✦ stays away while the agent is busy.
+
+### Picking instead of selecting
+
+Dragging across exactly the right words is fiddly with a mouse and worse with a
+finger. **Pick** in the toolbar points the way a browser's inspector does:
+whatever is under the pointer lights up, and a click takes it.
+
+- **On a paper** the first click takes the **sentence**: from the full stop
+  before it to its own, read off the page's text, so it is exact however the
+  source wraps its lines. Click the same sentence again and it widens to its
+  **paragraph**.
+- **On a slide** it takes the block (see *Slides*), and widens to the slide.
+- What is picked gets the same offer a selection does: ✦ to ask, the bubble to
+  comment, ✎ to edit it in place. Cmd/Ctrl-click sends it to the composer,
+  Alt-click opens it in the source.
+- It stays on until you click *Pick* again or press Esc. With it off, the page
+  selects text as before.
+
+A picked sentence reaches the agent as lines of the source plus its own words.
+In a paper written one sentence a line those lines are the sentence. In one
+wrapped at a column a sentence has no lines of its own, so it travels as its
+paragraph's lines with the sentence quoted, which is how a selection travels
+too. A comment goes on the line that was pointed at.
+
+### On a phone or a tablet
+
+The page works by touch, and in a window too narrow for two panes:
+
+- **Pick is on to start with**, since there is no pointer to hover with: a tap
+  picks the sentence or the block under it.
+- **What can be done with a pick is a bar along the bottom**, with names and
+  thumb-sized buttons: Ask, Comment, Edit, Wider, + Message (onto the
+  composer) and Source. The last three are what a second click and the
+  modifier keys do on a desktop. A long-press selection gets the same bar.
+- **One column** in a window under about 1000px wide, which is an iPad held
+  upright as well as a phone: the page has the whole width. The chat, source
+  and peek panel comes over it when asked for, with a × to go back. On a
+  tablet it slides in from the right and leaves the page showing beside it; on
+  a phone it covers the page. Wider than that, an iPad on its side included,
+  the two sit side by side as on a desktop.
+- Anchors, note bubbles and microphones are sized to be pressed, and nothing
+  waits to be hovered. Pinch to zoom.
+
+texai still listens on `127.0.0.1` only (see *Safety*), so reaching it from
+another device means forwarding that port yourself, and the server accepts
+only requests addressed to a loopback host name.
+
+### Saying it instead
+
+Wherever there is something to type into, there is a microphone beside the
+button that sends it: the composer, the box that asks about a passage, a
+comment, and the editor that opens on the page. Press it and speak; the words
+go in at the caret as they are heard, provisional ones first and the settled
+ones in their place. Press it again, or **Esc**, to stop. Sending stops it too,
+and what was said so far is what is sent.
+
+It types and nothing more: what you dictate is yours to correct before it goes
+anywhere, and in the editor it goes in as plain text, so say the words and type
+the LaTeX.
+
+This is the browser's own speech recognition, not something texai runs, which
+decides two things. A browser without it (Firefox, at the time of writing)
+shows no microphone. And it decides where your voice goes: Chrome and Edge send
+the audio to their vendor's servers to be transcribed, and Safari uses Apple's.
+That is the one place something of yours leaves the machine other than through
+the agent. Nothing is captured before the button is pressed or after it is
+released, and the button is red for as long as it is listening.
+
+### Keeping the PDF current
+
+texai rebuilds after everything it does to the source itself. It also notices
+when the PDF falls behind for a reason of someone else's:
+
+- **At startup**, if any source is newer than the PDF (you edited elsewhere,
+  pulled, or last compiled yesterday), it compiles before showing anything.
+- **While it runs**, a source changed on disk by anything else, an outside
+  editor, `git pull`, another agent, is picked up within a couple of seconds
+  and rebuilt. It waits for a turn or a build in progress to finish first.
+- **SyncTeX data** is checked as well. A PDF with none, or one compiled again
+  elsewhere without `-synctex` so that the data beside it is from an older
+  build, is rebuilt, since every click on the page goes through that data.
+  `latexmk` would call such a PDF up to date, so it is run with `-g`.
+
+A change is acted on once. If the build it sets off fails, the old PDF stays on
+screen with the errors in the chat, and nothing is retried until a source
+changes again. The check goes by modification times, so a `.tex` in the project
+that the document never reads counts too, at the cost of one build that finds
+nothing to do. `annotations.jsonl` is not part of the build and never sets one
+off. With a `--build-cmd` of your own, texai cannot force a rebuild for missing
+SyncTeX data; it runs the command once and then warns.
 
 ### What the console says
 
@@ -235,13 +336,20 @@ holding the exit up rather than appearing to hang; pressing it again stops
 waiting.
 
 ```
+texai: building — main.tex is newer than main.pdf…
+texai: built in 2.1s
 texai: building — your save…
 texai: built in 1.8s
 texai: building — the agent's edits…
+texai: built in 1.6s
+texai: t0004 applied (quick) in 3.3s — build 1.6s
 texai: build failed in 1.2s (exit 12) — ! Undefined control sequence. (line 3)
 texai: interrupt received — stopping (waiting: a build has been running for 4s). Ctrl-C again to stop at once.
 texai: stopped.
 ```
+
+Each turn ends with one line saying how it went and where the time was spent;
+the same breakdown is appended to `.texai/timings.jsonl`.
 
 Every line is flushed as it is written, because that output is usually a log
 file: agents start texai with stdout redirected, and a block-buffered pipe would
@@ -310,7 +418,7 @@ Each turn's badge follows what became of its edits:
 
 **Reject** rolls back that one change and leaves the rest of the turn alone, so
 you can keep three edits out of four from a batch. It is a reconstruction, not a
-patch: the file is rebuilt from the turn's snapshot with the rejected region
+patch: the file is rebuilt from the session baseline with the rejected region
 taken from the old text, then recompiled. Hunk ids are content-derived rather
 than positional, so rejecting one does not renumber the others.
 
@@ -342,16 +450,16 @@ Where it is approximate, honestly:
 - **Deletions** have no place in the new PDF and anchor to the neighbouring line.
 - Changes inside math, floats or `tikz` tend to map to the environment's opening
   line — the same weakness the click direction has.
-- Only the most recent turn's changes are shown; older turns' line numbers have
-  moved on.
+- On a **beamer slide** SyncTeX knows the slide and nothing finer, so a change
+  is placed by the block of the source it is in (see *Slides*).
 
 ### Moving the view
 
 Any `file:line` in the chat is clickable — a selection you attached, a changed
 file, a chip — and the PDF scrolls there with a brief highlight.
 
-The agent can move the view too. It has one in-process tool,
-`show_in_pdf(file, line, why)`, so you can ask for things it has to go and find:
+The agent can move the view too. One of texai's own tools,
+`show_in_pdf(file, line, why)`, lets you ask for things it has to go and find:
 
 > take me to the summary statistics table
 
@@ -367,7 +475,7 @@ under you:
 
 The tool only scrolls; it cannot change anything.
 
-Its second tool, `offer_options(file, original, options)`, is how it hands you
+Another, `offer_options(file, original, options)`, is how it hands you
 versions to pick from (see *Asking from the page*). texai checks that
 `original` occurs exactly once in the file, and the agent is told to fix its
 quote if not.
@@ -585,9 +693,10 @@ or revert those first.
 With editing on the page, the chat and the source can be put away: the panel
 button at the right of the toolbar (or **Cmd/Ctrl-\\**) hides them and gives the
 page the whole window. Alt-clicking into the source or attaching a passage
-brings the panel back. The coloured paragraph bars in the margin matter most
-beside the source, so **Paragraph guides** in the View menu switches them off; your `%@`
-notes stay.
+brings the panel back. The coloured paragraph bars in the margin, which pair a
+block of the source with what it produced, matter only beside the source, so
+they are off until **Paragraph guides** in the View menu switches them on; your
+`%@` notes show either way.
 
 When you are stuck mid-sentence, **Ctrl-Space** (or **Alt-\\**, for systems where
 Ctrl-Space switches the keyboard layout) asks for a continuation at the caret.
@@ -655,15 +764,17 @@ We find a value close to one.
 
 **Commenting from the page**
 - Select a passage and a comment button appears beside the ✦. It opens a small
-  box: write the comment and press Enter. It goes into the source as
-  `%@comment id:c3 by:you …` on the line above the sentence, and the page
-  rebuilds. No agent is involved, so it works even when the agent is off.
+  box: write the comment and press Enter. It is kept as a record (see
+  *Records*): the sentence gets a `%#` marker at the end of its line and the
+  comment goes into `annotations.jsonl`, so nothing is rebuilt and the note is
+  in the margin at once. No agent is involved, so it works even when the agent
+  is off. A `%@comment` line written by hand works just as well.
 - Clicking a note in the margin opens its thread: the note, its replies and
   who wrote each. From there you can reply, resolve or reopen it, delete a
   reply or the whole thread (deleting asks twice), or open it in the source.
 - Replies fold into the note they answer, which shows how many it has.
-- These are your own edits, saved like a save in the editor: they rebuild the
-  page and do not show up as agent changes waiting for review.
+- These are your own edits, saved like a save in the editor: they do not show
+  up as agent changes waiting for review.
 - Comments are signed with `TEXAI_AUTHOR` if set, else with your git
   `user.name`. A two-word name is shortened to its initials; a one-word name is
   used as it is.
@@ -965,6 +1076,8 @@ The **⤓** beside the file name downloads the PDF as it currently stands — th
 build on screen, not whatever was on disk when the page was opened. It is an
 ordinary link, so right-click and *Save link as* works as well as clicking it.
 
+### Saving while the agent writes
+
 Two writers on one tree needs a rule, so every save carries a hash of the text it
 was based on — and when the file has moved underneath, the three versions are
 merged rather than one of them being refused: the text the buffer was loaded
@@ -1003,60 +1116,79 @@ is only marked when the text the log quotes is really on it; the rest still show
 in the message.
 
 Only files a LaTeX build reads are editable — `.tex`, `.bib`, `.cls`, `.sty`,
-`.bbx`, `.cbx`, `.lco` — and only inside `--root`.
+`.bbx`, `.cbx`, `.lco` — plus `annotations.jsonl`, and only inside `--root`.
 
 ### Slides
 
-A beamer deck opens like a paper: `texai talk.tex`. What changes is how you
-point at it. Beamer collects a frame's body before typesetting it, so SyncTeX
-records everything on a slide against the one line of its `\end{frame}`; a
-click on a slide can say which slide and nothing finer.
+A beamer deck opens like a paper: `texai talk.tex`, or `texai --demo slides`
+for one to try. What changes is how you point at it. Beamer collects a frame's
+body before typesetting it, so SyncTeX records everything on a slide against
+the one line of its `\end{frame}`; a click on a slide can say which slide and
+nothing finer.
 
 So on slides texai goes the other way round. It reads each frame out of the
 source, with the pieces a reader would point at: its title, each `\item`, each
-paragraph of plain text. It then finds each piece's words on the page and hangs
-a small icon beside them, plus a square one in the corner for the slide as a
-whole.
+paragraph of plain text. It then finds each piece's words on the page and puts
+a small pencil at the end of them, plus a slide icon in the corner for the
+frame as a whole.
 
-- **Click an icon** and three buttons appear beside it, with the block lit up:
+- **Click a pencil** and three buttons appear beside it, with the block lit up:
   ✦ to ask for a change, the bubble to leave a comment, the pencil to edit it
   yourself. A request reaches the agent as an exact range of lines
   (`talk.tex:19-22`, an item with its sub-list) on a named slide. "Add a bullet
   about X after this", "cut this slide to three points" and "tighten this" are
   single quick edits.
-- **Edit it in place.** The pencil, or a double-click on the text, opens the
-  block's LaTeX right there on the slide: one item, the title, a paragraph, or
-  the whole frame from the slide's own icon. Saving rebuilds. Type a second
-  `\item` under the first to add a bullet; empty the box to remove one.
-  A paragraph that opens an environment comes with all of it, so the box on a
-  `\begin{block}{Main point}` holds its `\end{block}` too, and a save that
-  would leave a `\begin` without its `\end` is refused with the reason.
-- **Or pick, as a browser's inspector does.** *Pick* in the toolbar turns the
-  pointer into a selector: the block under it lights up (the innermost one: a
-  sub-item, not the item around it; the slide's outline where there is no
-  block) and a click picks it, with the same three buttons at the pointer. It
-  stays on until you click *Pick* again or press Esc. With it, the icons are
+- **Or pick, as a browser's inspector does.** *Pick* in the toolbar (see
+  *Picking instead of selecting*) lights up the block under the pointer: the
+  innermost one, a sub-item and not the item around it, and the slide's outline
+  where there is no block. A click picks it, with the same three buttons at the
+  pointer; a second click on it widens to the slide. With it, the pencils are
   optional: *View › Slide anchors* takes them off the page.
-- **Cmd/Ctrl-click an icon** to put the block on the composer as a passage;
+- **Edit it in place.** The ✎ button, or a double-click on the text, opens the
+  block's LaTeX right there on the slide: one item, the title, a paragraph, or
+  the whole frame from the slide's own icon. A double-clicked word comes up
+  selected. Saving rebuilds. Type a second `\item` under the first to add a
+  bullet; empty the box to remove one. A paragraph that opens an environment
+  comes with all of it, so the box on a `\begin{block}{Main point}` holds its
+  `\end{block}` too, and a save that would leave a `\begin` without its `\end`
+  is refused with the reason.
+- **Cmd/Ctrl-click a pencil** to put the block on the composer as a passage;
   **Alt-click** to open it in the Source tab.
-- **Hover an icon** to see what it stands for before asking anything of it.
+- **Hover a pencil** to see what it stands for before asking anything of it.
 - **Selecting or Cmd/Ctrl-clicking text** on a slide resolves to the block it
   is in, and a selection still travels as the words you selected.
-- **A comment** goes above its block in the source, or above `\begin{frame}`
-  when it is about the whole slide.
+- **Comments** are kept as records, like anywhere else, and show as an amber
+  speech bubble at the end of the block they are about, on every overlay page
+  that shows it. Hover one to read it; click it for the thread. A comment made
+  from the slide's own icon sits on the `\begin{frame}` line, so it shows
+  beside the title.
 
-An icon always stands for known lines; the text matching only decides where to
+A pencil always stands for known lines; the text matching only decides where to
 draw it. A bullet with no words to find, one that is all symbols, takes the
-unclaimed line between its neighbours. What is left without an icon is a block
+unclaimed line between its neighbours. What is left without a pencil is a block
 that put no text on the page at all (a figure), or an item not yet uncovered on
 an earlier overlay page; the slide's own icon still reaches it. A click on a
 line that belongs to no block means the slide, never the line next to it.
-Frames are found as
-`\begin{frame}…\end{frame}` and `\frame{…}`; a custom frame environment is not
-recognised.
+Frames are found as `\begin{frame}…\end{frame}` and `\frame{…}`; a custom
+frame environment is not recognised.
 
-Not there yet on slides: change markers, margin notes and "take me to" are not
-placed inside a slide. `example-slides/talk.tex` is a deck to try it on.
+The rest of the page follows the same map from a block of the source to where
+it sits on the slide:
+
+- **Going to a line.** "Take me to the slide about X", a click on a
+  `file:line` reference, a heading in the contents: the page goes to the
+  line's slide, on its last overlay page, where everything is uncovered, and
+  the block the line is in flashes.
+- **Change markers.** A change on a slide is marked on its last overlay page.
+  The changed words are highlighted where they can be found in the block;
+  otherwise the block's own lines are banded, never the whole slide.
+
+Not there yet on slides:
+
+- `%@intent` labels and provenance marks are not placed beside their line.
+- A pick on a slide is not written to `.texai/current-selection.json`.
+- A slide is treated as its last overlay page: a marker or a jump does not
+  choose the overlay step on which a bullet first appears.
 
 ### Committing
 
@@ -1099,7 +1231,10 @@ unavailable it falls back to `Update sections/model.tex, ...` and says so.
 | `--build-cmd` | `latexmk -pdf -synctex=1 -interaction=nonstopmode <root.tex>`, with the engine the document needs | how to rebuild |
 | `--build-dir` | the root `.tex` file's directory | where to run the build |
 | `--agent` | `claude` | `claude` or `codex` (needs `texai[codex]`) |
+| `--demo` [`paper`\|`slides`] | off | open a copy of texai's own short paper, or of its beamer deck, instead of a document of yours |
 | `--model` | the agent's default | model for the agent; also on the composer, where it can be changed mid-conversation |
+| `--effort` | the agent's default | how hard the agent thinks before it answers; lower is faster. Claude: `low` to `max`. Also on the composer |
+| `--no-quick` | off | send requests about one marked passage to the agent too, instead of the quick editor (Claude only) |
 | `--no-update-check` | off | do not ask PyPI whether a newer texai is out (otherwise a green arrow beside the name says so) |
 | `--resume` [*id*] | a new conversation | carry on the last conversation texai had here, or the one given |
 | `--port` | `8765` | port on `127.0.0.1`; the next free one is used if busy |
@@ -1150,7 +1285,8 @@ Rendered text: “the estimated elasticity”
 ```
 
 `skills/review-latex-pdf/SKILL.md` teaches an external coding agent to drive
-that flow.
+that flow. It covers papers: a pick on a beamer slide is resolved in the
+browser and is not written to the selection file.
 
 ## Requirements
 
@@ -1221,6 +1357,9 @@ in the repository to leak or rotate. It needs one-time setup on PyPI: **your
 project → Publishing → Add a new pending publisher**, with workflow
 `release.yml` and environment `pypi`.
 
+The wheel check also covers the two `--demo` documents. A note for the release
+goes on GitHub separately: `gh release create v0.2.0 --notes-from-tag`.
+
 `workflow_dispatch` runs everything except the upload, which is the way to prove
 the pipeline before committing to a version number.
 
@@ -1258,39 +1397,80 @@ turns, so they cost nothing to run.
 
 ```
 src/texai/
-  cli.py         argparse, the first build, and uvicorn on 127.0.0.1
-  config.py      validated, root-confined paths and build settings
-  paths.py       containment and project-relative normalization
-  synctex.py     `synctex edit` invocation + output parsing
-  selection.py   selection payload + atomic JSON write
-  models.py      request validation
-  events.py      pub/sub bus + SSE framing with replay
-  agent.py       the Claude Agent SDK session
-  sessions.py    which conversations exist here, and texai's record of its own
-  transcript.py  one entry stream, rendered as chat or as a terminal log
-  prompt.py      passages + instructions -> a prompt
-  build.py       compiling, and reading errors out of the log
-  snapshots.py   per-turn source copies, diffing and revert
-  hunks.py       structured diff hunks: stable ids, per-hunk rollback
-  navigate.py    locating a source line in the rendered PDF
-  turns.py       snapshot -> agent -> build -> diff, and the review session
-  source.py      reading and writing source files for the editor
-  merge.py       three-way merge, so an outside edit and an unsaved one both live
-  words.py       matching a rendered word back to its source column
-  frames.py      a beamer deck's frames and their blocks, read from the source
-  slides.py      which page is which frame, for the icons on each slide
-  git.py         root-scoped status, commit, pull --rebase, push
-  commitmsg.py   the agent's one-shot commit message, with a fallback
-  server.py      FastAPI routes
-  static/        vanilla two-panel UI + vendored PDF.js, CodeMirror and KaTeX
-                 (marks.js draws the inline change markers,
-                  history.js is the back/forward list of places,
-                  editor.js is the Source tab, outline.js parses and draws
-                  both tables of contents, project.js assembles the document
-                  from its \input tree, jump.js is the go-to palette,
-                  sync.js keeps the two panes on the same passage,
-                  slides.js places the selector icons on beamer slides,
-                  sessions.js the conversation menu, and git.js the git panel)
+  cli.py          argparse, the first build, and uvicorn on 127.0.0.1
+  discover.py     working out the project from the one file you name
+  demo.py         the two demo documents, copied out for --demo
+  config.py       validated, root-confined paths and build settings
+  paths.py        containment and project-relative normalization
+  console.py      what texai says on the terminal it was started from
+  update.py       is there a newer texai on PyPI?
+  server.py       FastAPI routes
+  models.py       request validation
+  events.py       pub/sub bus + SSE framing with replay
+
+  synctex.py      `synctex edit` / `synctex view` invocation + output parsing
+  words.py        matching a rendered word back to its source column
+  navigate.py     locating a source line in the rendered PDF
+  paragraphs.py   paragraph bars and where each annotation goes, from SyncTeX
+  frames.py       a beamer deck's frames and their blocks, read from the source
+  slides.py       which page is which frame, for the pencils on each slide
+  selection.py    selection payload + atomic JSON write
+
+  agent.py        the Claude Agent SDK session
+  codex_agent.py  the same agent, driven through OpenAI's Codex SDK
+  agent_tools.py  texai's own tools, in-process for Claude and over MCP for Codex
+  quick.py        the quick editor: one passage, one request, one model call
+  options.py      versions of a passage, offered instead of an edit
+  prompt.py       passages + instructions -> a prompt
+  sessions.py     which conversations exist here, and texai's record of its own
+  transcript.py   one entry stream, rendered as chat or as a terminal log
+  turns.py        snapshot -> agent -> build -> diff, and the review session
+  timing.py       a turn split into its phases, written to timings.jsonl
+  build.py        compiling, and reading errors out of the log
+  freshness.py    noticing that the PDF is behind its sources or its SyncTeX data
+  snapshots.py    per-turn source copies, diffing and revert
+  hunks.py        structured diff hunks: stable ids, per-hunk rollback
+
+  annotations.py  the %@ grammar and its kinds
+  comments.py     comments written from the page: add, reply, resolve, delete
+  proposals.py    %@propose: versions kept in the source until someone decides
+  provenance.py   %@src: what backs a sentence, and resolving it
+  records.py      annotations.jsonl and the %# markers that point into it
+  record_tools.py the agent's tools for records: read, add a source, comment
+  papers.py       reading a PDF as text, for the read_paper tool
+
+  source.py       reading and writing source files for the editor
+  merge.py        three-way merge, so an outside edit and an unsaved one both live
+  complete.py     ghost-text completions in the editor, on demand
+  macros.py       the paper's own macros, for math in the agent's replies
+  git.py          root-scoped status, commit, pull --rebase, push
+  commitmsg.py    the agent's one-shot commit message, with a fallback
+
+  static/         vanilla two-panel UI + vendored PDF.js, CodeMirror and KaTeX
+    app.js          wiring: the viewer, the panel, and every click on the page
+    viewer.js       the PDF.js viewer and its coordinate conversions
+    chat.js         chips, the composer and the live agent stream
+    ask.js          asking about a passage from the page
+    options.js      versions laid out to pick from
+    marks.js        the inline change markers
+    inline.js       editing a paragraph, or a slide's block, on the page
+    slides.js       the pencils on beamer slides, and where each block sits
+    pick.js         Pick mode: a sentence, a paragraph, a block of a slide
+    annotations.js  notes, intents and provenance marks on the page
+    comments.js     the comment box and a note's thread
+    paraguide.js    the paragraph bars in the margin
+    peek.js         the Peek tab: sources and proposals, opened beside the page
+    editor.js       the Source tab
+    outline.js      both tables of contents
+    project.js      the document assembled from its \input tree
+    jump.js         the go-to palette
+    sync.js         keeping the two panes on the same passage
+    history.js      the back/forward list of places
+    sessions.js     the conversation menu
+    settings.js     the model and effort picker
+    git.js          the git panel
+    markdown.js     the agent's replies, rendered, with the paper's math
+    speech.js       dictation into any of the boxes, where the browser has it
 ```
 
 ## Not built yet
@@ -1301,6 +1481,29 @@ src/texai/
   as they are; what is new is a turn whose output is a file to read rather than
   edits to accept, and a way of saying "now do it" against a plan you may have
   rewritten in the meantime.
+- **Several documents in one project.** texai serves one PDF, built from one
+  root `.tex`. A project often has more: the paper and the talk about it, a
+  main text and its appendix. The agent already works in the project and can
+  read or edit any of them when you name it; what is missing comes in three
+  steps, each useful without the next.
+  - *Telling the agent, and checking its work.* It is not told that sibling
+    documents exist, and after it edits one that is not open, only the open
+    one is rebuilt. Listing the project's root documents in its prompt, and
+    rebuilding every one a turn touched, with the same hand-back of errors and
+    the same revert, makes "bring the slides into line with section 3" a
+    request that is checked at both ends.
+  - *A switcher.* One viewer, and a menu in the toolbar to move between the
+    project's documents without restarting, with the conversation and the
+    review carried across. This is where the work is: the build, the SyncTeX
+    lookups, the freshness check and every page endpoint assume one document,
+    and would each have to be told which.
+  - *Two side by side.* Paper and slides on screen together, pointing at one
+    while editing the other. It needs a second viewer and an answer to which
+    one a click, a pick or a "take me to" belongs to, so it waits on whether
+    the switcher leaves it wanted.
+
+  One case runs through all three: a file that two documents both `\input`.
+  One edit then changes two PDFs, and a change marker has two places to be.
 - **Learning how you write.** Every turn already records a choice: which of
   the offered versions you picked, which changes you kept and which you
   reverted, what you rewrote by hand right after the agent touched a line.
@@ -1310,24 +1513,23 @@ src/texai/
   skill the agent reads on every turn, in your project or your home directory —
   and let you read and edit that file like any other source. Nothing leaves the
   machine beyond what a turn already sends.
-- **The rest of the page on slides.** A beamer slide has icons to point with
+- **The rest of the page on slides.** A beamer slide has pencils to point with
   (see *Slides*), which gives a map from each block of the source to where it
-  sits on the page. Change markers, margin notes and navigation could hang off
-  the same map. A slide-at-a-time view, and telling the agent when a slide
-  overflows, belong here too.
-- **Selecting without a mouse.** Asking about a passage starts from a text
-  selection, which is fiddly on a touchscreen and imprecise across lines. Two
-  additions: a small icon beside each paragraph (the guide bars already know
-  where every paragraph sits on the page) that opens a comment or a question
-  scoped to it; and a way of picking whole lines — tap a first and a last line
-  in the margin — rather than dragging across glyphs. Together they should make
-  the page usable from a phone or a tablet.
-- **A better speech interface.** Talking is often the quickest way to say what
-  is wrong with a paragraph. Today that means the operating system's dictation
-  into the request box. Something built in — hold to talk, transcription into
-  the request, ideally pointed at the paragraph you are looking at or have
-  tapped — would fit the reading-and-reacting loop, and the mobile one above
-  especially.
+  sits on the page. Comments, change markers and navigation already use it;
+  intents and provenance could hang off the same map. A slide-at-a-time view, and telling
+  the agent when a slide overflows, belong here too.
+- **Reaching it from a phone.** The page works by touch (see *On a phone or a
+  tablet*), but texai binds to loopback and refuses other host names, so
+  getting there is left to a tunnel of your own. A switch that accepts one
+  named host, for a tunnel you trust, would make that a flag instead of a
+  workaround. Picking a run of several sentences, and a slide-at-a-time view,
+  would suit a small screen too.
+- **Speech that stays on the machine.** Dictation uses the browser's
+  recogniser (see *Saying it instead*), which in most browsers means a remote
+  service, and none at all in some. A local transcriber, optional because it
+  is a large download, would keep the audio here and work everywhere. Hold to
+  talk, and a request pointed at whatever paragraph you are looking at, would
+  fit the reading-and-reacting loop better still.
 - **A container.** `docker run` with TeX Live inside, so the one real dependency
   — a TeX installation carrying `latexmk` and `synctex` — stops being something
   to install first. Two things to work out: the agent needs the `claude` CLI and

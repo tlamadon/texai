@@ -11,6 +11,7 @@
 
 import { getJSON, postJSON } from './api.js';
 import { showToast } from './toast.js';
+import { micButton, stopDictation } from './speech.js';
 
 const WIDTH = 320; // px
 const MAX_QUOTE = 90;
@@ -65,6 +66,7 @@ export class CommentBox {
   }
 
   close() {
+    stopDictation();
     if (!this.box) return;
     this.box.node.remove();
     for (const node of this.box.highlights || []) node.remove();
@@ -118,10 +120,18 @@ export class CommentBox {
     const status = el('span', 'comment-status');
     const submit = el('button', 'primary', submitLabel);
     submit.type = 'button';
-    bar.append(status, submit);
+    const mic = micButton({
+      input,
+      onError: (message) => {
+        status.className = 'comment-status err';
+        status.textContent = message;
+      },
+    });
+    bar.append(status, ...(mic ? [mic] : []), submit);
     wrap.append(input, bar);
 
     const go = async () => {
+      stopDictation();
       const text = input.value.trim();
       if (!text || submit.disabled) return;
       submit.disabled = true;

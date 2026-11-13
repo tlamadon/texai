@@ -18,7 +18,9 @@ import { AnnotationLayer } from './annotations.js';
 import { PeekPanel } from './peek.js';
 import { ProjectSources } from './project.js';
 import { ScrollSync } from './sync.js';
+import { Picker } from './pick.js';
 import { SlideBlocks } from './slides.js';
+import { micButton } from './speech.js';
 import { showToast } from './toast.js';
 import { PdfViewer } from './viewer.js';
 
@@ -59,6 +61,7 @@ const els = {
 let marks = null;
 let paraGuide = null;
 let slides = null;
+let picker = null;
 let notes = null;
 let viewHistory = null;
 let inline = null;
@@ -90,6 +93,14 @@ const viewer = new PdfViewer({
 viewHistory = new ViewHistory({ viewer, back: 'view-back', forward: 'view-forward' });
 
 const chat = new ChatPanel();
+// Dictation into the composer, where the browser can take it (see speech.js).
+{
+  const mic = micButton({
+    input: document.getElementById('composer-input'),
+    onError: (message) => showToast(message, { type: 'error' }),
+  });
+  if (mic) document.getElementById('send').before(mic);
+}
 marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.acceptAll });
 // The page-side twin of the editor's paragraph gutter. Refreshed whenever the
 // PDF is (re)built; redrawn on every render alongside the change markers. Its
@@ -196,8 +207,10 @@ ask = new PageAsk({
   container: els.container,
   select: (passage) => recordSelection(passage),
   available: () => chat.agent.available && !chat.busy,
-  onComment: (passage) => comments.compose(onSlide(passage)),
-  onEdit: (passage) => inline.openBlock(passage.source, passage.page, passage.source.rects),
+  onComment: (passage) => comments.compose(forComment(onSlide(passage))),
+  onEdit: (passage) => editPicked(passage),
+  onAttach: (passage) => attachPicked(passage),
+  onSource: (passage) => openPickedSource(passage),
   canComment: () => !chat.busy,
   onChanges: () => marks.reveal(),
   onOpenChat: () => {
@@ -209,24 +222,38 @@ ask = new PageAsk({
 // wears an icon per block — title, item, paragraph — placed from the source.
 // Clicking one offers the same two buttons a selection does; with Cmd/Ctrl it
 // goes to the composer as a passage, with Alt to the editor.
+// Something picked, by a slide's icon or in Pick mode: offered for asking,
+// commenting and editing; with Cmd/Ctrl it goes to the composer as a passage,
+// with Alt to the editor.
+const picked = (passage, event) => {
+  if (event.altKey) {
+    openPickedSource(passage);
+    return;
+  }
+  if (IS_MAC ? event.metaKey : event.ctrlKey || event.metaKey) {
+    attachPicked(passage);
+    return;
+  }
+  if (!ask.offerPassage(passage)) showToast('The agent is busy; try again in a moment.');
+};
 slides = new SlideBlocks({
   viewer,
   anchorsButton: document.getElementById('toggle-anchors'),
-  pickButton: document.getElementById('pick-block'),
-  onPick: (passage, event) => {
-    const { source } = passage;
-    if (event.altKey) {
-      editAt(source.file, source.line);
-      return;
-    }
-    if (IS_MAC ? event.metaKey : event.ctrlKey || event.metaKey) {
-      addSlideSelection(source, passage.page, passage.text);
-      return;
-    }
-    if (!ask.offerPassage(passage)) showToast('The agent is busy; try again in a moment.');
-  },
+  onPick: picked,
 });
+// Pick mode: on a paper a sentence and then its paragraph, on a slide a block
+// and then the slide. On by default where there is no pointer to hover with.
+picker = new Picker({
+  viewer,
+  slides,
+  button: document.getElementById('pick-block'),
+  bars: () => paraGuide.bars,
+  onPick: picked,
+  onError: (message) => showToast(message, { type: 'error' }),
+});
+document.getElementById('panel-close').addEventListener('click', () => setPanelVisible(false));
 notes.slideSpots = (file, line) => slides.spotsFor(file, line);
+marks.slideRects = (file, line, page) => slides.rectsFor(file, line, page);
 // A note sits just past its block's anchor, so it moves when the anchors go.
 document.getElementById('toggle-anchors')?.addEventListener('click', () => notes.draw());
 chat.onTurnFinished = (turn) => ask.turnFinished(turn);
@@ -393,6 +420,22 @@ async function showLocation(loc, { phrases = [] } = {}) {
   viewHistory.mark();
   viewer.scrollToBox(loc.page, loc.boxes[0]);
 
+  // A line inside a beamer frame comes back as its slide. The block the line
+  // is in is known from the source, so that is what lights up, once the
+  // slide's text is there to find it in.
+  if (loc.slide) {
+    await textLayerReady(loc.page);
+    if (token !== showToken) return;
+    const entry = viewer.pageEntry(loc.page);
+    const rects = (entry && slides.rectsFor(loc.file, loc.line, loc.page)) || [];
+    if (rects.length) {
+      viewer.scrollToRect(entry, viewer.pdfRectToPageRect(entry, rects[0]));
+      for (const rect of rects) viewer.flashBox(loc.page, rect);
+    }
+    // Otherwise the slide itself is the answer, and it is already in view.
+    return;
+  }
+
   const precise = phrases.length ? await preciseRects(loc, phrases) : null;
   if (token !== showToken) return;
 
@@ -518,6 +561,7 @@ async function loadPdf(version, { preserveView = false } = {}) {
   marks?.refresh();
   paraGuide?.refresh();
   // The bars stay off a slide, so they are drawn again once the slides are known.
+  picker?.pdfReloaded();
   slides?.refresh().then(() => {
     paraGuide?.draw();
     notes?.draw(); // on a slide a note sits by its block, once the blocks are known
@@ -580,6 +624,74 @@ function onSlide(passage) {
   if (passage.source) return passage;
   const source = slides?.sourceAt(passage.page, passage.point);
   return source ? { ...passage, source } : passage;
+}
+
+/** A picked passage as a comment takes it: on the line that was pointed at,
+    where a sentence shares its paragraph's lines with others. */
+function forComment(passage) {
+  const { source } = passage;
+  if (!source || source.at == null) return passage;
+  return { ...passage, source: { ...source, line: source.at } };
+}
+
+/** Put a picked or selected passage on the composer. */
+async function attachPicked(passage) {
+  if (passage.source) {
+    addSlideSelection(passage.source, passage.page, passage.text);
+    return;
+  }
+  try {
+    const result = await recordSelection({
+      page: passage.page,
+      point: passage.point,
+      word: passage.word,
+      selectedText: passage.text,
+    });
+    setPanelVisible(true);
+    chat.addSelection(result.selection);
+  } catch (err) {
+    showToast(err.message || String(err), { type: 'error' });
+  }
+}
+
+/** Open a picked or selected passage in the Source tab. */
+async function openPickedSource(passage) {
+  if (passage.source) {
+    await editAt(passage.source.file, passage.source.at ?? passage.source.line);
+    return;
+  }
+  try {
+    const where = await postJSON('/api/resolve', {
+      page: passage.page,
+      x: Number(passage.point.x.toFixed(3)),
+      y: Number(passage.point.y.toFixed(3)),
+      selectedText: passage.text || null,
+      word: passage.word?.word ?? null,
+      contextBefore: passage.word?.before ?? null,
+      contextAfter: passage.word?.after ?? null,
+    });
+    await editAt(where.file, where.line, where.word ? where.column : null);
+  } catch (err) {
+    showToast(err.message || String(err), { type: 'error' });
+  }
+}
+
+/** Edit a picked passage where it sits on the page. */
+function editPicked(passage) {
+  const { source } = passage;
+  if (source.kind !== 'sentence' && source.kind !== 'paragraph') {
+    inline.openBlock(source, passage.page, source.rects);
+    return;
+  }
+  // On a paper the box is the paragraph's, fitted to its column and its type:
+  // the editor a double-click opens, at the point that was picked.
+  const entry = viewer.pageEntry(passage.page);
+  if (!entry?.viewport) return;
+  const at = viewer.pdfRectToPageRect(entry, { ...passage.anchor, width: 0, height: 0 });
+  const page = entry.el.getBoundingClientRect();
+  const x = page.left + at.left;
+  const y = page.top + at.top;
+  inline.open(entry, x, y, document.elementFromPoint(x, y));
 }
 
 /** Put a block of a slide on the composer, as a Cmd-click puts a word there. */
@@ -930,7 +1042,11 @@ async function boot() {
   els.panelToggle.title = `${els.panelToggle.title} ${panelShortcut()}`;
   // Before the PDF loads, so it is fitted to the width it will actually have.
   try {
-    if (localStorage.getItem(PANEL_KEY) === '0') setPanelVisible(false);
+    const remembered = localStorage.getItem(PANEL_KEY);
+    // Where the panel comes over the page (see styles.css) it starts put away.
+    if (remembered === '0' || (remembered === null && window.innerWidth <= 1000)) {
+      setPanelVisible(false);
+    }
   } catch {
     /* storage disabled: start with the panel showing */
   }

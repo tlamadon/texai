@@ -206,6 +206,10 @@ export class MarksLayer {
     this.state = new Map();
     this.anchors = new Map();
     this.onEdit = null; // open a change's line in the source editor
+    // (file, line, page) -> the rendered lines of that line's block on a
+    // beamer slide, in PDF points; [] when they are not known yet; null when
+    // the page is not a slide.
+    this.slideRects = null;
 
     if (this.button) {
       this.button.addEventListener('click', () => this.toggle());
@@ -316,14 +320,24 @@ export class MarksLayer {
       for (const box of mark.boxes || []) {
         const entry = this.viewer.pageEntry(box.page);
         if (!entry || !entry.viewport) continue;
-        const rect = this.viewer.pdfRectToPageRect(entry, box);
-        placements.push({
-          entry,
-          layer: this._layerFor(entry),
-          rect,
-          box,
-          narrow: narrowRects(entry, rect, phrases),
-        });
+        // On a beamer slide the box is the whole slide, which is all SyncTeX
+        // knows. The lines of the block that changed are known from the
+        // source, so the change is looked for, and failing that banded, there
+        // and not across the slide. Until the slide's text is up there is
+        // nothing to place it by, and nothing is drawn.
+        const lines = this.slideRects?.(mark.file, mark.newStart, box.page);
+        const bands = lines
+          ? lines.map((line) => this.viewer.pdfRectToPageRect(entry, line))
+          : [this.viewer.pdfRectToPageRect(entry, box)];
+        for (const rect of bands) {
+          placements.push({
+            entry,
+            layer: this._layerFor(entry),
+            rect,
+            box,
+            narrow: narrowRects(entry, rect, phrases),
+          });
+        }
       }
       const narrowed = placements.some((p) => p.narrow.length);
 

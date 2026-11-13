@@ -12,6 +12,7 @@ import { ProgressBar, progressLabels } from './progress.js';
 import { SessionMenu, pastConversation } from './sessions.js';
 import { AgentSettingsMenu } from './settings.js';
 import { showToast } from './toast.js';
+import { stopDictation } from './speech.js';
 
 const MAX_CHIP_TEXT = 90;
 const MAX_DETAIL_LINES = 20;
@@ -321,6 +322,8 @@ export class ChatPanel {
       showToast('The agent is still working on the previous message.', { type: 'error' });
       return;
     }
+    // What was being dictated is part of the message; nothing more is to come.
+    stopDictation();
     const message = this.els.input.value.trim();
     if (!message && this.chips.length === 0) return;
 

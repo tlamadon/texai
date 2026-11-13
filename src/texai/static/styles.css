@@ -180,10 +180,18 @@ button.update-pill:hover:not(:disabled) { background: rgba(63, 185, 80, 0.15); }
   .toolbar > .group,
   .toolbar #git-branch { display: none; }
 }
-@container canvas (max-width: 420px) {
+/* Pick took a place in the row, so what can be done without goes sooner. */
+@container canvas (max-width: 520px) {
   .toolbar > .conn,
   .toolbar > .update-pill,
   .toolbar > #contents-toggle { display: none; }
+}
+
+/* A phone's width: the row tightens, and Pick is its sign and not its name. */
+@container canvas (max-width: 440px) {
+  .toolbar { gap: 6px; padding: 6px 8px; }
+  .toolbar > #pick-block { font-size: 0; padding: 4px 9px; }
+  .toolbar > #pick-block::before { content: "\2316"; font-size: 15px; line-height: 1; }
 }
 
 /* ---------------- viewer ---------------- */
@@ -937,6 +945,40 @@ kbd {
 .composer-actions .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .hint { color: var(--muted); font-size: 11.5px; }
 
+/* Dictation (see speech.js): a microphone beside whatever sends the text. Quiet
+   until pressed; red and pulsing while it listens, since a live microphone is
+   something to know about at a glance. */
+.mic-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mic-button:hover { color: var(--fg); border-color: var(--muted); }
+.mic-button svg { display: block; }
+.mic-button.listening {
+  color: #fff;
+  background: #d9363e;
+  border-color: #d9363e;
+  animation: mic-pulse 1.3s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 54, 62, 0.55); }
+  50% { box-shadow: 0 0 0 5px rgba(217, 54, 62, 0); }
+}
+/* The bars it sits in size their buttons as text; this one is an icon. */
+.ask-bar .mic-button,
+.inline-edit-bar .mic-button,
+.comment-bar .mic-button { width: 22px; height: 22px; padding: 0; }
+
 /* ---------------- toasts ---------------- */
 
 .toast-stack {
@@ -1176,14 +1218,57 @@ button.toggle.active {
   background: rgba(76, 141, 255, 0.2);
   pointer-events: none;
 }
-/* Pick mode: the pointer picks blocks, so it does not select text. */
-.slide-picking .page { cursor: crosshair; }
-.slide-picking .textLayer { user-select: none; -webkit-user-select: none; }
-.slide-picking .slide-hover {
-  background: rgba(76, 141, 255, 0.22);
+/* Pick mode (see pick.js): what is under the pointer lights up, and a click
+   takes it. Its own layer on each page, above the text, taking no clicks. */
+.picking .page { cursor: crosshair; }
+.page .pick-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.pick-hover {
+  position: absolute;
+  border-radius: 3px;
+  background: rgba(76, 141, 255, 0.2);
   outline: 1.5px solid var(--accent);
 }
+.page.pick-whole,
 .page.slide-hovered { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* What is on offer for a picked or selected passage, as a bar along the bottom:
+   where a touch screen or a narrow window puts it, in place of the three small
+   buttons beside the passage. */
+.pick-bar {
+  position: fixed;
+  left: 50%;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 65;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+.pick-bar[hidden] { display: none; }
+.pick-bar .pick-action {
+  flex: none;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.pick-bar .pick-action.close { padding: 0 10px; font-size: 18px; }
+body.offer-in-bar .ask-button { display: none; }
 
 /* The button at the end of a selection, sitting just above it. Its own
    transform centres it on the point, so the script only has to name the point. */
@@ -2377,3 +2462,77 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
 }
 .comment-tools button { padding: 2px 8px; font-size: 11.5px; }
 .comment-tools button.confirm { color: var(--err); border-color: var(--err); }
+
+
+/* ---------------- touch and narrow screens ---------------- */
+
+/* The panel's own way back to the page; only a narrow screen needs it. */
+.panel-close { display: none; }
+
+/* A window too narrow for two panes side by side: an iPad held upright, a
+   phone. The page has the whole width, and the panel, when asked for, comes
+   over it from the right at its own width, with its own way back. Beside the
+   page at this width it would leave a paper narrower than a phone shows it. */
+@media (max-width: 1000px) {
+  .app,
+  .app.panel-hidden { grid-template-columns: minmax(0, 1fr); }
+  .app > .splitter { display: none; }
+  .app > .chat-pane {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(var(--chat-width), 100vw);
+    z-index: 70;
+    box-shadow: -10px 0 30px rgba(0, 0, 0, 0.5);
+  }
+  .panel-close { display: inline-flex; font-size: 18px; }
+}
+
+/* A phone: there is no room for the page beside the panel at all, so the panel
+   covers it whole. */
+@media (max-width: 760px) {
+  .app > .chat-pane {
+    left: 0;
+    width: auto;
+    border-left: 0;
+    box-shadow: none;
+  }
+  .chat-header { gap: 4px; padding: 6px 8px; }
+  .chat-header .agent-status { display: none; }
+  /* What the toolbar drops as it narrows is decided by its own pane's width
+     (see the container rules above); here it only tightens. */
+  .toolbar { gap: 6px; padding: 6px 8px; }
+  .viewer-container { padding-left: 4px; padding-right: 4px; }
+  .hintbar { display: none; } /* a line of mouse shortcuts */
+}
+
+/* A finger, not a pointer: nothing waits to be hovered, and everything that
+   can be pressed is big enough to press. */
+@media (pointer: coarse) {
+  .viewer-container { touch-action: pan-x pan-y pinch-zoom; }
+  .hintbar { display: none; } /* a line of mouse shortcuts */
+  button, .tab { min-height: 34px; }
+  .toolbar button { min-width: 34px; }
+  .slide-icon,
+  .page:hover .slide-icon {
+    width: 26px;
+    height: 26px;
+    opacity: 0.85;
+  }
+  .slide-icon svg { width: 15px; height: 15px; }
+  .note-layer .note-chip,
+  .note-layer .note-chip:hover:not(:disabled) { min-width: 30px; height: 26px; border-radius: 13px; }
+  .note-chip svg { width: 15px; height: 15px; }
+  .mic-button,
+  .ask-bar .mic-button,
+  .inline-edit-bar .mic-button,
+  .comment-bar .mic-button { width: 36px; height: 36px; }
+  .mic-button svg { width: 16px; height: 16px; }
+  .ask-bar button,
+  .inline-edit-bar button,
+  .comment-bar button { font-size: 14px; padding: 4px 12px; }
+  .ask-input,
+  .comment-input,
+  #composer-input { font-size: 16px; } /* smaller, and iOS zooms the page to it */
+}

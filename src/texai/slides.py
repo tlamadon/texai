@@ -24,7 +24,7 @@ from .paths import to_project_relative
 from .snapshots import iter_source_files
 from .synctex import synctex_data_file
 
-__all__ = ["frame_for_page", "slide_label", "slide_map"]
+__all__ = ["frame_for_page", "slide_label", "slide_map", "slide_spot"]
 
 _cache: dict[str, tuple[str, dict[str, Any]]] = {}
 
@@ -98,6 +98,42 @@ def frame_for_page(config: AppConfig, page: int) -> dict[str, Any] | None:
         if page in frame["pages"]:
             return frame
     return None
+
+
+def slide_spot(config: AppConfig, file: str, line: int) -> dict[str, Any] | None:
+    """Where a line inside a frame is in the PDF: its slide.
+
+    SyncTeX has no record of such a line, so "go to it" would find nothing.
+    The slide it is on is known all the same, and is the answer: the frame's
+    last page, where every overlay has been uncovered, and one box round what
+    the frame put there. The page narrows that to the block itself (see
+    ``static/slides.js``). ``None`` when the line is not on a slide that was
+    typeset.
+    """
+    frame = next(
+        (
+            f
+            for f in slide_map(config)["frames"]
+            if f["file"] == file and f["start"] <= line <= f["end"] and f["pages"]
+        ),
+        None,
+    )
+    if frame is None:
+        return None
+    page = frame["pages"][-1]
+    index, left, right, _words, _counts = parsed_synctex(config)
+    top, bottom = index.get((file, frame["end"]), {}).get(page, [0.0, 0.0])
+    return {
+        "page": page,
+        "box": {
+            "page": page,
+            "x": round(left, 2),
+            "y": round(max(0.0, top - 9.0), 2),
+            "width": round(max(right - left, 1.0), 2),
+            "height": round(max(bottom - top + 12.0, 1.0), 2),
+        },
+        "frame": {"start": frame["start"], "end": frame["end"], "title": frame["title"]},
+    }
 
 
 def slide_label(config: AppConfig, file: str, line: int) -> str:

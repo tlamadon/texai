@@ -33,7 +33,9 @@ export class ParagraphGuide {
     this.onAnnotations = onAnnotations;
     this.bars = [];
     this.palette = 5;
-    this.enabled = localStorage.getItem(STORAGE_KEY) !== '0';
+    // Off unless asked for: beside the source the bars pair a block with what
+    // it produced, but on the page alone they are colour in the margin.
+    this.enabled = localStorage.getItem(STORAGE_KEY) === '1';
     this.button?.addEventListener('click', () => this.toggle());
     this._reflect();
   }

@@ -704,6 +704,12 @@ export class PdfViewer {
     return null;
   }
 
+  /** The text node and offset drawn under a point, if any text is. */
+  caretAt(clientX, clientY) {
+    const caret = this._caretAt(clientX, clientY);
+    return caret && caret.node?.parentElement?.closest('.textLayer') ? caret : null;
+  }
+
   /**
    * The current text selection inside the viewer, as text plus the midpoint of
    * its bounding box (a stable point to hand to SyncTeX).

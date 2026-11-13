@@ -63,3 +63,31 @@ def test_indexing_survives_preamble_so_palette_stays_in_step():
 def test_body_start_defaults_to_one_without_preamble():
     # An \input file has no \begin{document}; every line is body.
     assert body_start_line("just prose\n\nmore prose\n") == 1
+
+
+# ---------------------------------------------------------------- sentences
+
+
+def test_a_sentence_is_its_line_when_the_paper_is_written_one_a_line():
+    from texai.paragraphs import _sentence_span
+
+    lines = ["We estimate it.", "It is large.  %#k3f9q", "Why? See below."]
+    assert _sentence_span(lines, 2, 1, 3) == (2, 2)
+
+
+def test_a_wrapped_sentence_runs_between_the_sentence_ends_around_it():
+    from texai.paragraphs import _sentence_span
+
+    lines = [
+        "The first one ends here.",
+        "The second runs over",
+        "three source lines before",
+        "it stops (as here).",
+        "%@comment a note is not part of a sentence",
+        "The last has no end",
+    ]
+    assert _sentence_span(lines, 3, 1, 6) == (2, 4)
+    assert _sentence_span(lines, 2, 1, 6) == (2, 4)
+    assert _sentence_span(lines, 1, 1, 6) == (1, 1)
+    # An annotation line, and the paragraph's own end, both stop it.
+    assert _sentence_span(lines, 6, 1, 6) == (6, 6)

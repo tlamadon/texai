@@ -19,6 +19,7 @@
 // editor and your typing with it.
 
 import { getJSON, postJSON } from './api.js';
+import { micButton, stopDictation } from './speech.js';
 
 const FALLBACK_FONT_PT = 10;
 const MIN_FONT_PT = 6;
@@ -344,6 +345,9 @@ export class InlineEditor {
         'Ctrl-S': () => this.commit(),
       },
     });
+    // Dictate into the box: words go in at the caret, as LaTeX's plain text.
+    const mic = micButton({ cm, onError: (message) => this._setStatus(message, 'err') });
+    if (mic) cancel.before(mic);
     return { el, cm, status, save };
   }
 
@@ -384,6 +388,7 @@ export class InlineEditor {
   async commit() {
     const s = this.session;
     if (!s || s.state !== 'editing') return;
+    stopDictation();
     const text = s.cm.getValue();
     if (text === s.original) {
       this.close();
@@ -463,6 +468,7 @@ export class InlineEditor {
   close() {
     const s = this.session;
     if (!s) return;
+    stopDictation();
     clearTimeout(s.settle);
     s.el.remove();
     this.session = null;

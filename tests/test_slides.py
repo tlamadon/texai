@@ -100,3 +100,21 @@ def test_a_line_on_a_slide_is_labelled_with_it(config: AppConfig):
     assert slide_label(config, "talk.tex", 6) == '"First" (talk.tex:4-9)'
     assert slide_label(config, "talk.tex", 3) == "untitled (talk.tex:3-3)"
     assert slide_label(config, "talk.tex", 2) == ""
+
+
+def test_a_line_inside_a_frame_is_found_on_its_slide(config: AppConfig, monkeypatch):
+    # Asked about a line inside a frame, SyncTeX answers with every box of the
+    # slide on every overlay page. The source knows better: one slide, one box.
+    from texai.navigate import locate
+    from texai.synctex import SyncTexBox
+
+    everything = [SyncTexBox(page=p, x=0.0, y=0.0, width=400.0, height=200.0) for p in (2, 2, 3, 3)]
+    monkeypatch.setattr("texai.navigate.run_synctex_view", lambda *a, **k: everything)
+    found = locate(config, "talk.tex", 6)
+    assert found["found"] is True
+    # The last page of the frame: every overlay uncovered.
+    assert found["page"] == 3 and [b["page"] for b in found["boxes"]] == [3]
+    assert found["slide"] == {"start": 4, "end": 9, "title": "First"}
+
+    # Outside any frame SyncTeX's answer stands.
+    assert len(locate(config, "talk.tex", 2)["boxes"]) == 4

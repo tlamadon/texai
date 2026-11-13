@@ -40,7 +40,9 @@ from .complete import MODEL as COMPLETION_MODEL
 from .complete import CompletionUnavailable, complete_text, completion_status
 from .config import AppConfig
 from .console import note, warn
+from .build import running_builds
 from .events import EventBus, sse_stream
+from .freshness import POLL_SECONDS, Freshness
 from .git import GitError
 from .git import commit as git_commit
 from .git import fetch_remote
@@ -68,7 +70,7 @@ from .models import (
 )
 from .macros import document_macros
 from .navigate import LocateError, locate, locate_forward, locate_range
-from .paragraphs import paragraph_bars
+from .paragraphs import block_at, paragraph_bars
 from .slides import frame_for_page, slide_map
 from .frames import frame_at
 from .paths import PathOutsideRootError, resolve_source_path, to_project_relative
@@ -141,6 +143,7 @@ def create_app(
     message_writer: Callable[..., Any] = propose_message,
     quick: QuickSession | None = None,
     update_check: UpdateCheck | None = None,
+    keep_fresh: bool = False,
 ) -> FastAPI:
     """Build the application for one review session.
 
@@ -160,13 +163,47 @@ def create_app(
     # this server. Claude takes them in-process and needs no endpoint.
     tools_server = build_tools_server(config, bus) if agent_kind == "codex" else None
 
+    fresh = Freshness(config)
+
+    async def stay_fresh() -> None:
+        """Rebuild when the PDF falls behind: a source changed behind texai's
+        back (an outside editor, a pull, a co-author's commit), or the PDF was
+        rebuilt elsewhere without its SyncTeX data (see texai.freshness). Never
+        while a turn or another build is running; those rebuild for themselves."""
+        while True:
+            await asyncio.sleep(POLL_SECONDS)
+            if controller.busy or running_builds():
+                continue
+            which = await asyncio.to_thread(fresh.stale)
+            unsynced = None if which else await asyncio.to_thread(fresh.unsynced)
+            if which is None and unsynced is None:
+                continue
+            fresh.handled()
+            if which is not None:
+                bus.publish("source_saved", file=which)
+            result = await controller.rebuild(
+                reason=f"{which} changed on disk" if which else unsynced,
+                force=which is None,
+            )
+            bus.publish(
+                "build_finished",
+                turnId=None,
+                attempt=1,
+                ok=bool(result and result.ok),
+                errors=list(result.errors) if result else [],
+                summary=result.summary() if result else "No build command configured.",
+            )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as stack:
             if tools_server is not None:
                 # A mounted app's own lifespan never runs; its sessions need this.
                 await stack.enter_async_context(tools_server.session_manager.run())
+            watcher = asyncio.create_task(stay_fresh()) if keep_fresh else None
             yield
+            if watcher is not None:
+                watcher.cancel()
             await controller.shutdown()
             await agent_session.stop()
             if quick is not None:
@@ -615,6 +652,15 @@ def create_app(
         against the build inside; the first request after a rebuild pays for it."""
         return await asyncio.to_thread(paragraph_bars, config)
 
+    @app.get("/api/block")
+    async def block(file: str, line: int) -> dict[str, Any]:
+        """The sentence and the paragraph a source line belongs to, with where
+        each sits on the page: what Pick mode lights up and hands on."""
+        found = await asyncio.to_thread(block_at, config, file, line)
+        if found is None:
+            raise _error(404, "no_block", f"{file}:{line} is not in a paragraph of the text.")
+        return found
+
     @app.get("/api/slides")
     async def slides() -> dict[str, Any]:
         """The frames of a beamer deck: their lines, blocks and pages, for the
@@ -879,6 +925,9 @@ def create_app(
         if done["shifted"]:
             return {"ok": True, "file": file, **done, "build": await _saved_by_hand(file)}
         controller.absorb_manual_edit(file)
+        # The marker it put on the sentence touched the .tex and moved no line:
+        # there is nothing to rebuild for.
+        fresh.handled()
         bus.publish("annotations_changed", file=file)
         return {"ok": True, "file": file, **done, "build": None}
 

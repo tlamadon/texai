@@ -12,7 +12,7 @@ from typing import Any
 
 from .config import AppConfig
 from .paths import PathOutsideRootError, ensure_inside_root, to_project_relative
-from .synctex import SyncTexError, run_synctex_view
+from .synctex import SyncTexBox, SyncTexError, run_synctex_view
 
 __all__ = [
     "LocateError",
@@ -53,6 +53,27 @@ def locate(config: AppConfig, file: str, line: int) -> dict[str, Any]:
     if not source.is_file():
         raise LocateError(f"No such file in the project: {file}")
 
+    relative = to_project_relative(source, config.root)
+
+    # A line inside a beamer frame. SyncTeX recorded the whole slide against
+    # the frame's last line, and asked about any other line of it answers with
+    # the nearest one it knows: every box on the slide, once per overlay page.
+    # The source says which slide the line is on, so that is asked first.
+    # Imported here: slides reads the paragraph index, which reads provenance,
+    # which locates labels through this module.
+    from .slides import slide_spot
+
+    slide = slide_spot(config, relative, max(1, int(line)))
+    if slide is not None:
+        return {
+            "found": True,
+            "file": relative,
+            "line": int(line),
+            "page": slide["page"],
+            "boxes": [slide["box"]],
+            "slide": slide["frame"],
+        }
+
     try:
         boxes = run_synctex_view(
             config.pdf_path,
@@ -64,7 +85,6 @@ def locate(config: AppConfig, file: str, line: int) -> dict[str, Any]:
     except SyncTexError as exc:
         raise LocateError(str(exc)) from exc
 
-    relative = to_project_relative(source, config.root)
     if not boxes:
         return {"found": False, "file": relative, "line": int(line), "page": None, "boxes": []}
 
@@ -140,8 +160,18 @@ def locate_range(config: AppConfig, file: str, start: int, end: int) -> dict[str
     if truncated:
         last = first + MAX_RANGE_LINES - 1
 
+    from .slides import slide_spot  # see locate() for why it is imported here
+
+    relative = to_project_relative(source, config.root)
     boxes: list[Any] = []
     for line in range(first, last + 1):
+        # On a slide, one box for the slide on its last page, and the page
+        # finds the changed words in it; SyncTeX would hand back every box of
+        # the slide, once per overlay page.
+        slide = slide_spot(config, relative, line)
+        if slide is not None:
+            boxes.append(SyncTexBox(**slide["box"]))
+            continue
         try:
             boxes.extend(
                 run_synctex_view(
@@ -156,7 +186,6 @@ def locate_range(config: AppConfig, file: str, start: int, end: int) -> dict[str
             continue  # one unmappable line should not lose the rest
 
     boxes = _dedupe(boxes)
-    relative = to_project_relative(source, config.root)
     return {
         "found": bool(boxes),
         "file": relative,

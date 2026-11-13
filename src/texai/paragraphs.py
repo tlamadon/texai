@@ -32,23 +32,26 @@ from __future__ import annotations
 import gzip
 import os
 import re
+import zlib
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from .annotations import PROPOSE, SOURCE, is_annotation_line, kind_of, parse_annotations
 from .config import AppConfig
-from .paths import to_project_relative
+from .paths import ensure_inside_root, to_project_relative
 from .proposals import proposals_in
 from .provenance import ProvenanceError, bib_entries, source_from_dict, source_ref
 from .records import load_records, markers_in, records_path, sentence_line
 from .snapshots import iter_source_files
 from .synctex import synctex_data_file
+from .words import project
 
 __all__ = [
     "PARAGRAPH_PALETTE",
     "body_start_line",
     "paragraph_ranges",
+    "block_at",
     "paragraph_bars",
     "parsed_synctex",
 ]
@@ -177,7 +180,13 @@ def parsed_synctex(
     key = str(config.pdf_path)
     cached = _parsed.get(key)
     if cached is None or cached[0] != signature:
-        cached = (signature, _parse_synctex(config))
+        try:
+            parsed = _parse_synctex(config)
+        except (OSError, EOFError, zlib.error):
+            # Caught mid-write by a build, or not a SyncTeX file at all: there
+            # is nothing to place anything by, until the next one.
+            return {}, 0.0, 0.0, {}, {}
+        cached = (signature, parsed)
         _parsed[key] = cached
     return cached[1]
 
@@ -552,6 +561,122 @@ def _segments(
             }
         )
     return segments
+
+
+# What ends a sentence at the end of a source line: its full stop, question or
+# exclamation mark or colon, with whatever closes around it (a quote, a brace,
+# a footnote's bracket).
+_SENTENCE_END = re.compile(r"[.?!:][\"'\)\]\}]*$")
+_MARKER_TAIL = re.compile(r"\s*(?<!\\)%.*$")
+
+
+def _sentence_span(lines: list[str], line: int, first: int, last: int) -> tuple[int, int]:
+    """The lines of the sentence ``line`` is part of, within ``first``-``last``.
+
+    A paper written one sentence a line gives the line itself. One wrapped at a
+    column gives the lines from the last sentence end above to the next one
+    below: sentences that share a source line cannot be told apart from here.
+    """
+
+    def code(number: int) -> str:
+        return _MARKER_TAIL.sub("", lines[number - 1]).rstrip()
+
+    def ends(number: int) -> bool:
+        return bool(_SENTENCE_END.search(code(number)))
+
+    def text(number: int) -> bool:
+        return bool(code(number).strip()) and not is_annotation_line(lines[number - 1])
+
+    start = end = line
+    while start > first and text(start - 1) and not ends(start - 1):
+        start -= 1
+    while end < last and not ends(end) and text(end + 1):
+        end += 1
+    return start, end
+
+
+def block_at(config: AppConfig, file: str, line: int) -> dict[str, Any] | None:
+    """The sentence and the paragraph a source line belongs to, and where each
+    is on the page: what Pick mode lights up under the pointer, innermost
+    first, and what a pick then names to the agent as a range of lines.
+
+    ``None`` when the line is in no paragraph of a ``.tex`` file. Positions are
+    in PDF points from the top-left of the page, and are SyncTeX's: good to the
+    rendered line, rough along it (see :func:`_segments`).
+    """
+    try:
+        path = ensure_inside_root(file, config.root)
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return None
+    if path.suffix.lower() not in _PROSE_SUFFIXES:
+        return None
+    relative = to_project_relative(path, config.root)
+    lines = text.split("\n")
+    body = body_start_line(text)
+    own = next((r for r in paragraph_ranges(text) if r[1] <= line <= r[2]), None)
+    if own is None or line < body:
+        return None
+    index, first, last = own
+    # Never the document's own frame: \begin{document} and \end{document}.
+    if "\\begin{document}" in lines[first - 1]:
+        first += 1
+    while last >= first and "\\end{document}" in lines[last - 1]:
+        last -= 1
+    if not first <= line <= last:
+        return None
+
+    line_index, left, right, words, _counts = parsed_synctex(config)
+
+    def rendered(start: int, end: int) -> str:
+        parts = [" ".join(project(lines[n - 1])[0].split()) for n in range(start, end + 1)]
+        return " ".join(part for part in parts if part)[:400]
+
+    start, end = _sentence_span(lines, line, first, last)
+    sentence_rects = [
+        {
+            "page": segment["page"],
+            "x": segment["x0"],
+            "y": segment["top"],
+            "width": round(max(segment["x1"] - segment["x0"], 1.0), 2),
+            "height": round(segment["base"] - segment["top"] + _DESCENT_PT, 2),
+        }
+        for number in range(start, end + 1)
+        for segment in _segments(words.get((relative, number)), right)
+    ]
+
+    spans: dict[int, list[float]] = {}
+    for number in range(first, last + 1):
+        for page, (top, bottom) in (line_index.get((relative, number)) or {}).items():
+            slot = spans.setdefault(page, [top, bottom])
+            slot[0], slot[1] = min(slot[0], top), max(slot[1], bottom)
+    paragraph_rects = [
+        {
+            "page": page,
+            "x": round(left, 2),
+            "y": round(top - _ASCENT_PT, 2),
+            "width": round(max(right - left, 1.0), 2),
+            "height": round(bottom - top + _ASCENT_PT + _DESCENT_PT, 2),
+        }
+        for page, (top, bottom) in sorted(spans.items())
+    ]
+
+    return {
+        "file": relative,
+        "sentence": {
+            "start": start,
+            "end": end,
+            "text": rendered(start, end),
+            "rects": sentence_rects,
+        },
+        "paragraph": {
+            "index": index,
+            "start": first,
+            "end": last,
+            "text": rendered(first, last),
+            "rects": paragraph_rects,
+        },
+    }
 
 
 def _signature(config: AppConfig, sources: list[Path]) -> str:

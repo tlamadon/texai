@@ -15,12 +15,13 @@ from . import __version__
 from .agent import AGENT_KINDS, EFFORT_LEVELS, agent_status, create_agent
 from .agent_tools import tools_url
 from .codex_agent import CODEX_EFFORT_LEVELS
-from .build import BuildError, detect_engine, run_build, running_builds
+from .build import BuildError, detect_engine, forced, run_build, running_builds
 from .config import AppConfig
 from .demo import DEMOS, DemoError, unpack_demo
 from .console import note, warn
 from .discover import DiscoveryError, discover
 from .events import EventBus
+from .freshness import Freshness
 from .paths import PathOutsideRootError
 from .server import create_app
 from .synctex import synctex_data_file
@@ -29,7 +30,7 @@ from .sessions import last_session
 from .timing import timings_path
 from .update import UpdateCheck
 
-__all__ = ["main", "build_parser", "build_missing_pdf", "pending_work"]
+__all__ = ["main", "build_parser", "build_missing_pdf", "rebuild_stale_pdf", "pending_work"]
 
 HOST = "127.0.0.1"  # loopback only, never configurable
 DEFAULT_PORT = 8765
@@ -208,6 +209,44 @@ def build_missing_pdf(config: AppConfig) -> str | None:
     return None
 
 
+def rebuild_stale_pdf(config: AppConfig) -> bool:
+    """Compile again at startup when the PDF that is there is behind: a source
+    is newer than it, or its SyncTeX data is missing or from an older build.
+
+    A PDF that does not match its source is worse than a slow start: the page
+    shows text that is no longer in the file, and clicks resolve to lines that
+    have moved. A build that fails here does not stop texai; the old PDF is
+    still something to read, and the errors are on the console.
+
+    Returns whether a build was run.
+    """
+    fresh = Freshness(config)
+    which = fresh.stale(quiet=0)
+    unsynced = None if which else fresh.unsynced(quiet=0)
+    if which is None and unsynced is None:
+        return False
+    try:
+        argv = config.build_argv()
+    except BuildError:
+        return False
+    reason = f"{which} is newer than {config.pdf_rel}" if which else unsynced
+    try:
+        result = asyncio.run(
+            run_build(
+                argv if which else forced(argv),
+                config.build_dir,
+                log_path=config.pdf_path.with_suffix(".log"),
+                reason=reason,
+            )
+        )
+    except BuildError as exc:
+        warn(f"warning: could not rebuild ({exc}); showing the PDF as it is.")
+        return True
+    if not result.ok:
+        warn("warning: the rebuild failed; showing the PDF as it was before.")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -254,6 +293,8 @@ def main(argv: list[str] | None = None) -> int:
         if problem is not None:
             print(f"texai: {problem}", file=sys.stderr)
             return 2
+    else:
+        rebuild_stale_pdf(config)
 
     if shutil.which(args.synctex) is None and not Path(args.synctex).is_file():
         warn(
@@ -322,7 +363,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.agent == "claude" and not args.no_quick:
         quick = QuickSession(config, agent.bus, model=args.model, effort=args.effort)
     update_check = None if args.no_update_check else UpdateCheck(__version__)
-    app = create_app(config, agent=agent, quick=quick, update_check=update_check)
+    app = create_app(
+        config, agent=agent, quick=quick, update_check=update_check, keep_fresh=True
+    )
     server = _announcing_server(uvicorn, app, port)
     server.run()
     # Uvicorn cancels whatever request was in flight on the way out, which can

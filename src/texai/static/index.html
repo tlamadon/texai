@@ -56,10 +56,10 @@
         <div class="spacer"></div>
 
         <!-- The review loop: the one pair of controls that changes with every turn. -->
-        <!-- On a beamer deck: point at a block of a slide the way a browser's
-             inspector points at an element. -->
-        <button id="pick-block" type="button" class="toggle" hidden aria-pressed="false"
-                title="Pick a block of a slide: it lights up under the pointer, and a click selects it. Esc to stop.">Pick</button>
+        <!-- Point at a piece of the page the way a browser's inspector points at
+             an element: a sentence, then its paragraph; a block of a slide. -->
+        <button id="pick-block" type="button" class="toggle" aria-pressed="false"
+                title="Pick: what is under the pointer lights up, and a click selects it. Click it again for the paragraph around a sentence. Esc to stop.">Pick</button>
         <button id="toggle-marks" type="button" class="toggle"
                 title="Show what the agent changed, inline on the page">Show changes</button>
         <button id="accept-all" type="button" class="ghost" hidden
@@ -74,7 +74,7 @@
           </button>
           <div id="view-menu" class="editor-menu ticked-menu view-menu" role="menu" hidden>
             <button id="toggle-guides" type="button" role="menuitemcheckbox" class="menu-item check"
-                    aria-pressed="true"
+                    aria-pressed="false"
                     title="Colour each paragraph in the margin, matching the source's gutter">
               Paragraph guides</button>
             <button id="toggle-anchors" type="button" role="menuitemcheckbox" class="menu-item check"
@@ -194,6 +194,9 @@
                   title="What backs a sentence: click a source marker in the margin">Peek</button>
         </div>
         <span id="agent-status" class="agent-status">checking&hellip;</span>
+        <!-- On a narrow screen the panel covers the page; this is the way back. -->
+        <button id="panel-close" type="button" class="ghost icon panel-close"
+                title="Back to the page">&times;</button>
         <div class="spacer"></div>
         <div class="session-wrap">
           <button id="session-button" type="button" class="ghost session-button"

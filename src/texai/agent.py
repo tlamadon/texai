@@ -233,6 +233,13 @@ async def navigate_to(config: AppConfig, bus: EventBus, file: Any, line: Any, wh
         )
 
     bus.publish("navigate", **found, why=why)
+    if found.get("slide"):
+        title = found["slide"].get("title")
+        named = f' "{title}"' if title else ""
+        return (
+            f"Showing {found['file']}:{found['line']} — the view moved to its "
+            f"slide{named}, page {found['page']}."
+        )
     return f"Showing {found['file']}:{found['line']} — the view moved to page {found['page']}."
 
 

@@ -100,6 +100,8 @@ jobs:
               "texai/static/annotations.js",
               "texai/static/paraguide.js",
               "texai/static/slides.js",
+              "texai/static/pick.js",
+              "texai/static/speech.js",
               "texai/demos/paper/main.tex",
               "texai/demos/slides/talk.tex",
               "texai/static/vendor/pdfjs/pdf.mjs",

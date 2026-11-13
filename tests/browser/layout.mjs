@@ -2241,12 +2241,10 @@ if (canLocate) {
     pressed: document.getElementById('toggle-guides').getAttribute('aria-pressed'),
     stored: localStorage.getItem('texai:show-guides'),
   })`;
-  const on = JSON.parse(await cdp.eval(count));
-  await cdp.eval(`document.getElementById('toggle-guides').click()`);
-  await sleep(200);
-  const off = JSON.parse(await cdp.eval(count));
-  // A redraw (scroll, zoom, rebuild) must not bring them back — and must still
-  // hand on the annotations, which arrive with the bars.
+  // Off until asked for: on the page alone the bars are only colour.
+  const start = JSON.parse(await cdp.eval(count));
+  // While they are off a refresh must still hand on the annotations, which
+  // arrive with the bars.
   const delivered = await cdp.eval(`(async () => {
     const guide = window.__texai.paraGuide;
     const pass = guide.onAnnotations;
@@ -2256,18 +2254,25 @@ if (canLocate) {
     guide.onAnnotations = pass;
     return calls;
   })()`);
-  const refreshed = JSON.parse(await cdp.eval(count));
-  console.log('guides:', JSON.stringify({ on, off, refreshed, delivered }));
-  check('the guides are drawn by default', on.bars > 0 && on.pressed === 'true', `${on.bars} bars`);
-  check('Guides switches the bars off', off.bars === 0 && off.pressed === 'false', `${off.bars} bars`);
-  check('and leaves the notes alone', off.notes === on.notes, `${on.notes} -> ${off.notes}`);
-  check('the notes still refresh while they are off', delivered === 1, `${delivered} deliveries`);
-  check('they stay off through a refresh, and are remembered',
-    refreshed.bars === 0 && refreshed.stored === '0', JSON.stringify(refreshed));
   await cdp.eval(`document.getElementById('toggle-guides').click()`);
   await sleep(200);
-  const back = JSON.parse(await cdp.eval(count));
-  check('switching them on draws them again', back.bars === on.bars, `${back.bars} bars`);
+  const on = JSON.parse(await cdp.eval(count));
+  // A redraw (scroll, zoom, rebuild) must keep them as they were left.
+  await cdp.eval(`window.__texai.paraGuide.refresh()`);
+  await sleep(200);
+  const refreshed = JSON.parse(await cdp.eval(count));
+  await cdp.eval(`document.getElementById('toggle-guides').click()`);
+  await sleep(200);
+  const off = JSON.parse(await cdp.eval(count));
+  console.log('guides:', JSON.stringify({ start, on, refreshed, off, delivered }));
+  check('the guides are off by default', start.bars === 0 && start.pressed === 'false', `${start.bars} bars`);
+  check('the notes still refresh while they are off', delivered === 1, `${delivered} deliveries`);
+  check('Guides switches the bars on', on.bars > 0 && on.pressed === 'true', `${on.bars} bars`);
+  check('and leaves the notes alone', on.notes === start.notes, `${start.notes} -> ${on.notes}`);
+  check('they stay on through a refresh, and are remembered',
+    refreshed.bars === on.bars && refreshed.stored === '1', JSON.stringify(refreshed));
+  check('switching them off takes them away again',
+    off.bars === 0 && off.stored === '0', `${off.bars} bars`);
 }
 
 // ---------------- putting the right-hand panel away ----------------

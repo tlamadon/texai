@@ -19,6 +19,8 @@ from pathlib import Path
 from .console import note
 
 __all__ = [
+    "forced",
+    "last_build_finished_ns",
     "BuildResult",
     "BuildError",
     "default_build_command",
@@ -44,6 +46,16 @@ def running_builds() -> list[float]:
     """How long each build currently running has been going, in seconds."""
     now = time.monotonic()
     return sorted((now - started for started in _RUNNING.values()), reverse=True)
+
+
+# When the last build ended, however it went: what texai.freshness compares a
+# changed source against, so that one change is not built for twice.
+_LAST_FINISHED_NS = 0
+
+
+def last_build_finished_ns() -> int:
+    """Wall-clock time the most recent build finished, or 0 before any has."""
+    return _LAST_FINISHED_NS
 
 
 class BuildError(RuntimeError):
@@ -195,6 +207,19 @@ def default_build_command(root_tex: Path, engine: str = "pdflatex") -> list[str]
     ]
 
 
+def forced(argv: list[str]) -> list[str]:
+    """The build command made to run even when its tool thinks nothing changed.
+
+    ``latexmk`` decides by the sources alone, so a PDF whose SyncTeX data is
+    missing or belongs to an older build looks finished to it. ``-g`` says
+    build anyway. Any other command is left as it is: what forces it is its
+    author's to know.
+    """
+    if not argv or Path(argv[0]).name != "latexmk" or "-g" in argv:
+        return list(argv)
+    return [argv[0], "-g", *argv[1:]]
+
+
 def parse_log_errors(log_text: str) -> list[str]:
     """Pull the useful error lines out of a LaTeX log.
 
@@ -291,6 +316,8 @@ async def run_build(
             stdout, _ = await process.communicate()
     finally:
         _RUNNING.pop(build_id, None)
+        global _LAST_FINISHED_NS
+        _LAST_FINISHED_NS = time.time_ns()
 
     output = (stdout or b"").decode("utf-8", errors="replace")[-MAX_OUTPUT_CHARS:]
     ok = not timed_out and process.returncode == 0

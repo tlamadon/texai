@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable
 
 from .agent import AgentSession, AgentUnavailable
-from .build import BuildError, BuildResult, run_build
+from .build import BuildError, BuildResult, forced, run_build
 from .config import AppConfig
 from .events import EventBus
 from .models import SelectionRef
@@ -967,14 +967,17 @@ class TurnController:
             destination.unlink()
         self.refresh_review_states()
 
-    async def rebuild(self) -> BuildResult | None:
-        """Compile the document outside a turn, for saves from the editor."""
+    async def rebuild(self, reason: str = "your save", force: bool = False) -> BuildResult | None:
+        """Compile the document outside a turn: a save from the editor, or a
+        PDF that fell behind its sources (see texai.freshness). ``force`` is
+        for a build the build tool would otherwise call up to date."""
         try:
+            argv = self.config.build_argv()
             return await run_build(
-                self.config.build_argv(),
+                forced(argv) if force else argv,
                 self.config.build_dir,
                 log_path=self.config.pdf_path.with_suffix(".log"),
-                reason="your save",
+                reason=reason,
             )
         except BuildError:
             return None

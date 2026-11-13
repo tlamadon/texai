@@ -283,7 +283,12 @@ function matchSentence(index, tokens, entry, viewer, hints) {
     while (end + 1 < raw.length && raw[end + 1][0] && /\S/.test(raw[end + 1][2])) end += 1;
   }
 
-  // The characters' boxes, gathered into one rectangle per rendered line.
+  return lineRects(viewer, entry, raw, start, end);
+}
+
+/** The boxes of raw characters `start`-`end`, gathered into one rectangle per
+    rendered line, in PDF points. Null when none of them is drawn. */
+function lineRects(viewer, entry, raw, start, end) {
   const lines = [];
   for (let i = start; i <= end; i += 1) {
     const [node, offset, ch] = raw[i];
@@ -307,6 +312,64 @@ function matchSentence(index, tokens, entry, viewer, hints) {
   if (!lines.length) return null;
   lines.sort((a, b) => a.top - b.top);
   return lines.map((line) => viewer.clientRectToPdf(entry, line));
+}
+
+// A sentence longer than this is not one: the page's text ran on through a
+// heading, a table or a float with no full stop in it.
+const MAX_SENTENCE = 1500;
+
+/**
+ * The sentence drawn under a point on a page, as the page has it: its text
+ * and one rectangle per rendered line, in PDF points. It runs from where the
+ * sentence before it stopped to its own full stop (see `stopsAt`), and never
+ * outside `within`, the paragraph's rectangle on the page, when that is given:
+ * a heading has no full stop to keep the first sentence under it out.
+ * Null when the point is on no text, or what is there is not a sentence.
+ */
+export function sentenceAt(viewer, entry, clientX, clientY, within = null) {
+  const index = textIndex(entry);
+  const caret = viewer.caretAt(clientX, clientY);
+  if (!index || !caret || caret.node.nodeType !== Node.TEXT_NODE) return null;
+  const { raw } = index;
+  const length = caret.node.textContent.length;
+  const offset = Math.min(caret.offset, Math.max(length - 1, 0));
+  const at = raw.findIndex(([node, i]) => node === caret.node && i === offset);
+  if (at === -1) return null;
+
+  // Whether a character is inside the paragraph, by where it is drawn.
+  const inside = (i) => {
+    if (!within) return true;
+    const [node, o] = raw[i];
+    if (!node) return true;
+    const range = document.createRange();
+    range.setStart(node, o);
+    range.setEnd(node, o + 1);
+    const box = range.getBoundingClientRect();
+    if (!box.height) return true;
+    const point = viewer.clientPointToPdf(entry, box.left, box.top + box.height / 2);
+    return point.y >= within.y - 1 && point.y <= within.y + within.height + 1;
+  };
+
+  let start = at;
+  while (start > 0 && at - start < MAX_SENTENCE && !stopsAt(raw, start - 1) && inside(start - 1)) {
+    start -= 1;
+  }
+  let end = at;
+  while (end < raw.length - 1 && end - at < MAX_SENTENCE && !stopsAt(raw, end) && inside(end + 1)) {
+    end += 1;
+  }
+  if (at - start >= MAX_SENTENCE || end - at >= MAX_SENTENCE) return null;
+  while (start < end && (!raw[start][0] || /\s/.test(raw[start][2]))) start += 1;
+
+  const text = raw
+    .slice(start, end + 1)
+    .map(([, , ch]) => ch)
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const rects = lineRects(viewer, entry, raw, start, end);
+  if (!rects || text.length < 2) return null;
+  return { text, rects };
 }
 
 export class AnnotationLayer {
