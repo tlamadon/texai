@@ -121,6 +121,15 @@ class ChatRequest(BaseModel):
         return self
 
 
+class RetryRequest(BaseModel):
+    """Ask again for a change that is being turned down: one new edit, or with
+    ``alternatives`` that many versions to pick from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    alternatives: int | None = Field(default=None, ge=2, le=4)
+
+
 class ProposalRequest(BaseModel):
     """A ``%@propose`` choice in the source, and what to do with it: put
     version ``option`` in place, or with no option, dismiss the choice."""

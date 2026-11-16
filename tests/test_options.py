@@ -285,3 +285,34 @@ async def test_picking_what_was_not_offered(project: Path):
         await controller.pick(offered.id, 1, 0)
     with pytest.raises(OfferError):
         await controller.pick(offered.id, 0, 7)
+
+
+async def test_fresh_versions_asks_again_with_the_ones_already_offered(project: Path):
+    controller, agent = await offered_turn(project)
+    offered = controller.turns[-1]
+
+    again = await controller.fresh_offers(offered.id)
+    await finish(controller)
+
+    assert again.id != offered.id
+    assert "offer fresh ones" in agent.prompts[-1]
+    for option in offered.offers[0]["options"]:
+        assert option["text"].strip() in agent.prompts[-1]
+
+
+async def test_retrying_a_picked_version_puts_the_text_back_and_asks_for_fresh_ones(
+    project: Path,
+):
+    controller, agent = await offered_turn(project)
+    offered = controller.turns[-1]
+    before = (project / "sections" / "model.tex").read_text()
+    await controller.pick(offered.id, 0, 1)
+    await finish(controller)
+    change = controller.session_changes()[0]
+    assert controller.can_retry(change["turnId"])
+
+    await controller.retry_change(change["id"])
+    await finish(controller)
+
+    assert "offer fresh ones" in agent.prompts[-1]
+    assert (project / "sections" / "model.tex").read_text() == before

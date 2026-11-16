@@ -68,6 +68,7 @@ export class SourceEditor {
     this.onSaved = onSaved || null;
     this.onActivate = null; // app.js hides the composer while editing
     this.onReveal = null;   // show this source line in the PDF
+    this.follow = true;     // whether a plain click does that; a Ctrl/Cmd-click always does
     this.onJump = null;     // open the go-to palette
     this.onViewMoved = null; // the buffer scrolled; scroll sync listens
     this._syncedLine = null; // the line the page is showing, while sync is on
@@ -194,6 +195,7 @@ export class SourceEditor {
     // cursor movement, so typing and arrow keys never yank the page around.
     this.cm.on('mousedown', (cm, event) => {
       if (event.button !== 0 || !this.onReveal) return;
+      if (!this.follow && !(event.metaKey || event.ctrlKey)) return;
       const where = cm.coordsChar({ left: event.clientX, top: event.clientY }, 'window');
       if (!where) return;
       // SyncTeX answers with the line; the words around the click are what get

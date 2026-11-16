@@ -32,7 +32,9 @@ back marked on the page for you to accept or reject.
 - **Take over by hand whenever you like.** Double-click a word on the page to
   edit its paragraph right there, LaTeX and all. Alt-click opens the LaTeX at
   that spot in a full editor; Cmd/Ctrl-S saves and recompiles, and the page
-  reloads where you were. Clicking in the source scrolls the PDF back to it.
+  reloads where you were. Clicking in the source scrolls the PDF back to it
+  (**View → Page follows clicks in the source** turns that off, for writing
+  beside a table that should stay in sight; Ctrl/Cmd-click still goes there).
 - **Find your way around a long paper.** A contents column beside the page lists
   the whole document — every file it pulls in, its figures and tables by caption,
   its theorems by title — and clicking one scrolls the PDF there. Cmd/Ctrl-P
@@ -372,7 +374,7 @@ sections/model.tex:9
 Each change also gets a card under it showing what the sentence used to say:
 
 ```
-sections/model.tex:9                          [Accept] [Reject] [x]
+sections/model.tex:9          [Accept] [Reject] [Retry] [×3] [x]
   …is the parameter a̶ ̶r̶e̶a̶d̶e̶r̶ ̶i̶s̶ most l̶i̶k̶e̶l̶y̶ ̶t̶o̶ ̶a̶r̶g̶u̶e̶ ̶w̶i̶t̶h̶,̶ which makes…
   …is the parameter most **often contested,** which makes…
 ```
@@ -382,9 +384,8 @@ Only the words that actually differ are struck through (red) or emphasised
 wrapped line when three words changed just makes you hunt for the difference.
 
 Clicking a highlight always shows its card, next to the band you clicked. The
-card's `x` hides it again, and clicking the highlight brings it back — including
-for changes you have already accepted, which start collapsed. Nothing blocks:
-ignore them and keep working if you would rather.
+card's `x` hides it again, and clicking the highlight brings it back. Nothing
+blocks: ignore them and keep working if you would rather.
 
 Two things to know about the card. The removed text **is not in the PDF** —
 LaTeX never typeset it, because it was removed — so it is drawn as an
@@ -412,7 +413,7 @@ Each turn's badge follows what became of its edits:
 | `applied` | edits landed and compiled, still pending review |
 | `accepted` | every change from that turn was accepted |
 | `rejected` | its changes are gone from the pending set — rolled back |
-| `mixed` | some accepted, some still pending |
+| `mixed` | some accepted, others rejected or still pending |
 | `answered` | a question; nothing changed |
 | `reverted` | the build could not be fixed, so the turn undid itself |
 
@@ -430,8 +431,37 @@ at once. When one change does both, rewording a sentence and sourcing the one
 above it, the source lands and the rewording waits. Reverting the turn still
 undoes all of it.
 
-**Accept** just marks it reviewed. Nothing blocks — ignore the markers and keep
-working if you would rather.
+**Accept** is final. The text is in the source from the moment the turn lands,
+so accepting moves nothing there; it takes the change out of the review for
+good, by making it part of the baseline. An accepted change does not come back
+to be accepted again when a later edit moves it down the file, and it can no
+longer be rejected: undoing it is for git, or for the turn's **Revert** in the
+chat. Nothing blocks — ignore the markers and keep working if you would rather.
+
+Above the versions, two switches say how to look at them. One lays them out
+**side by side**, **stacked**, or **one at a time** with arrows between them.
+The other chooses between the **changed part** and the **whole passage**: a
+request about a few words is answered with the whole paragraph, because that is
+what gets replaced, so by default only the sentences the versions disagree on
+are shown, with `…` for the rest. Picking a version still puts the whole
+passage in place. Both choices are remembered.
+
+**Fresh versions** is for when the agent offered versions and none will do. The
+button sits under the versions, on the page and on the turn's card in the chat:
+it sends the request again, listing what was already offered as what not to
+offer again, and the new versions arrive in the same place.
+
+**Retry** and **×3** on a change's card do the same after the fact. Both put
+back everything still pending from the turn that made the change and send its
+request again, with what you turned down quoted as what not to repeat.
+**Retry** asks for one new edit; **×3** asks for three versions to pick from.
+On a change that is a version you picked, **Retry** puts the original back and
+asks for fresh versions. A change nobody asked the agent for (a proposal
+settled from the margin) has neither button.
+
+**View → Accept changes automatically** skips the review: each turn's changes
+are accepted as they land, and nothing waits on the page. Off by default. What
+the turn changed is still on its card in the chat, with **Revert**.
 
 Where it is approximate, honestly:
 

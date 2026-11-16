@@ -9,6 +9,7 @@ import { getJSON, postJSON } from './api.js';
 import { showToast } from './toast.js';
 
 const STORAGE_KEY = 'texai:show-changes';
+const AUTO_KEY = 'texai:auto-accept';
 const MAX_POPOVER_TEXT = 1200;
 const MAX_CARD_TEXT = 320;
 
@@ -206,6 +207,11 @@ export class MarksLayer {
     this.state = new Map();
     this.anchors = new Map();
     this.onEdit = null; // open a change's line in the source editor
+    this.onRetry = null; // a change was sent back to be done again
+    // Take every change as it lands, with nothing to click (see setAuto).
+    this.auto = localStorage.getItem(AUTO_KEY) === '1';
+    this._accepting = false;
+    this.isBusy = () => false; // a turn is running: its work is not finished to accept
     // (file, line, page) -> the rendered lines of that line's block on a
     // beamer slide, in PDF points; [] when they are not known yet; null when
     // the page is not a slide.
@@ -232,6 +238,17 @@ export class MarksLayer {
     this._renderButton();
     if (enabled) this.refresh();
     else this.clear();
+  }
+
+  /**
+   * Accept changes as they land. The text is in the source either way; this
+   * only decides whether each change waits on the page to be looked at first.
+   * A turn can still be undone from its card in the chat, or through git.
+   */
+  setAuto(on) {
+    this.auto = !!on;
+    localStorage.setItem(AUTO_KEY, this.auto ? '1' : '0');
+    if (this.auto) this.refresh();
   }
 
   /**
@@ -266,6 +283,19 @@ export class MarksLayer {
     } catch {
       this.marks = [];
       this.pending = 0;
+    }
+    if (this.auto && this.marks.length && !this._accepting && !this.isBusy()) {
+      // Accepting empties the list, and the refresh that follows draws that.
+      this._accepting = true;
+      try {
+        await postJSON('/api/changes/accept-all', {});
+        this.marks = [];
+        this.pending = 0;
+      } catch {
+        /* still pending, and shown as such */
+      } finally {
+        this._accepting = false;
+      }
     }
     this._renderButton();
     this.draw();
@@ -439,7 +469,7 @@ export class MarksLayer {
     head.append(el('span', 'spacer'));
 
     const accept = el('button', 'mark-accept', 'Accept');
-    accept.title = 'Keep this change';
+    accept.title = 'Keep this change for good. Undoing it later is for git, or the turn\'s Revert';
     accept.addEventListener('click', (event) => {
       event.stopPropagation();
       this._act(mark, 'accept', accept);
@@ -456,7 +486,24 @@ export class MarksLayer {
       event.stopPropagation();
       this._close(mark);
     });
-    head.append(accept, reject, hide);
+    head.append(accept, reject);
+    if (mark.retry) {
+      // The request behind the change is known, so it can be asked again.
+      const retry = el('button', 'mark-retry', 'Retry');
+      retry.title = 'Put the original text back and ask for this again, done differently';
+      retry.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this._act(mark, 'retry', retry);
+      });
+      const versions = el('button', 'mark-retry', '×3');
+      versions.title = 'Put the original text back and ask for three versions to pick from';
+      versions.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this._act(mark, 'retry', versions, { alternatives: 3 });
+      });
+      head.append(retry, versions);
+    }
+    head.append(hide);
     card.append(head);
 
     if (mark.before) card.append(partsNode('mark-del', mark.beforeParts, mark.before));
@@ -483,16 +530,21 @@ export class MarksLayer {
     }
   }
 
-  async _act(mark, action, button) {
+  async _act(mark, action, button, body = {}) {
     button.disabled = true;
     try {
-      await postJSON(`/api/changes/${mark.id}/${action}`, {});
+      await postJSON(`/api/changes/${mark.id}/${action}`, body);
       if (action === 'accept') {
-        // Accepted changes collapse by default; clicking the band reopens them.
+        // Final: it leaves the review, and its mark goes with it.
         this.state.delete(mark.id);
         this.anchors.delete(mark.id);
         showToast('Change accepted.');
         await this.refresh();
+      } else if (action === 'retry') {
+        this.state.delete(mark.id);
+        this.anchors.delete(mark.id);
+        showToast(body.alternatives ? 'Asking for three versions…' : 'Asking again…');
+        this.onRetry?.(body);
       } else {
         this.state.delete(mark.id);
         this.anchors.delete(mark.id);

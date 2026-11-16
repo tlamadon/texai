@@ -24,7 +24,7 @@ from .agent import AgentSession, AgentUnavailable
 from .build import BuildError, BuildResult, forced, run_build
 from .config import AppConfig
 from .events import EventBus
-from .models import SelectionRef
+from .models import MAX_INSTRUCTION, MAX_MESSAGE, SelectionRef
 from .hunks import file_hunks, reconstruct
 from .options import OfferError, OfferStale, apply_option, offer_options, propose
 from .proposals import ProposalError, apply_proposal, dismiss_proposal, find_proposal
@@ -62,6 +62,7 @@ __all__ = ["Turn", "TurnController", "TurnBusy", "OfferError"]
 MAX_BUILD_ATTEMPTS = 3
 KEEP_SNAPSHOTS = 20
 BASELINE_ID = "baseline"
+RETRY_QUOTE = 1200  # characters of a turned-down attempt quoted back to the agent
 
 
 class TurnBusy(RuntimeError):
@@ -91,6 +92,11 @@ class Turn:
     # back to the turn that made them even after later turns renumber things.
     ranges: list[tuple[str, int, int]] = field(default_factory=list)
     review: str = "pending"  # pending | accepted | rejected | mixed
+    # What became of the changes that are no longer pending: "accepted",
+    # "rejected", or both.
+    settled: set[str] = field(default_factory=set)
+    # For a turn that put a picked version in place: the turn that offered it.
+    origin: str | None = None
     cost_usd: float | None = None
     error: str | None = None
     reverted: bool = False
@@ -153,7 +159,9 @@ class TurnController:
         # Everything changed since here is "pending review", however many turns
         # it took. Per-turn snapshots still back the whole-turn Revert.
         self._baseline: Snapshot | None = None
-        self._accepted: set[str] = set()
+        # Sources were put back without a build (see retry_change): the next
+        # turn's build covers it, unless that turn changes nothing.
+        self._unbuilt = False
         self._task: asyncio.Task[None] | None = None
         self._counter = 0
         # What the agent should hear at the start of its next turn: picks
@@ -353,6 +361,7 @@ class TurnController:
             source.selections,
             route="pick",
         )
+        turn.origin = source.id
 
         async def put_in_place(turn: Turn) -> None:
             try:
@@ -593,8 +602,13 @@ class TurnController:
             if not turn.changes:
                 # The agent answered without editing: nothing to build or undo.
                 turn.status = "failed" if turn.error else "answered"
+                if self._unbuilt:
+                    self._unbuilt = False
+                    await self._rebuild_quietly()
                 self._finish(turn)
                 return
+
+            self._unbuilt = False
 
             build = await self._build_with_retries(turn)
             watch.lap()
@@ -824,7 +838,7 @@ class TurnController:
         changes = []
         for hunk in hunks_against(self._baseline, self.config.root):
             entry = hunk.as_dict()
-            entry["status"] = "accepted" if hunk.id in self._accepted else "pending"
+            entry["status"] = "pending"
             entry["turnId"] = self._attribute(hunk.file, hunk.new_start, hunk.new_end)
             changes.append(entry)
         return changes
@@ -853,21 +867,50 @@ class TurnController:
                 # Nothing of it was ever up for review: it only attached
                 # sources or notes, which are settled as they land.
                 turn.review = "accepted" if turn.hunks else "pending"
-            elif not states:
-                # Its edits are gone from the pending set: rolled back.
-                turn.review = "rejected"
-            elif all(s == "accepted" for s in states):
+            elif states:
+                turn.review = "mixed" if "accepted" in turn.settled else "pending"
+            elif turn.settled == {"accepted"}:
                 turn.review = "accepted"
-            elif any(s == "accepted" for s in states):
+            elif "accepted" in turn.settled:
                 turn.review = "mixed"
             else:
-                turn.review = "pending"
+                # Its edits are gone from the pending set: rolled back, or
+                # written over by a later turn.
+                turn.review = "rejected"
+
+    def _settle(self, turn_id: str | None, outcome: str) -> None:
+        turn = self.get(turn_id) if turn_id else None
+        if turn is not None:
+            turn.settled.add(outcome)
 
     async def accept_change(self, hunk_id: str) -> None:
-        """Mark one change reviewed. Nothing on disk moves."""
-        if not any(c["id"] == hunk_id for c in self.session_changes()):
+        """Make one change final: it becomes part of what the review starts from.
+
+        The text is already in the source, so nothing there moves. What changes
+        is that the change is no longer pending, for good: it cannot come back
+        as a new change to accept when a later edit moves it down the file, and
+        it can no longer be rejected (git, or the turn's Revert, undoes it).
+        """
+        baseline = self._baseline
+        target = next((c for c in self.session_changes() if c["id"] == hunk_id), None)
+        if baseline is None or target is None:
             raise LookupError(hunk_id)
-        self._accepted.add(hunk_id)
+
+        relative = str(target["file"])
+        before, after = read_pair(baseline, self.config.root, relative)
+        others = [h.id for h in file_hunks(relative, before, after) if h.id != hunk_id]
+        settled = reconstruct(before, after, others, relative)
+        destination = baseline.directory / relative
+        if not settled and not (self.config.root / relative).is_file():
+            destination.unlink(missing_ok=True)  # the change was the file's removal
+            self._baseline = replace(baseline, files=baseline.files - {relative})
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(settled, encoding="utf-8")
+            if relative not in baseline.files:
+                self._baseline = replace(baseline, files=baseline.files | {relative})
+
+        self._settle(target["turnId"], "accepted")
         self.refresh_review_states()
         self.bus.publish("changes_updated", reason="accepted", hunkId=hunk_id)
 
@@ -892,10 +935,119 @@ class TurnController:
         elif path.is_file():
             path.unlink()  # the session created this file and nothing is left
 
-        self._accepted.discard(hunk_id)
+        self._settle(target["turnId"], "rejected")
         await self._rebuild_quietly()
         self.refresh_review_states()
         self.bus.publish("changes_updated", reason="rejected", hunkId=hunk_id, file=relative)
+
+    def can_retry(self, turn_id: str | None) -> bool:
+        """Whether a change from this turn has a request behind it to send
+        again: an ordinary request, or a version picked from an offer (not a
+        proposal settled from the margin, which nobody asked the agent for)."""
+        turn = self.get(turn_id) if turn_id else None
+        if turn is None:
+            return False
+        return turn.timing.get("route") != "pick" or self.get(turn.origin or "") is not None
+
+    async def retry_change(self, hunk_id: str, alternatives: int | None = None) -> Turn:
+        """Turn a change down and ask for it again, as a new turn.
+
+        Everything still pending from the turn that made the change is put
+        back, so its passages are where the request pointed, and the request
+        is sent again with the attempt that was turned down, to be done
+        differently. With ``alternatives`` it asks for that many versions to
+        pick from instead of one edit.
+        """
+        if self.busy:
+            raise TurnBusy("wait for the running turn to finish")
+        changes = self.session_changes()
+        target = next((c for c in changes if c["id"] == hunk_id), None)
+        turn = self.get(target["turnId"]) if target and target["turnId"] else None
+        if self._baseline is None or target is None:
+            raise LookupError(hunk_id)
+        if turn is None or not self.can_retry(turn.id):
+            raise ValueError("this change did not come from a request that can be sent again")
+
+        by_file: dict[str, list[str]] = {}
+        for change in changes:
+            if change["turnId"] == turn.id:
+                by_file.setdefault(str(change["file"]), []).append(str(change["id"]))
+        for relative, ids in by_file.items():
+            before, after = read_pair(self._baseline, self.config.root, relative)
+            rebuilt = reconstruct(before, after, ids, relative)
+            path = self.config.root / relative
+            if rebuilt:
+                atomic_write_text(path, rebuilt)
+            elif path.is_file():
+                path.unlink()
+        turn.settled.add("rejected")
+        self._unbuilt = True
+
+        # A version picked from an offer: what is asked again is the request
+        # that produced the offer, for fresh versions.
+        asked = self.get(turn.origin) if turn.origin else None
+        if asked is not None:
+            note = self._offered_note(asked)
+            alternatives = alternatives or 3
+        else:
+            asked = turn
+            tried = str(target["after"]).strip()
+            if len(tried) > RETRY_QUOTE:
+                tried = tried[:RETRY_QUOTE] + "…"
+            note = "An earlier attempt at this was turned down; do it differently."
+            if tried:
+                note += f" It read:\n{tried}"
+
+        try:
+            again = await self._resubmit(asked, note, alternatives)
+        except Exception:
+            self._unbuilt = False
+            await self._rebuild_quietly()
+            self.refresh_review_states()
+            self.bus.publish("changes_updated", reason="rejected", hunkId=hunk_id)
+            raise
+        self.refresh_review_states()
+        self.bus.publish("changes_updated", reason="retried", hunkId=hunk_id)
+        return again
+
+    async def fresh_offers(self, turn_id: str) -> Turn:
+        """Ask again for versions, when none of the ones a turn offered will do."""
+        if self.busy:
+            raise TurnBusy("an agent turn is already running")
+        turn = self.get(turn_id)
+        if turn is None:
+            raise KeyError(turn_id)
+        if not turn.offers:
+            raise OfferError(f"{turn_id} offered no versions")
+        count = max(len(offer["options"]) for offer in turn.offers)
+        return await self._resubmit(turn, self._offered_note(turn), count)
+
+    @staticmethod
+    def _offered_note(turn: Turn) -> str:
+        """What a turn offered, as versions not to offer again."""
+        note = "The versions offered before were not what the user wanted; offer fresh ones."
+        seen = [str(o["text"]).strip() for offer in turn.offers for o in offer["options"]]
+        if seen:
+            listed = "\n".join(f"- {text}" for text in seen)
+            note += f" Already offered:\n{listed[:RETRY_QUOTE * 2]}"
+        return note
+
+    async def _resubmit(self, turn: Turn, note: str, alternatives: int | None) -> Turn:
+        """Send a turn's request again, with a note on what to do differently."""
+        selections = []
+        for raw in turn.selections:
+            fields = dict(raw)
+            if alternatives:
+                fields["alternatives"] = alternatives
+            if fields.get("instruction"):
+                fields["instruction"] = f"{fields['instruction']}\n\n({note})"[:MAX_INSTRUCTION]
+            selections.append(SelectionRef(**fields))
+        message = turn.message
+        if message.strip() or not selections:
+            if alternatives and not selections:
+                note += f" Offer {alternatives} versions to choose from instead of editing."
+            message = f"{message}\n\n({note})".strip()[:MAX_MESSAGE]
+        return await self.submit(message, selections)
 
     @staticmethod
     def _no_text(file: str, before: str, after: str) -> bool:
@@ -984,12 +1136,15 @@ class TurnController:
 
     async def accept_all(self) -> int:
         """Close the review: everything still pending becomes the new baseline."""
-        pending = [c for c in self.session_changes() if c["status"] == "pending"]
+        if self.busy:
+            # Half a turn's work would become the baseline, and a turn that
+            # then failed to build would show its undoing as a change.
+            raise TurnBusy("wait for the running turn to finish")
+        pending = self.session_changes()
         self._baseline = take_snapshot(self.config.root, self.config.snapshots_dir, BASELINE_ID)
-        self._accepted.clear()
-        for turn in self.turns:
-            if turn.ranges:
-                turn.review = "accepted"
+        for change in pending:
+            self._settle(change["turnId"], "accepted")
+        self.refresh_review_states()
         self.bus.publish("changes_updated", reason="accepted_all", count=len(pending))
         return len(pending)
 

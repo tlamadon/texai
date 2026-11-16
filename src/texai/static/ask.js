@@ -27,7 +27,7 @@
 
 import { postJSON } from './api.js';
 import { renderMarkdown } from './markdown.js';
-import { markChosen, renderOffer } from './options.js';
+import { offerLayout, markChosen, renderOffer } from './options.js';
 import { ProgressBar, progressLabels } from './progress.js';
 import { showToast } from './toast.js';
 import { micButton, stopDictation } from './speech.js';
@@ -77,6 +77,7 @@ export class PageAsk {
     select,
     available,
     onChanges,
+    reviewing = () => true,
     onOpenChat,
     onComment,
     canComment,
@@ -89,6 +90,7 @@ export class PageAsk {
     this.select = select;
     this.available = available;
     this.onChanges = onChanges;
+    this.reviewing = reviewing; // false when changes are accepted as they land
     this.onOpenChat = onOpenChat;
     this.onComment = onComment;
     // `onEdit(passage)` opens a passage that knows its source for editing in
@@ -631,7 +633,11 @@ export class PageAsk {
       const files = changes.map((c) => c.file).join(', ');
       this.close();
       this.onChanges?.();
-      showToast(`Edited ${files} — accept or reject the change on the page.`);
+      showToast(
+        this.reviewing()
+          ? `Edited ${files} — accept or reject the change on the page.`
+          : `Edited ${files}.`
+      );
       return;
     }
     if (turn.status === 'failed' || turn.reverted) {
@@ -656,7 +662,12 @@ export class PageAsk {
     a.offers = turn.offers;
     a.offersEl.replaceChildren(
       ...turn.offers.map((offer, k) =>
-        renderOffer(offer, { onPick: (i) => this.pick(k, i), onKeep: () => this.keep(k) })
+        renderOffer(offer, {
+          onPick: (i) => this.pick(k, i),
+          onKeep: () => this.keep(k),
+          onAgain: () => this.again(),
+          onLayout: () => this.place(),
+        })
       )
     );
     a.offersEl.hidden = false;
@@ -688,6 +699,29 @@ export class PageAsk {
     }
     this._setState('working');
     this._setStatus('Rebuilding…', 'busy');
+    if (this._early?.id === a.turnId) this.turnFinished(this._early);
+    this._early = null;
+  }
+
+  /** None of the versions will do: ask for fresh ones, and wait for them here. */
+  async again() {
+    const a = this.ask;
+    if (!a || a.state !== 'choose') return;
+    this._setState('sending');
+    this._setStatus('Asking for fresh versions…', 'busy');
+    try {
+      const response = await postJSON(`/api/turns/${a.offerTurn}/again`, {});
+      if (this.ask !== a) return;
+      a.turnId = response.turn.id;
+      a.offersEl.hidden = true;
+      this._startProgress(response.turn);
+    } catch (err) {
+      if (this.ask !== a) return;
+      this._setState('choose');
+      this._setStatus(err.message || String(err), 'err');
+      return;
+    }
+    this._setState('working');
     if (this._early?.id === a.turnId) this.turnFinished(this._early);
     this._early = null;
   }
@@ -778,9 +812,10 @@ export class PageAsk {
     const left = Math.min(...onPage.map((r) => r.left));
     const bottom = Math.max(...onPage.map((r) => r.top + r.height));
     // Wide enough for the versions side by side, when there are some to pick.
-    const wanted = a.offers.length
-      ? Math.max(BOX_WIDTH, Math.max(...a.offers.map((o) => o.options.length)) * OPTION_WIDTH)
-      : BOX_WIDTH;
+    // Stacked or one at a time they need one column, a little wider to read in.
+    const columns =
+      offerLayout() === 'side' ? Math.max(0, ...a.offers.map((o) => o.options.length)) : 1.8;
+    const wanted = a.offers.length ? Math.max(BOX_WIDTH, columns * OPTION_WIDTH) : BOX_WIDTH;
     const width = Math.min(wanted, page.width - 2 * GAP);
     const x = Math.max(page.left + GAP, Math.min(left, page.left + page.width - width - GAP));
     Object.assign(a.el.style, { left: `${x}px`, top: `${bottom + GAP}px`, width: `${width}px` });

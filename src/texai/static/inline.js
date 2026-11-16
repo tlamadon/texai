@@ -316,6 +316,7 @@ export class InlineEditor {
     status.className = 'inline-edit-status';
     const mod = IS_MAC ? '⌘' : 'Ctrl';
     status.textContent = `${para.file}:${para.start} · ${mod}-Enter or click away to save · Esc to cancel`;
+    status.title = status.textContent;
     const cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.textContent = 'Cancel';

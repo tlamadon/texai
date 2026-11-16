@@ -61,6 +61,7 @@ from .models import (
     KeepRequest,
     PickRequest,
     ProposalRequest,
+    RetryRequest,
     ProvenanceRequest,
     SelectRequest,
     SelectResponse,
@@ -1025,18 +1026,20 @@ def create_app(
                     )["boxes"]
                 except (LocateError, SyncTexError):
                     boxes = []  # unlocatable changes still list in the panel
-                marks.append({**change, "boxes": boxes, "accepted": change["status"] == "accepted"})
+                marks.append({**change, "boxes": boxes, "retry": controller.can_retry(change["turnId"])})
             return marks
 
         return {
-            "pending": sum(1 for c in changes if c["status"] == "pending"),
-            "accepted": sum(1 for c in changes if c["status"] == "accepted"),
+            "pending": len(changes),
             "marks": await asyncio.to_thread(locate_all),
         }
 
     @app.post("/api/changes/accept-all")
     async def accept_all_changes() -> dict[str, Any]:
-        count = await controller.accept_all()
+        try:
+            count = await controller.accept_all()
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
         return {"ok": True, "accepted": count}
 
     @app.post("/api/changes/{hunk_id}/accept")
@@ -1056,6 +1059,21 @@ def create_app(
         except LookupError as exc:
             raise _error(404, "change_not_found", f"No pending change {hunk_id}.") from exc
         return {"ok": True}
+
+    @app.post("/api/changes/{hunk_id}/retry")
+    async def retry_change(hunk_id: str, payload: RetryRequest) -> dict[str, Any]:
+        """Turn a change down and send its request again (see retry_change)."""
+        try:
+            turn = await controller.retry_change(hunk_id, payload.alternatives)
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
+        except AgentUnavailable as exc:
+            raise _error(503, "agent_unavailable", str(exc)) from exc
+        except LookupError as exc:
+            raise _error(404, "change_not_found", f"No pending change {hunk_id}.") from exc
+        except ValueError as exc:
+            raise _error(422, "no_request", str(exc)) from exc
+        return {"ok": True, "turn": turn.as_dict()}
 
     @app.post("/api/turns/{turn_id}/revert")
     async def revert_turn(turn_id: str) -> dict[str, Any]:
@@ -1095,6 +1113,21 @@ def create_app(
             raise _error(409, "agent_busy", str(exc)) from exc
         except OfferError as exc:
             raise _error(404, "proposal_not_found", str(exc)) from exc
+        return {"ok": True, "turn": turn.as_dict()}
+
+    @app.post("/api/turns/{turn_id}/again")
+    async def fresh_offers(turn_id: str) -> dict[str, Any]:
+        """Ask for fresh versions in place of the ones a turn offered."""
+        try:
+            turn = await controller.fresh_offers(turn_id)
+        except TurnBusy as exc:
+            raise _error(409, "agent_busy", str(exc)) from exc
+        except AgentUnavailable as exc:
+            raise _error(503, "agent_unavailable", str(exc)) from exc
+        except KeyError as exc:
+            raise _error(404, "turn_not_found", f"No turn {turn_id}.") from exc
+        except OfferError as exc:
+            raise _error(404, "option_not_found", str(exc)) from exc
         return {"ok": True, "turn": turn.as_dict()}
 
     @app.post("/api/turns/{turn_id}/pick")

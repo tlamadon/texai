@@ -722,6 +722,13 @@ export class ChatPanel {
             showToast(err.message || String(err), { type: 'error' });
           }
         },
+        onAgain: async () => {
+          try {
+            await postJSON(`/api/turns/${turn.id}/again`, {});
+          } catch (err) {
+            showToast(err.message || String(err), { type: 'error' });
+          }
+        },
       });
       card.footer.append(node);
       return node;

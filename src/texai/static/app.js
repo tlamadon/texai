@@ -102,6 +102,21 @@ const chat = new ChatPanel();
   if (mic) document.getElementById('send').before(mic);
 }
 marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.acceptAll });
+marks.isBusy = () => chat.busy;
+// A change sent back to be done again runs as a turn: show it running, and the
+// versions it may come back with.
+marks.onRetry = () => {
+  setPanelVisible(true);
+  chat.setView('chat');
+};
+{
+  const toggle = document.getElementById('toggle-auto-accept');
+  toggle.setAttribute('aria-pressed', String(marks.auto));
+  toggle.addEventListener('click', () => {
+    marks.setAuto(!marks.auto);
+    toggle.setAttribute('aria-pressed', String(marks.auto));
+  });
+}
 // The page-side twin of the editor's paragraph gutter. Refreshed whenever the
 // PDF is (re)built; redrawn on every render alongside the change markers. Its
 // answer also places the author's `%@` annotations, drawn in the margins.
@@ -162,6 +177,19 @@ const jump = new QuickJump({
   onDismiss: () => editor.focus(),
 });
 editor.onJump = () => jump.toggle();
+{
+  // Whether a click in the source moves the page. Off for writing beside a
+  // table or a figure that should stay in sight.
+  const FOLLOW_KEY = 'texai:follow-source';
+  const toggle = document.getElementById('toggle-follow');
+  editor.follow = localStorage.getItem(FOLLOW_KEY) !== '0';
+  toggle.setAttribute('aria-pressed', String(editor.follow));
+  toggle.addEventListener('click', () => {
+    editor.follow = !editor.follow;
+    localStorage.setItem(FOLLOW_KEY, editor.follow ? '1' : '0');
+    toggle.setAttribute('aria-pressed', String(editor.follow));
+  });
+}
 
 editor.onSaved = () => {
   git.refresh();
@@ -213,6 +241,7 @@ ask = new PageAsk({
   onSource: (passage) => openPickedSource(passage),
   canComment: () => !chat.busy,
   onChanges: () => marks.reveal(),
+  reviewing: () => !marks.auto,
   onOpenChat: () => {
     setPanelVisible(true);
     chat.setView('chat');

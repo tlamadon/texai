@@ -309,7 +309,7 @@ async def test_rejecting_an_old_change_leaves_newer_work_alone(project: Path):
     assert (project / "sections" / "later.tex").read_text() == "later work\n"
 
 
-async def test_accepting_marks_a_change_reviewed_without_touching_disk(project: Path):
+async def test_accepting_a_change_makes_it_final(project: Path):
     bus = EventBus()
     agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
     controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
@@ -318,9 +318,93 @@ async def test_accepting_marks_a_change_reviewed_without_touching_disk(project: 
     change = controller.session_changes()[0]
     await controller.accept_change(change["id"])
 
-    after = controller.session_changes()[0]
-    assert after["status"] == "accepted"
+    # Nothing left to review, and the text is the agent's.
+    assert controller.session_changes() == []
     assert (project / "sections" / "model.tex").read_text() == "alpha\nBETA\ngamma\n"
+    with pytest.raises(LookupError):
+        await controller.reject_change(change["id"])
+
+
+async def test_an_accepted_change_does_not_come_back_when_lines_move(project: Path):
+    """A change's id carries its line. An edit above it used to turn an accepted
+    change into a new pending one, to be accepted a second time."""
+    bus = EventBus()
+    agent = ScriptedAgent(
+        bus,
+        [
+            edit(project, "alpha\nbeta\nGAMMA\n"),
+            edit(project, "ALPHA\nmore\nbeta\nGAMMA\n"),
+        ],
+    )
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "first")
+    first = controller.session_changes()[0]
+    await controller.accept_change(first["id"])
+
+    await run_to_completion(controller, "second")
+    pending = controller.session_changes()
+    assert [c["after"] for c in pending] == ["ALPHA\nmore\n"]
+    assert controller.turns[0].review == "accepted"
+
+    # Rejecting the later change leaves the accepted one in the file.
+    await controller.reject_change(pending[0]["id"])
+    assert (project / "sections" / "model.tex").read_text() == "alpha\nbeta\nGAMMA\n"
+
+
+async def test_accepting_one_change_leaves_the_others_pending(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "ALPHA\nbeta\nGAMMA\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "change both")
+    turn = controller.turns[-1]
+
+    first, second = controller.session_changes()
+    await controller.accept_change(first["id"])
+    assert [c["id"] for c in controller.session_changes()] == [second["id"]]
+    assert turn.review == "mixed"
+
+    await controller.reject_change(second["id"])
+    assert (project / "sections" / "model.tex").read_text() == "ALPHA\nbeta\ngamma\n"
+    assert turn.review == "mixed"
+
+
+async def test_retrying_a_change_puts_the_text_back_and_asks_again(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(
+        bus,
+        [
+            edit(project, "alpha\nBETA\ngamma\n"),
+            edit(project, "alpha\nbeta, again\ngamma\n"),
+        ],
+    )
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "change it")
+    change = controller.session_changes()[0]
+
+    again = await controller.retry_change(change["id"])
+    await controller._task
+    assert again.id != controller.turns[0].id
+    assert "turned down" in again.prompt and "BETA" in again.prompt
+    assert controller.turns[0].review == "rejected"
+    assert [c["after"] for c in controller.session_changes()] == ["beta, again\n"]
+
+
+async def test_retrying_with_no_new_edit_still_leaves_the_text_put_back(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(
+        bus,
+        [edit(project, "alpha\nBETA\ngamma\n"), lambda: TurnOutcome(ok=True, text="three versions")],
+    )
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "change it")
+    change = controller.session_changes()[0]
+
+    again = await controller.retry_change(change["id"], alternatives=3)
+    await controller._task
+    assert "3 versions" in again.prompt
+    assert (project / "sections" / "model.tex").read_text() == "alpha\nbeta\ngamma\n"
+    assert controller.session_changes() == []
+    assert controller._unbuilt is False
 
 
 async def test_accept_all_empties_the_review(project: Path):
@@ -351,8 +435,15 @@ async def test_turn_review_state_tracks_its_changes(project: Path):
     await controller.accept_change(change["id"])
     assert turn.review == "accepted"
 
-    await controller.reject_change(change["id"])
-    assert turn.review == "rejected"
+
+async def test_a_rejected_turn_reads_as_rejected(project: Path):
+    bus = EventBus()
+    agent = ScriptedAgent(bus, [edit(project, "alpha\nBETA\ngamma\n")])
+    controller = TurnController(make_config(project, SUCCEEDING_BUILD), bus, agent)
+    await run_to_completion(controller, "change it")
+
+    await controller.reject_change(controller.session_changes()[0]["id"])
+    assert controller.turns[-1].review == "rejected"
 
 
 async def test_a_question_turn_has_nothing_to_review(project: Path):

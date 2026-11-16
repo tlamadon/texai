@@ -1144,11 +1144,13 @@ button.toggle.active {
 .inline-edit.saving { box-shadow: 0 0 0 2px var(--warn), 0 8px 28px rgba(0, 0, 0, 0.45); }
 
 /* The strip under the box: where it came from, how to close it, what went wrong. */
+/* In the box's own flow and stuck to the bottom of the view: under a long
+   passage it would otherwise be a scroll away from the text being typed. */
 .inline-edit-bar {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
+  position: sticky;
+  bottom: 6px;
+  z-index: 3; /* above the text it rides over */
+  margin-top: 6px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1400,7 +1402,31 @@ body.offer-in-bar .ask-button { display: none; }
 .offer { display: flex; flex-direction: column; gap: 6px; }
 .offer-note { color: var(--muted); }
 .offer-options { display: flex; gap: 6px; align-items: stretch; }
-.offer.compact .offer-options { flex-direction: column; }
+.offer[data-layout="stack"] .offer-options { flex-direction: column; }
+.offer[data-layout="one"] .offer-option:not(.current) { display: none; }
+/* How the versions are shown: laid out how, and how much of each. */
+.offer-view { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.offer-switch {
+  display: flex;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.offer-switch[hidden], .offer-step[hidden] { display: none; }
+.offer-view .offer-switch button {
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.offer-view .offer-switch button + button { border-left: 1px solid var(--panel-border); }
+.offer-view .offer-switch button[aria-checked="true"] { background: var(--panel-border); color: var(--fg); }
+.offer-step { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.offer-step button { padding: 0 7px; }
+.offer-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.offer-elided { color: var(--muted); }
 .offer-keep {
   display: flex;
   align-items: center;
@@ -1521,6 +1547,8 @@ body.offer-in-bar .ask-button { display: none; }
 .mark-card .mark-accept:hover { background: rgba(63, 185, 80, 0.18); }
 .mark-card .mark-reject { border-color: var(--err); color: #ffb4ae; }
 .mark-card .mark-reject:hover { background: rgba(248, 81, 73, 0.18); }
+.mark-card .mark-retry { color: var(--muted); }
+.mark-card .mark-retry:hover { color: var(--fg); }
 .mark-card .mark-hide {
   border-color: transparent;
   background: transparent;
