@@ -21,6 +21,7 @@
 import { getJSON, postJSON } from './api.js';
 import { micButton, stopDictation } from './speech.js';
 import { sentenceAt } from './annotations.js';
+import { HIDDEN, unrendered } from './folds.js';
 
 const FALLBACK_FONT_PT = 10;
 const MIN_FONT_PT = 6;
@@ -40,13 +41,6 @@ const SCOPES = [
 ];
 const LOCAL_LINES = 5;
 const LOCAL_CHARS = 500;
-
-// What is in the source and not on the page, folded away to a small chip
-// unless asked for: texai's own annotations, and LaTeX comments.
-const HIDDEN = [
-  { kind: 'notes', key: 'texai:inline-show-notes', label: '%@', title: "texai's annotations: %@ lines and %# markers" },
-  { kind: 'comments', key: 'texai:inline-show-comments', label: '%', title: 'LaTeX comments' },
-];
 
 /** Lines `first`-`last` of a paragraph, cut down to characters [from, to) of its text. */
 function piece(para, from, to) {
@@ -113,65 +107,6 @@ export function sentenceSpan(text, index, ch) {
   const marker = /^[ \t]*%#\S+/.exec(text.slice(to, high));
   if (marker) to += marker[0].length;
   return [from, Math.max(from, to)];
-}
-
-/** Where a line's comment starts (its first unescaped %), or -1. */
-function commentAt(text) {
-  for (let i = text.indexOf('%'); i !== -1; i = text.indexOf('%', i + 1)) {
-    let slashes = 0;
-    while (i - slashes > 0 && text[i - slashes - 1] === '\\') slashes++;
-    if (slashes % 2 === 0) return i;
-  }
-  return -1;
-}
-
-/**
- * The stretches of a piece of LaTeX that never reach the page, as
- * `{ kind, from, to }` in CodeMirror positions: runs of comment-only lines
- * (taken with their line breaks, so no blank is left behind) and comments at
- * the end of a line of text. `kind` is 'notes' for what texai writes (`%@`,
- * its `%>` continuations, `%#` markers) and 'comments' for the rest.
- */
-export function unrendered(text) {
-  const lines = text.split('\n');
-  const found = [];
-  let run = null;
-  const close = () => {
-    if (!run) return;
-    const { kind, first, last } = run;
-    run = null;
-    if (last < lines.length - 1) {
-      found.push({ kind, from: { line: first, ch: 0 }, to: { line: last + 1, ch: 0 } });
-    } else if (first > 0) {
-      // Nothing after it to pull up: fold it into the end of the line before.
-      found.push({
-        kind,
-        from: { line: first - 1, ch: lines[first - 1].length },
-        to: { line: last, ch: lines[last].length },
-      });
-    }
-    // All there is: leave it showing, or the box would look empty.
-  };
-  lines.forEach((line, i) => {
-    const at = commentAt(line);
-    if (at !== -1 && !line.slice(0, at).trim()) {
-      const kind = /^%[@>#]/.test(line.slice(at)) ? 'notes' : 'comments';
-      if (run && run.kind === kind) run.last = i;
-      else {
-        close();
-        run = { kind, first: i, last: i };
-      }
-      return;
-    }
-    close();
-    // A bare % only joins two lines; there is nothing in it to hide.
-    if (at === -1 || line.slice(at).trim() === '%') return;
-    const kind = /^%#/.test(line.slice(at)) ? 'notes' : 'comments';
-    const ch = line.slice(0, at).trimEnd().length;
-    found.push({ kind, from: { line: i, ch }, to: { line: i, ch: line.length } });
-  });
-  close();
-  return found;
 }
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');

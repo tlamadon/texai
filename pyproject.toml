@@ -77,3 +77,7 @@ testpaths = ["tests"]
 addopts = "-q"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+# The README's screenshots are fetched from GitHub; no need to ship them.
+[tool.hatch.build.targets.sdist]
+exclude = ["docs/"]

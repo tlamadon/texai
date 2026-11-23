@@ -203,6 +203,10 @@ in the PDF and a **✦** appears just above the end of the selection; click it, 
 press **Cmd/Ctrl-K**, and a box opens under the passage. Type the request and
 press **Enter**.
 
+![Three versions of a selected sentence, side by side under the passage](https://raw.githubusercontent.com/tlamadon/texai/main/docs/screenshots/versions.png)
+
+*A selected sentence, asked for with ×3: three versions to pick from, showing only the sentence that changes.*
+
 ```
 select "Page breaks are where a naive line-based mapping tends to go wrong"
   ✦  →  "Make this sentence shorter and punchier."  →  Enter
@@ -738,6 +742,10 @@ Alt-click "the elasticity of substitution"  →  Source tab, sections/model.tex:
 The `file:line` label on a change card opens the same editor at that change, for
 when it is faster to fix the agent's work than to describe the fix.
 
+![An edit box open over one sentence of the abstract, with the clicked word selected](https://raw.githubusercontent.com/tlamadon/texai/main/docs/screenshots/inline-edit.png)
+
+*Double-click a word: the sentence opens as LaTeX where it sits, with that word selected.*
+
 For a small fix there is no need to leave the page: **double-click** a word and
 an editor opens over its paragraph, set in a serif at the page's size and as
 wide as its column, with that word selected. It holds the paragraph's LaTeX —
@@ -986,6 +994,10 @@ After the target, in any order:
 - `"..."` is the passage that backs the claim, copied word for word.
 - `sha:` gives the first hex digits of the PDF's SHA-256.
 - `-- ...` is a note.
+
+![The Peek tab beside the page, with the table a sentence cites outlined](https://raw.githubusercontent.com/tlamadon/texai/main/docs/screenshots/peek.png)
+
+*A sentence with a `%@src`, clicked: the Peek tab opens on what backs it, here the table it cites.*
 
 Each sourced sentence gets a faint dotted underline from its first word to its
 last, and a small mark in the right margin, level with the line it ends on.

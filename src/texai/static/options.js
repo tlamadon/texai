@@ -9,8 +9,21 @@
 //
 // Or none of them, yet: "Keep as proposal" writes the versions into the source
 // as a %@propose choice (/api/turns/<id>/keep), to decide later from the margin.
+//
+// texai's annotations and LaTeX comments are folded to a chip each, as in the
+// inline editor and by the same two switches, so a paragraph dense with %@src
+// lines shows its prose; a chip is marked when the version changes what it hides.
+
+import { HIDDEN, commentSpans, foldShown, unrenderedSpans } from './folds.js';
 
 const MAX_DIFF_CELLS = 250_000; // past this, show the text unmarked
+
+// A folded stretch stands in the texts being compared as one token, between
+// two private-use characters, which LaTeX source does not contain.
+const FOLD_OPEN = '\uE000';
+const FOLD_CLOSE = '\uE001';
+const FOLD_TOKEN = /^\uE000(\d+)\uE001$/;
+const TOKENS = /\uE000\d+\uE001|\s+|[^\s\uE000]+/g;
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -43,7 +56,7 @@ export function offerLayout(compact = false) {
 const CLOSERS = `["'”’)}\\]]*`;
 const SENTENCE_END = new RegExp(`[.!?]${CLOSERS}\\s+|\\n[ \\t]*\\n\\s*`, 'g');
 const ENDS_SENTENCE = new RegExp(`[.!?]${CLOSERS}$`);
-const NEXT_END = new RegExp(`[.!?]${CLOSERS}(?=\\s|$)|\\n[ \\t]*\\n`);
+const NEXT_END = new RegExp(`[.!?]${CLOSERS}(?=\\s|$)|\\n[ \\t]*\\n`, 'g');
 
 /**
  * The part of a passage its versions disagree on, widened to whole sentences:
@@ -64,19 +77,31 @@ export function changedSpan(texts) {
   ) {
     tail++;
   }
+  // A full stop in a comment ends no sentence: the %@src lines above a sentence
+  // go with it, and the cut never lands inside one.
+  const comments = commentSpans(first);
+  const inComment = (at) => comments.some(([from, to]) => at >= from && at < to);
   // Back to the start of the sentence the first difference is in.
   let start = 0;
   for (const found of first.slice(0, head).matchAll(SENTENCE_END)) {
-    start = found.index + found[0].length;
+    if (!inComment(found.index)) start = found.index + found[0].length;
   }
   // On to the end of the sentence the last difference is in.
-  const shared = first.slice(first.length - tail);
+  const base = first.length - tail;
+  const shared = first.slice(base);
   let keep = shared.length;
-  if (/^\s/.test(shared) && texts.every((t) => ENDS_SENTENCE.test(t.slice(0, t.length - tail)))) {
+  if (
+    /^\s/.test(shared) &&
+    !inComment(base - 1) &&
+    texts.every((t) => ENDS_SENTENCE.test(t.slice(0, t.length - tail)))
+  ) {
     keep = 0; // the difference ends its sentence already
   } else {
-    const end = NEXT_END.exec(shared);
-    if (end) keep = end.index + (end[0].startsWith('\n') ? 0 : end[0].length);
+    for (const end of shared.matchAll(NEXT_END)) {
+      if (inComment(base + end.index)) continue;
+      keep = end.index + (end[0].startsWith('\n') ? 0 : end[0].length);
+      break;
+    }
   }
   return { start, drop: tail - keep };
 }
@@ -151,7 +176,21 @@ export function renderOffer(offer, { onPick, onKeep, onAgain, onLayout, compact 
   earlier.addEventListener('click', move(-1));
   later.addEventListener('click', move(1));
   step.append(earlier, count, later);
-  view.append(layouts, scopes, step);
+  // Show or hide what is folded: the inline editor's switches, and its setting.
+  const folders = HIDDEN.map(({ kind, key, label, title }) => {
+    const button = el('button', 'offer-fold', label);
+    button.type = 'button';
+    button.title = `Show or hide ${title}`;
+    button.dataset.kind = kind;
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      localStorage.setItem(key, foldShown(kind) ? '0' : '1');
+      draw();
+      onLayout?.(layout);
+    });
+    return button;
+  });
+  view.append(layouts, scopes, ...folders, step);
   root.append(view);
 
   const row = el('div', 'offer-options');
@@ -185,13 +224,19 @@ export function renderOffer(offer, { onPick, onKeep, onAgain, onLayout, compact 
     count.textContent = `${shown + 1} / ${offer.options.length}`;
     const cut = trims && scope === 'changed';
     const part = (text) => (cut ? text.slice(span.start, text.length - span.drop) : text);
+    const folds = foldTable();
+    const before = folds.hide(part(offer.original));
     offer.options.forEach((option, i) => {
       row.children[i].classList.toggle('current', i === shown);
-      const nodes = marked(part(offer.original), part(option.text));
+      const nodes = marked(before, folds.hide(part(option.text)), folds);
       if (cut && span.start > 0) nodes.unshift(el('span', 'offer-elided', '… '));
       if (cut && span.drop > 0) nodes.push(el('span', 'offer-elided', ' …'));
       texts[i].replaceChildren(...nodes);
     });
+    for (const button of folders) {
+      button.hidden = !folds.kinds.has(button.dataset.kind);
+      button.setAttribute('aria-pressed', String(foldShown(button.dataset.kind)));
+    }
   }
   draw();
 
@@ -238,28 +283,80 @@ export function markChosen(node, i) {
 }
 
 /**
- * `after` as text nodes, with the words not in `before` wrapped in <mark>. A
- * word-level longest common subsequence: whitespace never counts as a change,
- * and the space between two changed words joins them into one mark.
+ * What one drawing of an offer folds away. `hide(text)` puts a placeholder
+ * token where each stretch that is not shown sits; stretches with the same text
+ * share a token, in the original and the versions alike, so the comparison
+ * sees an unchanged comment as an unchanged word. `kinds` is what was found,
+ * folded or not, for the switches.
  */
-function marked(before, after) {
-  const tokens = after.match(/\s+|\S+/g) || [];
-  const words = (text) => text.match(/\S+/g) || [];
-  const old = words(before);
-  const now = tokens.filter((t) => !/^\s/.test(t));
-  const kept = common(old, now);
-  if (!kept) return [document.createTextNode(after)];
+function foldTable() {
+  const ids = new Map();
+  const stretches = [];
+  const kinds = new Set();
+  return {
+    kinds,
+    hide(text) {
+      let out = '';
+      let at = 0;
+      for (const { kind, from, to } of unrenderedSpans(text)) {
+        kinds.add(kind);
+        if (foldShown(kind)) continue;
+        const stretch = text.slice(from, to);
+        const key = `${kind}:${stretch}`;
+        if (!ids.has(key)) {
+          ids.set(key, stretches.length);
+          stretches.push({ kind, text: stretch });
+        }
+        out += `${text.slice(at, from)}${FOLD_OPEN}${ids.get(key)}${FOLD_CLOSE}`;
+        at = to;
+      }
+      return out + text.slice(at);
+    },
+    /** The stretch a token stands for, or null for a word. */
+    stretch(token) {
+      const found = FOLD_TOKEN.exec(token);
+      return found ? stretches[Number(found[1])] : null;
+    },
+  };
+}
+
+/** A folded stretch as a chip, its text in the title. A click shows it, and picks nothing. */
+function foldChip({ kind, text }, changed) {
+  const { label } = HIDDEN.find((h) => h.kind === kind);
+  const chip = el('span', `offer-folded ${kind}${changed ? ' changed' : ''}`, label);
+  chip.title = `${text.trim()}\n(${changed ? 'changed in this version; ' : ''}click to show)`;
+  chip.addEventListener('click', (event) => {
+    event.stopPropagation();
+    chip.replaceWith(el('span', changed ? 'w-changed' : 'w-same', text));
+  });
+  return chip;
+}
+
+/**
+ * `after` as spans, as a change's card on the page shows it: the words not in
+ * `before` marked, the rest dimmed. A word-level longest common subsequence:
+ * whitespace never counts as a change, and the space between two changed
+ * words joins them into one mark. Folded stretches are tokens of their own,
+ * drawn as chips.
+ */
+function marked(before, after, folds) {
+  const tokens = after.match(TOKENS) || [];
+  const words = (text) => (text.match(TOKENS) || []).filter((t) => !/^\s/.test(t));
+  const kept = common(words(before), words(after)); // null: too long to compare, so nothing marked
 
   const nodes = [];
   let plain = '';
   let changed = '';
   let pending = ''; // whitespace after a changed word, not yet placed
   let w = 0;
+  const flushPlain = () => {
+    if (plain) nodes.push(el('span', 'w-same', plain));
+    plain = '';
+  };
   const flushChanged = () => {
     if (!changed) return;
-    nodes.push(document.createTextNode(plain));
-    nodes.push(el('mark', 'offer-ins', changed));
-    plain = '';
+    flushPlain();
+    nodes.push(el('span', 'w-changed', changed));
     changed = '';
   };
   for (const token of tokens) {
@@ -268,7 +365,18 @@ function marked(before, after) {
       else plain += token;
       continue;
     }
-    if (kept.has(w++)) {
+    const same = !kept || kept.has(w);
+    w++;
+    const stretch = folds.stretch(token);
+    if (stretch) {
+      flushChanged();
+      plain += pending;
+      pending = '';
+      flushPlain();
+      nodes.push(foldChip(stretch, !same));
+      continue;
+    }
+    if (same) {
       flushChanged();
       plain += pending + token;
     } else {
@@ -278,7 +386,7 @@ function marked(before, after) {
   }
   flushChanged();
   plain += pending;
-  if (plain) nodes.push(document.createTextNode(plain));
+  flushPlain();
   return nodes;
 }
 
