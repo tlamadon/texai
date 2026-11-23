@@ -20,6 +20,7 @@
 
 import { getJSON, postJSON } from './api.js';
 import { micButton, stopDictation } from './speech.js';
+import { sentenceAt } from './annotations.js';
 
 const FALLBACK_FONT_PT = 10;
 const MIN_FONT_PT = 6;
@@ -27,6 +28,151 @@ const MAX_FONT_PT = 24;
 const PAD_PX = 6; // the box reaches this far past the text column, so the text inside lines up with it
 // A saved box waits this long for the rebuilt PDF to arrive before closing anyway.
 const SETTLE_MS = 6000;
+
+// How much the box opens on. A long paragraph is a lot of LaTeX to be handed
+// for the sake of one word, so past these sizes it opens on the sentence that
+// was clicked; the bar widens it to the paragraph, or narrows it to the line.
+const SCOPE_KEY = 'texai:inline-scope';
+const SCOPES = [
+  { key: 'line', label: 'line', title: 'Only the source line that was clicked' },
+  { key: 'sentence', label: 'sentence', title: 'The sentence that was clicked: its lines in the source' },
+  { key: 'paragraph', label: 'paragraph', title: 'The whole paragraph' },
+];
+const LOCAL_LINES = 5;
+const LOCAL_CHARS = 500;
+
+// What is in the source and not on the page, folded away to a small chip
+// unless asked for: texai's own annotations, and LaTeX comments.
+const HIDDEN = [
+  { kind: 'notes', key: 'texai:inline-show-notes', label: '%@', title: "texai's annotations: %@ lines and %# markers" },
+  { kind: 'comments', key: 'texai:inline-show-comments', label: '%', title: 'LaTeX comments' },
+];
+
+/** Lines `first`-`last` of a paragraph, cut down to characters [from, to) of its text. */
+function piece(para, from, to) {
+  const text = para.text;
+  const lineStart = text.lastIndexOf('\n', from - 1) + 1;
+  const next = text.indexOf('\n', Math.max(from, to - 1));
+  const lineEnd = next === -1 ? text.length : next;
+  return {
+    start: para.start + text.slice(0, from).split('\n').length - 1,
+    end: para.start + text.slice(0, Math.max(from, to - 1)).split('\n').length - 1,
+    // What shares those lines and stays as it is: written back around the edit.
+    head: text.slice(lineStart, from),
+    tail: text.slice(to, lineEnd),
+    text: text.slice(from, to),
+  };
+}
+
+/** The characters of line `index` (from 0) of a text. */
+function lineSpan(text, index) {
+  let from = 0;
+  for (let i = 0; i < index; i++) from = text.indexOf('\n', from) + 1;
+  const next = text.indexOf('\n', from);
+  return [from, next === -1 ? text.length : next];
+}
+
+const SENTENCE_STOP = /[.!?]["'”’)}\]]*(?=\s|$)/g;
+// A full stop that ends an abbreviation, not a sentence.
+const ABBREVIATION = /(?:\b(?:e\.g|i\.e|cf|vs|etc|al|Fig|Eq|Sec|Tab|resp|approx)|\b[A-Z])\.$/;
+
+/**
+ * The characters of the sentence at column `ch` of line `index` in a
+ * paragraph's source: from the end of the sentence before it to its own full
+ * stop, with a `%#` marker that follows on the same line. A comment line is a
+ * wall on either side: an annotation belongs to what it is written above.
+ */
+export function sentenceSpan(text, index, ch) {
+  const [lineFrom, lineTo] = lineSpan(text, index);
+  const at = Math.min(lineTo, lineFrom + Math.max(0, ch));
+  // Walls: the stretches no sentence runs across.
+  let low = 0;
+  let high = text.length;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    const end = offset + line.length;
+    if (/^\s*%/.test(line)) {
+      if (end < at) low = Math.min(text.length, end + 1);
+      else if (offset > at) high = Math.min(high, Math.max(0, offset - 1));
+      else return [offset, end]; // the click is on the comment itself
+    }
+    offset = end + 1;
+  }
+  let from = low;
+  let to = high;
+  for (const stop of text.slice(low, high).matchAll(SENTENCE_STOP)) {
+    const end = low + stop.index + stop[0].length;
+    if (ABBREVIATION.test(text.slice(low, low + stop.index + 1))) continue;
+    if (end <= at) from = end;
+    else {
+      to = end;
+      break;
+    }
+  }
+  while (from < to && /\s/.test(text[from])) from++;
+  const marker = /^[ \t]*%#\S+/.exec(text.slice(to, high));
+  if (marker) to += marker[0].length;
+  return [from, Math.max(from, to)];
+}
+
+/** Where a line's comment starts (its first unescaped %), or -1. */
+function commentAt(text) {
+  for (let i = text.indexOf('%'); i !== -1; i = text.indexOf('%', i + 1)) {
+    let slashes = 0;
+    while (i - slashes > 0 && text[i - slashes - 1] === '\\') slashes++;
+    if (slashes % 2 === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The stretches of a piece of LaTeX that never reach the page, as
+ * `{ kind, from, to }` in CodeMirror positions: runs of comment-only lines
+ * (taken with their line breaks, so no blank is left behind) and comments at
+ * the end of a line of text. `kind` is 'notes' for what texai writes (`%@`,
+ * its `%>` continuations, `%#` markers) and 'comments' for the rest.
+ */
+export function unrendered(text) {
+  const lines = text.split('\n');
+  const found = [];
+  let run = null;
+  const close = () => {
+    if (!run) return;
+    const { kind, first, last } = run;
+    run = null;
+    if (last < lines.length - 1) {
+      found.push({ kind, from: { line: first, ch: 0 }, to: { line: last + 1, ch: 0 } });
+    } else if (first > 0) {
+      // Nothing after it to pull up: fold it into the end of the line before.
+      found.push({
+        kind,
+        from: { line: first - 1, ch: lines[first - 1].length },
+        to: { line: last, ch: lines[last].length },
+      });
+    }
+    // All there is: leave it showing, or the box would look empty.
+  };
+  lines.forEach((line, i) => {
+    const at = commentAt(line);
+    if (at !== -1 && !line.slice(0, at).trim()) {
+      const kind = /^%[@>#]/.test(line.slice(at)) ? 'notes' : 'comments';
+      if (run && run.kind === kind) run.last = i;
+      else {
+        close();
+        run = { kind, first: i, last: i };
+      }
+      return;
+    }
+    close();
+    // A bare % only joins two lines; there is nothing in it to hide.
+    if (at === -1 || line.slice(at).trim() === '%') return;
+    const kind = /^%#/.test(line.slice(at)) ? 'notes' : 'comments';
+    const ch = line.slice(0, at).trimEnd().length;
+    found.push({ kind, from: { line: i, ch }, to: { line: i, ch: line.length } });
+  });
+  close();
+  return found;
+}
 
 const IS_MAC = navigator.platform.toUpperCase().includes('MAC');
 
@@ -140,21 +286,118 @@ export class InlineEditor {
     if (token !== this._opening || this.session) return;
 
     const click = this.viewer.clientPointToPdf(entry, clientX, clientY);
+    const paraBox = this._boxFor(entry, para, click, fontPt);
+    // The pieces the box can be opened on, innermost first, each as the lines
+    // it is in and what of those lines lies outside it.
+    const at = Math.min(para.end, Math.max(para.start, where.line));
+    const pieces = {
+      paragraph: piece(para, 0, para.text.length),
+      line: piece(para, ...lineSpan(para.text, at - para.start)),
+      sentence: piece(para, ...sentenceSpan(para.text, at - para.start, where.word ? where.column - 1 : 0)),
+    };
+    // Where each sits: the column is the paragraph's, the height its own.
+    const near = { ...paraBox, y: Math.max(paraBox.y, click.y - fontPt), height: fontPt * 1.4 };
+    const boxes = { paragraph: paraBox, line: near, sentence: near };
+    const drawn = sentenceAt(this.viewer, entry, clientX, clientY, paraBox);
+    if (drawn?.rects?.length) {
+      const top = Math.min(...drawn.rects.map((r) => r.y));
+      const bottom = Math.max(...drawn.rects.map((r) => r.y + r.height));
+      boxes.sentence = { ...paraBox, y: top, height: bottom - top };
+    }
+
+    const stored = localStorage.getItem(SCOPE_KEY);
+    const long = para.end - para.start + 1 > LOCAL_LINES || para.text.length > LOCAL_CHARS;
+    const scope = SCOPES.some((s) => s.key === stored) ? stored : long ? 'sentence' : 'paragraph';
+    const shown = pieces[scope];
+
     this.session = {
       file: para.file,
-      start: para.start,
-      end: para.end,
-      original: para.text,
+      ...shown,
+      original: shown.text,
       page: entry.num,
-      box: this._boxFor(entry, para, click, fontPt),
+      box: boxes[scope],
       fontPt,
+      scope,
+      pieces,
+      boxes,
       state: 'editing',
       reloaded: false,
       settle: null,
-      ...this._build(para),
+      hidden: [],
+      ...this._build({ ...para, ...shown }, { scoped: true }),
     };
+    this._setStatus(this._where(this.session), '');
+    this._showScope();
+    this._fold();
     this.place();
     this._putCursor(where);
+  }
+
+  /** Open the box on more, or less, of the passage: its line, sentence or paragraph. */
+  rescope(scope) {
+    const s = this.session;
+    if (!s?.pieces || s.state !== 'editing' || scope === s.scope) return;
+    localStorage.setItem(SCOPE_KEY, scope);
+    if (s.saved || s.cm.getValue() !== s.original) {
+      // The edit belongs to the lines it was made in.
+      this._setStatus('Save or cancel this edit first; the choice is kept for the next one.', 'err');
+      return;
+    }
+    const shown = s.pieces[scope];
+    Object.assign(s, shown, { original: shown.text, scope, box: s.boxes[scope] });
+    s.cm.setValue(shown.text);
+    s.cm.clearHistory();
+    this._setStatus(this._where(s), '');
+    this._showScope();
+    this._fold();
+    this.place();
+    s.cm.focus();
+  }
+
+  _where(s) {
+    const mod = IS_MAC ? '⌘' : 'Ctrl';
+    const lines = s.end > s.start ? `${s.start}-${s.end}` : `${s.start}`;
+    return `${s.file}:${lines} · ${mod}-Enter or click away to save · Esc to cancel`;
+  }
+
+  _showScope() {
+    const s = this.session;
+    for (const button of s.scopes?.children || []) {
+      button.setAttribute('aria-checked', String(button.dataset.key === s.scope));
+    }
+  }
+
+  /**
+   * Fold away what the page does not show, down to a chip each: the text is
+   * still in the box, and saved with it, only out of the way of the prose. A
+   * click on a chip opens that one; the bar's toggles show or hide them all.
+   */
+  _fold() {
+    const s = this.session;
+    if (!s) return;
+    for (const mark of s.hidden) mark.clear();
+    s.hidden = [];
+    const found = unrendered(s.cm.getValue());
+    for (const { kind, key, label } of HIDDEN) {
+      const toggle = s.toggles[kind];
+      const shown = localStorage.getItem(key) === '1';
+      toggle.hidden = !found.some((f) => f.kind === kind);
+      toggle.setAttribute('aria-pressed', String(shown));
+      if (shown) continue;
+      for (const { from, to } of found.filter((f) => f.kind === kind)) {
+        const chip = document.createElement('span');
+        chip.className = `inline-folded ${kind}`;
+        chip.textContent = label;
+        chip.title = `${s.cm.getRange(from, to).trim()}\n(click to show)`;
+        const mark = s.cm.markText(from, to, { replacedWith: chip, atomic: true });
+        chip.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+          mark.clear();
+        });
+        s.hidden.push(mark);
+      }
+    }
+    s.cm.refresh();
   }
 
   /**
@@ -230,8 +473,10 @@ export class InlineEditor {
       state: 'editing',
       reloaded: false,
       settle: null,
+      hidden: [],
       ...this._build(para),
     };
+    this._fold();
     this.place();
     const { cm } = this.session;
     cm.focus();
@@ -303,7 +548,7 @@ export class InlineEditor {
 
   /* ---------------- the box ---------------- */
 
-  _build(para) {
+  _build(para, { scoped = false } = {}) {
     const el = document.createElement('div');
     el.className = 'inline-edit';
 
@@ -326,7 +571,43 @@ export class InlineEditor {
     save.className = 'primary';
     save.textContent = 'Save';
     save.addEventListener('click', () => this.commit());
-    bar.append(status, cancel, save);
+    bar.append(status);
+    // How much of the passage: only where the source leaves a choice (a block
+    // of a slide is the block).
+    let scopes = null;
+    if (scoped) {
+      scopes = document.createElement('div');
+      scopes.className = 'inline-edit-switch';
+      scopes.setAttribute('role', 'radiogroup');
+      scopes.setAttribute('aria-label', 'How much to edit');
+      for (const { key, label, title } of SCOPES) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.title = title;
+        button.dataset.key = key;
+        button.setAttribute('role', 'radio');
+        button.addEventListener('click', () => this.rescope(key));
+        scopes.append(button);
+      }
+      bar.append(scopes);
+    }
+    const toggles = {};
+    for (const { kind, key, label, title } of HIDDEN) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'inline-edit-fold';
+      button.textContent = label;
+      button.title = `Show or hide ${title}`;
+      button.addEventListener('click', () => {
+        localStorage.setItem(key, localStorage.getItem(key) === '1' ? '0' : '1');
+        this._fold();
+        this.session?.cm.focus();
+      });
+      toggles[kind] = button;
+      bar.append(button);
+    }
+    bar.append(cancel, save);
 
     el.append(host, bar);
     this.container.append(el);
@@ -349,7 +630,7 @@ export class InlineEditor {
     // Dictate into the box: words go in at the caret, as LaTeX's plain text.
     const mic = micButton({ cm, onError: (message) => this._setStatus(message, 'err') });
     if (mic) cancel.before(mic);
-    return { el, cm, status, save };
+    return { el, cm, status, save, scopes, toggles };
   }
 
   /** The caret where the double-click was, with the word selected as a double-click selects it. */
@@ -362,7 +643,9 @@ export class InlineEditor {
     }
     const line = where.line - start;
     const text = cm.getLine(line) || '';
-    const ch = where.word ? Math.max(0, Math.min(text.length, where.column - 1)) : 0;
+    // The box may begin partway along its first line.
+    const lead = line === 0 ? (this.session.head || '').length : 0;
+    const ch = where.word ? Math.max(0, Math.min(text.length, where.column - 1 - lead)) : 0;
     const match = where.word ? /^[\p{L}\p{N}][\p{L}\p{N}'-]*/u.exec(text.slice(ch)) : null;
     if (match) cm.setSelection({ line, ch }, { line, ch: ch + match[0].length });
     else cm.setCursor({ line, ch });
@@ -408,12 +691,15 @@ export class InlineEditor {
     this._setStatus('Saving and rebuilding…', 'busy');
     let result;
     try {
+      const head = s.head || '';
+      const tail = s.tail || '';
       result = await postJSON('/api/paragraph', {
         file: s.file,
         start: s.start,
         end: s.end,
-        original: s.original,
-        text,
+        // Whole lines travel; a sentence goes back between its neighbours.
+        original: head + s.original + tail,
+        text: head + text + tail,
       });
     } catch (err) {
       if (this.session !== s) return;
@@ -432,7 +718,8 @@ export class InlineEditor {
     // From here on the paragraph on disk is the new one, whatever the build did.
     s.start = result.start;
     s.end = result.end;
-    s.original = result.text;
+    s.original = s.head || s.tail ? text : result.text;
+    s.saved = true;
 
     const build = result.build || {};
     if (!build.ok) {

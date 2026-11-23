@@ -14,6 +14,7 @@
 import { postJSON } from './api.js';
 import { describeSource, shortAuthors, sourceTarget } from './annotations.js';
 import { markChosen, renderOffer } from './options.js';
+import { renderMarkdown } from './markdown.js';
 import { PdfViewer } from './viewer.js';
 
 const KIND = { label: 'This paper', file: 'Project file', paper: 'Paper' };
@@ -90,6 +91,7 @@ export class PeekPanel {
     const token = ++this.token;
     const { source } = item;
     this.item = item;
+    this.rawMarkdown = false; // each source opens as its preview
     this._header(source, null);
     this._status('Looking it up…');
     let answer;
@@ -150,6 +152,18 @@ export class PeekPanel {
     button('Edit', `Open ${file}:${line}, where this %@src is written`, () =>
       this.onEdit?.(file, line)
     );
+    if (answer?.view === 'text' && isMarkdown(answer.path)) {
+      // A Markdown source reads as a document; its source is one click away.
+      const flip = el('button', 'ghost', this.rawMarkdown ? 'Preview' : 'Source');
+      flip.type = 'button';
+      flip.title = 'Switch between the rendered document and its Markdown source';
+      flip.addEventListener('click', () => {
+        this.rawMarkdown = !this.rawMarkdown;
+        flip.textContent = this.rawMarkdown ? 'Preview' : 'Source';
+        this._showText(answer);
+      });
+      actions.append(flip);
+    }
     if (answer?.view === 'pdf' && source.type === 'label' && answer.boxes?.length) {
       button('Go there', 'Move the page to it', () =>
         this.onShowInPaper?.({ found: true, file: answer.file, line: answer.line, page: answer.page, boxes: answer.boxes })
@@ -457,6 +471,32 @@ export class PeekPanel {
     const { text } = this.els;
     text.replaceChildren();
     const lines = answer.text.split('\n');
+    const preview = isMarkdown(answer.path) && !this.rawMarkdown;
+    text.classList.toggle('peek-preview', preview);
+    if (preview) {
+      const doc = el('div', 'agent-text peek-markdown');
+      doc.append(renderMarkdown(answer.text));
+      text.append(doc);
+      text.scrollTop = 0;
+      // The lines the source names, found again in the rendered text by their
+      // opening words: good enough to land on the right block.
+      const cited = source.start ? lines.slice(source.start - 1, source.end || source.start) : [];
+      const probe = cited
+        .map((line) => line.replace(/^[\s>#*+\-\d.)]+/, '').replace(/[*_`[\]]/g, '').trim())
+        .find((line) => line.length > 3);
+      const blocks = [...doc.querySelectorAll('p, li, .md-h, pre, blockquote, td')];
+      const flat = (value) => value.replace(/\s+/g, ' ').toLowerCase();
+      const hit = probe && blocks.find((b) => flat(b.textContent).includes(flat(probe).slice(0, 40)));
+      if (hit) {
+        hit.classList.add('hit');
+        text.scrollTop = Math.max(0, hit.offsetTop - text.clientHeight * 0.3);
+      }
+      const notes = [];
+      if (source.start && !hit) notes.push(`Lines ${source.start}${source.end ? `-${source.end}` : ''} are marked in Source.`);
+      if (answer.truncated) notes.push('Only the start of this file is shown.');
+      this._status(notes.join(' '), answer.truncated ? 'warn' : '');
+      return;
+    }
     let first = null;
     lines.forEach((line, i) => {
       const n = i + 1;
@@ -481,6 +521,11 @@ export class PeekPanel {
     this.els.image.src = answer.url;
     this._status('');
   }
+}
+
+/** Whether a path names a Markdown document. */
+function isMarkdown(path) {
+  return /\.(md|markdown|mdown|mkd)$/i.test(path || '');
 }
 
 function clampPage(page, count) {

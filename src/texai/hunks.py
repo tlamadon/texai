@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, Iterable
 
-__all__ = ["Hunk", "file_hunks", "reconstruct", "word_diff"]
+__all__ = ["Hunk", "file_hunks", "inline_diff", "reconstruct", "word_diff"]
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,7 @@ class Hunk:
             "after": self.after,
             "beforeParts": before_parts,
             "afterParts": after_parts,
+            "parts": inline_diff(self.before, self.after),
             "newStart": self.new_start,
             "newEnd": self.new_end,
             "oldStart": self.old_start,
@@ -100,6 +101,35 @@ def word_diff(before: str, after: str) -> tuple[list[dict[str, Any]], list[dict[
         push(after_parts, "".join(new[j1:j2]), tag != "equal")
 
     return before_parts, after_parts
+
+
+def inline_diff(before: str, after: str) -> list[dict[str, str]]:
+    """The two strings as one run of text: what stayed, what went, what came.
+
+    The same word-level comparison as :func:`word_diff`, kept in one sequence,
+    ``[{"text": ..., "op": "same" | "del" | "ins"}, ...]``, so a change can be
+    read in place (the old words struck through where the new ones stand)
+    without the unchanged text being shown twice.
+    """
+    old = _WORDS.findall(before)
+    new = _WORDS.findall(after)
+    parts: list[dict[str, str]] = []
+
+    def push(text: str, op: str) -> None:
+        if not text:
+            return
+        if parts and parts[-1]["op"] == op:
+            parts[-1]["text"] += text
+        else:
+            parts.append({"text": text, "op": op})
+
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, new).get_opcodes():
+        if tag == "equal":
+            push("".join(new[j1:j2]), "same")
+            continue
+        push("".join(old[i1:i2]), "del")
+        push("".join(new[j1:j2]), "ins")
+    return parts
 
 
 def file_hunks(file: str, before_text: str, after_text: str) -> list[Hunk]:

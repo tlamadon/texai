@@ -11,6 +11,7 @@ import { InlineEditor } from './inline.js';
 import { ViewHistory } from './history.js';
 import { SourceEditor } from './editor.js';
 import { QuickJump } from './jump.js';
+import { DocumentAsk } from './docask.js';
 import { MarksLayer, narrowRects } from './marks.js';
 import { OutlinePanel } from './outline.js';
 import { ParagraphGuide } from './paraguide.js';
@@ -103,6 +104,18 @@ const chat = new ChatPanel();
 }
 marks = new MarksLayer({ viewer, button: els.toggleMarks, acceptAllButton: els.acceptAll });
 marks.isBusy = () => chat.busy;
+// The toolbar's ✦: a request about the whole document, shown running in the chat.
+const docAsk = new DocumentAsk({
+  button: document.getElementById('doc-ask'),
+  send: async (text) => {
+    const taken = await chat.ask(text);
+    if (taken) {
+      setPanelVisible(true);
+      chat.setView('chat');
+    }
+    return taken;
+  },
+});
 // A change sent back to be done again runs as a turn: show it running, and the
 // versions it may come back with.
 marks.onRetry = () => {
@@ -1118,7 +1131,7 @@ async function boot() {
 // Read-only handles; nothing here is part of the page's own control flow.
 window.__texai = {
   viewer, chat, marks, paraGuide, notes, editor, git, jump, contents, project, refreshContents,
-  history: viewHistory, scrollSync, inline, ask, setPanelVisible,
+  history: viewHistory, scrollSync, inline, ask, setPanelVisible, peek,
 };
 
 boot().catch((err) => showEmpty(`Startup failed: ${err.message}`, true));

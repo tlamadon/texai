@@ -152,7 +152,31 @@ button.update-pill:hover:not(:disabled) { background: rgba(63, 185, 80, 0.15); }
 .conn.stale::before { background: var(--err); }
 
 /* What is drawn over the page, behind one button (see app.js). */
+/* Pick wears the sight it aims with. */
+.toolbar > #pick-block::before { content: "\2316"; margin-right: 5px; }
 .view-wrap { position: relative; display: flex; }
+/* The toolbar's ✦, and the box it opens for a request about the whole document. */
+.toolbar .doc-ask { color: var(--accent); font-size: 14px; line-height: 1; padding: 4px 9px; }
+.doc-ask-menu {
+  position: fixed; /* placed by docask.js, clear of the window's edges */
+  right: auto;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(380px, calc(100vw - 16px));
+  padding: 8px;
+}
+.doc-ask-menu[hidden] { display: none; }
+.doc-ask-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.editor-menu .doc-ask-actions .menu-item {
+  width: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+  font-size: 12px;
+}
+.editor-menu .doc-ask-actions .menu-item:hover { color: var(--fg); }
 .view-button {
   display: flex;
   align-items: center;
@@ -176,7 +200,7 @@ button.update-pill:hover:not(:disabled) { background: rgba(63, 185, 80, 0.15); }
 }
 /* Narrower still: zooming keeps its keys (Cmd/Ctrl +/-), and the branch name
    is in the git panel. */
-@container canvas (max-width: 720px) {
+@container canvas (max-width: 780px) {
   .toolbar > .group,
   .toolbar #git-branch { display: none; }
 }
@@ -188,10 +212,20 @@ button.update-pill:hover:not(:disabled) { background: rgba(63, 185, 80, 0.15); }
 }
 
 /* A phone's width: the row tightens, and Pick is its sign and not its name. */
-@container canvas (max-width: 440px) {
+@container canvas (max-width: 500px) {
   .toolbar { gap: 6px; padding: 6px 8px; }
   .toolbar > #pick-block { font-size: 0; padding: 4px 9px; }
-  .toolbar > #pick-block::before { content: "\2316"; font-size: 15px; line-height: 1; }
+  .toolbar > #pick-block::before { font-size: 15px; line-height: 1; margin-right: 0; }
+}
+/* With the toolbar's own ✦ in the row, View is its sign too. */
+@container canvas (max-width: 440px) {
+  .toolbar { gap: 5px; }
+  .toolbar .view-button { font-size: 0; padding: 4px 9px; }
+  .toolbar .view-button::before { content: "\22EE"; font-size: 15px; line-height: 1; }
+  .toolbar .view-button .session-caret { display: none; }
+  .toolbar > #pick-block,
+  .toolbar .view-button,
+  .toolbar .doc-ask { padding-left: 7px; padding-right: 7px; }
 }
 
 /* ---------------- viewer ---------------- */
@@ -769,6 +803,8 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The same step several times running: counted, not repeated. */
+.activity .times { flex: none; margin-left: auto; color: var(--fg); opacity: 0.8; }
 .activity.ok .verb { color: var(--ok); }
 .activity.bad .verb { color: var(--err); }
 
@@ -1171,6 +1207,45 @@ button.toggle.active {
 .inline-edit-status.err { color: var(--err); white-space: normal; }
 .inline-edit-status.busy { color: var(--warn); }
 .inline-edit-bar button { font-size: 11px; padding: 2px 8px; }
+/* How much of the passage the box holds, and what of it is folded away. */
+.inline-edit-switch {
+  display: flex;
+  flex: none;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.inline-edit-bar .inline-edit-switch button {
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.inline-edit-bar .inline-edit-switch button + button { border-left: 1px solid var(--panel-border); }
+.inline-edit-bar .inline-edit-switch button[aria-checked="true"] { background: var(--panel-border); color: var(--fg); }
+.inline-edit-bar .inline-edit-fold {
+  flex: none;
+  padding: 1px 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+}
+.inline-edit-bar .inline-edit-fold[hidden] { display: none; }
+.inline-edit-bar .inline-edit-fold[aria-pressed="true"] { color: var(--fg); border-color: var(--accent); }
+/* A folded annotation or comment: a chip where it is, the text in its title. */
+.inline-folded {
+  display: inline-block;
+  margin: 0 2px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: #e8ebf0;
+  color: #57606a;
+  font: 0.7em/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  vertical-align: 0.1em;
+  cursor: pointer;
+}
+.inline-folded.notes { background: #e3ecfb; color: #1f4f99; }
+
 
 /* ---------------- asking about a selection, on the page ---------------- */
 
@@ -1595,6 +1670,43 @@ body.offer-in-bar .ask-button { display: none; }
 
 .mark-del .w-same,
 .mark-add .w-same { opacity: 0.75; }
+
+/* The parts of a card under its buttons, spaced as the card spaces them. */
+.mark-body { display: flex; flex-direction: column; gap: 4px; }
+/* One text: struck where words went, marked where they came. */
+.mark-inline {
+  padding: 3px 6px;
+  border-radius: 4px;
+  border-left: 2px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mark-inline .w-same { opacity: 0.85; }
+.mark-inline .w-del {
+  color: #ffb9b3;
+  background: rgba(248, 81, 73, 0.22);
+  text-decoration: line-through;
+  text-decoration-color: rgba(248, 81, 73, 0.95);
+  border-radius: 2px;
+}
+.mark-inline .w-ins {
+  color: #b7f0c0;
+  background: rgba(63, 185, 80, 0.24);
+  font-weight: 600;
+  border-radius: 2px;
+}
+/* Which of the ways to read a change. */
+.mark-views { display: flex; gap: 2px; }
+.mark-card .mark-views button {
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.mark-card .mark-views button[aria-checked="true"] { color: var(--fg); background: var(--panel-border); }
 
 .mark-none {
   color: var(--muted);
@@ -2374,6 +2486,9 @@ button.icon.on { color: var(--accent); border-color: var(--accent); }
   font-size: 11.5px;
   line-height: 1.5;
 }
+/* A Markdown source, read as the document it is. */
+.peek-text.peek-preview { padding: 12px 16px; font-family: inherit; }
+.peek-markdown .hit { background: rgba(76, 141, 255, 0.18); border-radius: 3px; }
 .peek-text .peek-line { display: flex; white-space: pre; }
 .peek-text .peek-line.hit { background: rgba(76, 141, 255, 0.18); }
 .peek-text .ln {

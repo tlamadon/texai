@@ -10,6 +10,35 @@ import { showToast } from './toast.js';
 
 const STORAGE_KEY = 'texai:show-changes';
 const AUTO_KEY = 'texai:auto-accept';
+// How a change's card shows it: the old words struck through where the new
+// ones stand; the old text and the new, one above the other; or the new alone.
+const DIFF_KEY = 'texai:diff-view';
+const DIFF_VIEWS = [
+  { key: 'inline', label: 'inline', title: 'One text: removed words struck through, added words marked' },
+  { key: 'split', label: 'before / after', title: 'The old text, then the new' },
+  { key: 'new', label: 'new only', title: 'Only the new text, with what was added marked' },
+];
+const diffView = () => {
+  const stored = localStorage.getItem(DIFF_KEY);
+  return DIFF_VIEWS.some((v) => v.key === stored) ? stored : 'inline';
+};
+
+/** A change as one run of text: what stayed, struck what went, marked what came. */
+function inlineNode(parts) {
+  const node = el('div', 'mark-inline');
+  let used = 0;
+  for (const part of parts) {
+    if (used >= MAX_CARD_TEXT) {
+      node.append(el('span', 'w-same', '…'));
+      break;
+    }
+    const text = part.text.replace(/\s+/g, ' ').slice(0, MAX_CARD_TEXT - used);
+    if (!text) continue;
+    used += text.length;
+    node.append(el('span', `w-${part.op}`, text));
+  }
+  return node;
+}
 const MAX_POPOVER_TEXT = 1200;
 const MAX_CARD_TEXT = 320;
 
@@ -268,7 +297,8 @@ export class MarksLayer {
     if (!this.button) return;
     this.button.classList.toggle('active', this.enabled);
     const n = this.marks.filter((m) => !m.accepted).length;
-    this.button.textContent = this.enabled && n ? `Changes (${n})` : 'Show changes';
+    // What is waiting to be accepted or rejected, and how many.
+    this.button.textContent = n ? `Pending (${n})` : 'Pending';
     this.button.setAttribute('aria-pressed', String(this.enabled));
     if (this.acceptAllButton) this.acceptAllButton.hidden = !this.enabled || n === 0;
   }
@@ -506,10 +536,48 @@ export class MarksLayer {
     head.append(hide);
     card.append(head);
 
-    if (mark.before) card.append(partsNode('mark-del', mark.beforeParts, mark.before));
-    else card.append(el('div', 'mark-none', 'nothing here before — this text is new'));
-    if (mark.after) card.append(partsNode('mark-add', mark.afterParts, mark.after));
-    else card.append(el('div', 'mark-none', 'removed — nothing replaced it'));
+    // How to read it: a switch, when there is something on both sides to compare.
+    const body = el('div', 'mark-body');
+    const fill = () => {
+      const view = mark.before && mark.after && mark.parts?.length ? diffView() : 'split';
+      body.replaceChildren();
+      if (view === 'inline') {
+        body.append(inlineNode(mark.parts));
+        return;
+      }
+      if (view !== 'new') {
+        if (mark.before) body.append(partsNode('mark-del', mark.beforeParts, mark.before));
+        else body.append(el('div', 'mark-none', 'nothing here before — this text is new'));
+      }
+      if (mark.after) body.append(partsNode('mark-add', mark.afterParts, mark.after));
+      else body.append(el('div', 'mark-none', 'removed — nothing replaced it'));
+    };
+    if (mark.before && mark.after && mark.parts?.length) {
+      const views = el('div', 'mark-views');
+      views.setAttribute('role', 'radiogroup');
+      const paint = () => {
+        for (const button of views.children) {
+          button.setAttribute('aria-checked', String(button.dataset.key === diffView()));
+        }
+      };
+      for (const { key, label, title } of DIFF_VIEWS) {
+        const button = el('button', '', label);
+        button.title = title;
+        button.dataset.key = key;
+        button.setAttribute('role', 'radio');
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          localStorage.setItem(DIFF_KEY, key);
+          // Every open card reads the same way.
+          this.draw();
+        });
+        views.append(button);
+      }
+      paint();
+      card.append(views);
+    }
+    fill();
+    card.append(body);
 
     card.style.left = `${Math.max(0, rect.left)}px`;
     card.style.top = `${rect.top + rect.height + 4}px`;

@@ -354,6 +354,31 @@ export class ChatPanel {
     }
   }
 
+  /**
+   * Send a request with nothing attached, from outside the composer (the
+   * toolbar's ✦). Resolves to whether it was taken; what is in the composer
+   * stays there.
+   */
+  async ask(message) {
+    if (this.busy) {
+      showToast('The agent is still working on the previous message.', { type: 'error' });
+      return false;
+    }
+    if (!this.agent.available) {
+      showToast(this.agent.reason || 'The agent is not available.', { type: 'error' });
+      return false;
+    }
+    this._setBusy(true);
+    try {
+      await postJSON('/api/chat', { message, selections: [] });
+      return true;
+    } catch (err) {
+      this._setBusy(false);
+      showToast(err.message || String(err), { type: 'error' });
+      return false;
+    }
+  }
+
   async interrupt() {
     try {
       await postJSON('/api/interrupt', {});
@@ -648,7 +673,24 @@ export class ChatPanel {
   }
 
   _activity(card, verb, target, tone = '') {
+    // The same step again (five Edits of one file): one line that counts,
+    // not five that say nothing new.
+    const key = `${tone}\u0000${verb}\u0000${target || ''}`;
+    const last = card.body.lastElementChild;
+    if (last?.classList.contains('activity') && last.dataset.key === key) {
+      const times = Number(last.dataset.times || 1) + 1;
+      last.dataset.times = String(times);
+      let count = last.querySelector('.times');
+      if (!count) {
+        count = el('span', 'times');
+        last.append(count);
+      }
+      count.textContent = `×${times}`;
+      count.title = `${times} times in a row`;
+      return;
+    }
     const line = el('div', `activity ${tone}`.trim());
+    line.dataset.key = key;
     line.append(el('span', 'verb', verb));
     line.append(el('span', 'target', target || ''));
     card.body.append(line);

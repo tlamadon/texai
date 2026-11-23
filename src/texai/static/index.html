@@ -58,10 +58,15 @@
         <!-- The review loop: the one pair of controls that changes with every turn. -->
         <!-- Point at a piece of the page the way a browser's inspector points at
              an element: a sentence, then its paragraph; a block of a slide. -->
+        <!-- The same request as the page's own, with no passage: about the
+             document as a whole. -->
+        <button id="doc-ask" type="button" class="doc-ask" aria-haspopup="dialog"
+                aria-expanded="false"
+                title="Ask the agent about the whole document: proofread it, check it, or anything else">&#10022;</button>
         <button id="pick-block" type="button" class="toggle" aria-pressed="false"
                 title="Pick: what is under the pointer lights up, and a click selects it. Click it again for the paragraph around a sentence. Esc to stop.">Pick</button>
         <button id="toggle-marks" type="button" class="toggle"
-                title="Show what the agent changed, inline on the page">Show changes</button>
+                title="The agent's changes still waiting to be accepted or rejected, shown on the page">Pending</button>
         <button id="accept-all" type="button" class="ghost" hidden
                 title="Accept every pending change and start a fresh review">Accept all</button>
 

@@ -100,6 +100,18 @@ The PDF does not have to exist yet: texai compiles it, then opens the viewer on
 *Keeping the PDF current*). All it needs is a TeX installation with `latexmk` and
 `synctex`. When a guess is wrong, `--root` and `--pdf` override it.
 
+Not sure the machine has what it takes? Ask:
+
+```bash
+uvx texai doctor
+```
+
+It looks for the three things texai cannot bring along (a TeX installation with
+`latexmk`, `synctex`, and the `claude` CLI), and for each one that is missing
+prints the command that installs it on the system you are on: macOS, Linux or
+Windows. A first run on a machine without TeX prints the same report instead of
+a build error.
+
 `uvx` is `uv tool run`: it fetches texai into a throwaway environment, runs it,
 and leaves nothing behind. `uv run texai` is the other one — it runs texai from
 the project you are standing in, which is what you want in a checkout of *this*
@@ -202,7 +214,7 @@ pulses and the box shows what it is doing, with a **Stop** button. When it is
 done:
 
 - **It edited something** — the box closes and the change appears as a marker on
-  the rebuilt page, ready to accept or reject, even if *Show changes* was off.
+  the rebuilt page, ready to accept or reject, even if *Pending* was off.
 - **It offered versions** — the box widens and shows them side by side, the
   words each one changes highlighted. Click one, or press its number, and texai
   puts it in place itself — no second agent call — then rebuilds, and it comes
@@ -237,6 +249,17 @@ no quick editor.
 
 Closing the box does not stop the agent; the turn finishes in the chat either
 way. One request runs at a time, so the ✦ stays away while the agent is busy.
+
+### Asking about the whole document
+
+Some requests have no passage: proofread everything, check that the notation is
+consistent, say what a referee would. The **✦ in the toolbar** is for those. It
+opens a box to type the request in, with a few common ones that fill it in
+(**Proofread**, **Check consistency**, **Tighten the prose**, **Read as a
+referee**, **Summarise**) to send as they are or adjust first. **Enter** sends
+it to the agent as a message with nothing attached, exactly as the chat
+composer would, and the chat panel opens on the turn. The ones that only read
+say "do not edit" in their text, so nothing is rewritten by surprise.
 
 ### Picking instead of selecting
 
@@ -359,7 +382,8 @@ hold the lot back until the process ended.
 
 ### Inline changes on the page
 
-Toggle **Show changes** in the toolbar (off by default, remembered). After a
+Toggle **Pending** in the toolbar (off by default, remembered); it counts what is
+waiting, `Pending (3)`. After a
 turn, every changed region is forward-mapped through `synctex view` — the click
 direction run backwards — and drawn as a band over the text it produced. Click
 one:
@@ -383,6 +407,12 @@ Only the words that actually differ are struck through (red) or emphasised
 (green); the surrounding text is kept, dimmed, for context. Striking a whole
 wrapped line when three words changed just makes you hunt for the difference.
 
+A card that has both an old and a new text can be read three ways, chosen on
+the card and remembered for all of them: **inline** (the default: one text,
+with the removed words struck through where the new ones stand, so nothing is
+shown twice), **before / after** (the two texts, as drawn above), and **new
+only**.
+
 Clicking a highlight always shows its card, next to the band you clicked. The
 card's `x` hides it again, and clicking the highlight brings it back. Nothing
 blocks: ignore them and keep working if you would rather.
@@ -397,7 +427,7 @@ collapse it.
 
 Changes accumulate. A second turn does not retire the first one's changes —
 everything stays pending until you deal with it, and the toolbar counts what is
-outstanding (`Changes (3)`). **Accept all** closes the review and starts a fresh
+outstanding (`Pending (3)`). **Accept all** closes the review and starts a fresh
 one from the current state.
 
 That works because pending changes are computed against a **session baseline**,
@@ -523,6 +553,8 @@ dropped. (A third tab, **Source**, is the editor — see below.)
 
 - **Chat** — prose in full, everything else as one-line activity: which files
   were touched, whether the build passed, the diff, the revert button, the cost.
+  The same step several times running (five Edits of one file) is one line with
+  a count, `×5`; the Transcript still has each of them.
 - **Transcript** — the session the way a terminal shows it: your prompt, every
   tool call with its arguments, results, thinking markers, build lines, and a
   per-turn rule with status, line counts and cost.
@@ -713,6 +745,21 @@ type `\emph{…}`, `$\alpha_t$` or `\cite{…}` as you would in the source.
 **Cmd/Ctrl-Enter** or clicking elsewhere saves that one paragraph and
 recompiles; **Esc** cancels. The box stays up until the rebuilt page replaces
 the text under it, and if the build fails it stays open with LaTeX's error.
+
+The box opens on as little as will do. A short paragraph opens whole; a long
+one (more than five source lines, or 500 characters) opens on the **sentence**
+that was clicked, exactly, even where it shares its source lines with its
+neighbours. The bar under the box switches between **line**, **sentence** and
+**paragraph**, and the choice is kept for the next edit. An edit in progress
+stays in the piece it was made in: save or cancel before switching.
+
+What the page does not show is folded away, so the box reads like the page:
+texai's own annotations (`%@` lines, `%#` markers) and LaTeX comments each
+shrink to a small chip, `%@` or `%`, with the text in its tooltip. Nothing is
+removed: the folded text is still in the box and saved with it, and deleting
+across a chip deletes what it stands for. Click a chip to open that one, or use
+the `%@` and `%` buttons in the bar to show or hide each kind everywhere; they
+appear only when the passage has something of that kind.
 
 A paragraph is a blank-line-separated block, the same one coloured in the
 gutter and the margin. Only that block is written back, and only if it is still
@@ -970,6 +1017,10 @@ last, and a small mark in the right margin, level with the line it ends on.
 - **A label** opens this paper's own PDF with the labelled table, figure or
   equation outlined. **Go there** moves the main page to it.
 - **A text file** opens with the named lines highlighted.
+- **A Markdown file** (`.md`) opens rendered, as the document it is, with the
+  block the named lines fall in highlighted when it can be found. **Source** in
+  the header shows the Markdown itself with the lines marked; **Preview** goes
+  back.
 - **The hash** finds the paper even if the file is renamed. If the file in
   `papers/` has changed since it was quoted, it still opens, with a warning.
 
@@ -1458,6 +1509,7 @@ src/texai/
   timing.py       a turn split into its phases, written to timings.jsonl
   build.py        compiling, and reading errors out of the log
   freshness.py    noticing that the PDF is behind its sources or its SyncTeX data
+  doctor.py       what the machine is missing (TeX, SyncTeX, the agent) and how to install it
   snapshots.py    per-turn source copies, diffing and revert
   hunks.py        structured diff hunks: stable ids, per-hunk rollback
 

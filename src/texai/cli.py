@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import shutil
 import socket
 import sys
 import webbrowser
@@ -20,6 +19,9 @@ from .config import AppConfig
 from .demo import DEMOS, DemoError, unpack_demo
 from .console import note, warn
 from .discover import DiscoveryError, discover
+from .doctor import checks as doctor_checks
+from .doctor import remedy, report
+from .doctor import run as run_doctor
 from .events import EventBus
 from .freshness import Freshness
 from .paths import PathOutsideRootError
@@ -36,6 +38,9 @@ HOST = "127.0.0.1"  # loopback only, never configurable
 DEFAULT_PORT = 8765
 PORT_SCAN = 20
 
+
+# `texai doctor`: check the machine instead of opening a document.
+DOCTOR = "doctor"
 
 # `--resume` on its own: whichever conversation texai had here last.
 LAST_SESSION = "last"
@@ -56,7 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "the .tex to work on, or the .pdf it builds, or a directory holding one "
             "(default: the document in the current directory). Everything else is "
-            "inferred from it."
+            "inferred from it. `texai doctor` checks instead that TeX, SyncTeX and "
+            "the agent are installed, and says how to install what is not."
         ),
     )
     parser.add_argument(
@@ -253,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.resume and args.document is None and Path(args.resume).exists():
         # `texai --resume main.tex`: the optional id swallowed the document.
         args.document, args.resume = args.resume, LAST_SESSION
+    if args.document == DOCTOR and not Path(DOCTOR).exists():
+        return run_doctor(args.agent, args.synctex)
     if args.demo:
         if args.document is not None:
             parser.error("--demo opens its own document; leave yours out, or drop --demo")
@@ -288,6 +296,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    # What the machine is missing, said once and with the way to get it.
+    missing = {
+        check.name: check
+        for check in doctor_checks(args.agent, args.synctex)
+        if check.required and not check.ok
+    }
+    if not config.pdf_path.is_file() and not args.build_cmd and "latexmk" in missing:
+        # Nothing to show and no way to make it: the first run on a machine
+        # without TeX. Everything that is missing, not only the first of it.
+        print(
+            f"texai: {config.pdf_rel} has to be built first, and there is no TeX here to "
+            f"build it with.\n\n{report(list(doctor_checks(args.agent, args.synctex)))}",
+            file=sys.stderr,
+        )
+        return 2
+
     if not config.pdf_path.is_file():
         problem = build_missing_pdf(config)
         if problem is not None:
@@ -296,11 +320,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         rebuild_stale_pdf(config)
 
-    if shutil.which(args.synctex) is None and not Path(args.synctex).is_file():
-        warn(
-            f"warning: `{args.synctex}` not found on PATH; "
-            "clicking in the PDF will report an error until TeX Live/MacTeX is installed."
-        )
+    for name in ("latexmk", args.synctex, "perl", "claude"):
+        if name in missing and not (name == args.synctex and Path(name).is_file()):
+            if name == "latexmk" and args.build_cmd:
+                continue  # the build is the user's own command
+            warn(f"warning: {remedy(missing[name])}")
     if synctex_data_file(config.pdf_path) is None:
         warn(
             f"warning: no .synctex.gz next to {config.pdf_path.name}; "

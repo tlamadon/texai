@@ -169,3 +169,14 @@ def test_hunk_dict_carries_the_word_runs():
     assert joined(hunk["afterParts"]) == "one TWO three\n"
     assert changed_text(hunk["beforeParts"]).strip() == "two"
     assert changed_text(hunk["afterParts"]).strip() == "TWO"
+
+
+def test_inline_diff_is_one_run_that_rebuilds_both_sides():
+    from texai.hunks import inline_diff
+
+    before = "a short panel of invented data\n"
+    after = "a brief panel of made-up data\n"
+    parts = inline_diff(before, after)
+    assert [p["op"] for p in parts] == ["same", "del", "ins", "same", "del", "ins", "same"]
+    assert "".join(p["text"] for p in parts if p["op"] != "ins") == before
+    assert "".join(p["text"] for p in parts if p["op"] != "del") == after
